@@ -61,10 +61,15 @@ const REWARD_HEADER_RE = /^p[1-5]$/i;
 const NOTE_SEL = "[role='note'],aside";
 
 const COLUMN_RES: { key: string; re: RegExp }[] = [
-  { key: "location", re: /target|location|asset|url|uri|domain|address|host/i },
+  // Anchored so qualifiers like "Target type"/"Target status" fall through
+  // to category/changes instead of being claimed as the location column.
+  {
+    key: "location",
+    re: /^(?:targets?|locations?|assets?|urls?|uris?|domains?|addresses?|hosts?)$|^in[- ]?scope/i,
+  },
   { key: "name", re: /^name$|target name|display name/i },
   { key: "category", re: /categor|type/i },
-  { key: "tags", re: /tag/i },
+  { key: "tags", re: /\btags?\b|tagged/i },
   { key: "docs", re: /doc|reference|link|resource/i },
   { key: "changes", re: /change|flag|update|status/i },
   { key: "ki", re: /known issues?|^ki$/i },
@@ -99,11 +104,6 @@ function parseReward(text: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** The nearest section-ish ancestor that owns an element (for nesting). */
-function ownerSection(el: Element): Element | null {
-  return el.parentElement?.closest(SECTION_SEL) ?? null;
-}
-
 interface ScopeSection {
   el: Element;
   heading: string;
@@ -111,28 +111,35 @@ interface ScopeSection {
 }
 
 /**
- * Leaf scope containers: sections whose own heading mentions scope/targets and
- * that do not contain a deeper matching section (avoids processing wrapper
- * sections twice). "Out of scope" headings classify the whole container.
+ * All scope containers: sections whose own heading mentions scope/targets.
+ * Wrappers that contain deeper matching sections stay in the list — their
+ * direct content is still processed (assigned to an implicit group) via the
+ * nearest-candidate ownership test in collectTargets. "Out of scope"
+ * headings classify the whole container.
  */
-function scopeSections(doc: Document): ScopeSection[] {
-  const all = [...doc.querySelectorAll(SECTION_SEL)];
-  const candidates = all.filter((el) => {
-    const h = el.querySelector(HEADING_SEL);
-    if (h === null) return false;
-    SCOPE_HEADING_RE.lastIndex = 0;
-    return SCOPE_HEADING_RE.test(textOf(h));
-  });
-  return candidates
-    .filter(
-      (el) =>
-        !candidates.some((other) => other !== el && el.contains(other)),
-    )
+function scopeCandidates(doc: Document): ScopeSection[] {
+  return [...doc.querySelectorAll(SECTION_SEL)]
+    .filter((el) => {
+      const h = el.querySelector(HEADING_SEL);
+      if (h === null) return false;
+      SCOPE_HEADING_RE.lastIndex = 0;
+      return SCOPE_HEADING_RE.test(textOf(h));
+    })
     .map((el) => {
       const heading = sectionHeading(el) ?? "";
       OUT_SCOPE_RE.lastIndex = 0;
       return { el, heading, inScope: !OUT_SCOPE_RE.test(heading) };
     });
+}
+
+/** Nearest ancestor (exclusive) that is a scope candidate, or null. */
+function nearestCandidate(el: Element, candSet: Set<Element>): Element | null {
+  let cur = el.parentElement;
+  while (cur !== null) {
+    if (candSet.has(cur)) return cur;
+    cur = cur.parentElement;
+  }
+  return null;
 }
 
 interface ColumnMap {
@@ -144,7 +151,10 @@ function columnMap(headers: string[]): ColumnMap {
   headers.forEach((h, i) => {
     for (const { key, re } of COLUMN_RES) {
       re.lastIndex = 0;
-      if (re.test(h) && map[key] === undefined) map[key] = i;
+      if (!re.test(h)) continue;
+      // First matching key claims this header — one index, one key.
+      if (map[key] === undefined) map[key] = i;
+      break;
     }
   });
   return map;
@@ -231,19 +241,43 @@ export function collectTargets(
     );
   };
 
-  const processGroup = (
-    groupEl: Element,
-    groupName: string,
-    inScope: boolean,
-    sectionName: string,
-    groupIndex: number,
-  ) => {
+  interface GroupInput {
+    name: string;
+    inScope: boolean;
+    sectionName: string;
+    index: number;
+    /** Element whose text becomes the group record quote. */
+    quoteEl: Element;
+    /** Root searched for a description paragraph. */
+    descRoot: ParentNode;
+    /** Membership test for this group's content (description lookup). */
+    owned: (el: Element) => boolean;
+    tables: Element[];
+    /** Owned, non-row notes → group-level rules. */
+    notes: Element[];
+  }
+
+  const processGroup = (input: GroupInput) => {
+    const {
+      name: groupName,
+      inScope,
+      sectionName,
+      index: groupIndex,
+      quoteEl,
+      descRoot,
+      owned,
+      tables,
+      notes,
+    } = input;
     const domKey = `group:${uniqueSlug(
       slugify(groupName || `group-${groupIndex + 1}`),
       takenDomKeys,
     )}`;
-    const firstP = [...groupEl.querySelectorAll("p")].find(
-      (p) => p.closest("table") === null && p.closest(NOTE_SEL) === null,
+    const firstP = [...descRoot.querySelectorAll("p")].find(
+      (p) =>
+        owned(p) &&
+        p.closest("table") === null &&
+        p.closest(NOTE_SEL) === null,
     );
     const description = firstP !== undefined ? textOf(firstP) || null : null;
 
@@ -254,7 +288,6 @@ export function collectTargets(
       p4: null,
       p5: null,
     };
-    const tables = [...groupEl.querySelectorAll("table")];
     const rewardTable = tables.find((t) =>
       tableToRows(t).headers.some((h) => {
         REWARD_HEADER_RE.lastIndex = 0;
@@ -293,7 +326,7 @@ export function collectTargets(
       rewards,
     };
     groups.push(group);
-    const groupQuote = textOf(groupEl);
+    const groupQuote = textOf(quoteEl);
     if (groupQuote !== "") {
       records.push(
         record(
@@ -432,35 +465,68 @@ export function collectTargets(
     }
 
     // Group-level notes (outside tables) apply to the group.
-    for (const note of groupEl.querySelectorAll(NOTE_SEL)) {
-      if (note.closest("tr") !== null) continue; // row rules handled above
+    for (const note of notes) {
       const text = textOf(note);
       if (text === "") continue;
       emitRule(text, [domKey], "explicit_program_rule", sectionName, domKey);
     }
   };
 
+  const scopes = scopeCandidates(doc);
+  const candSet = new Set(scopes.map((s) => s.el));
   let groupIndex = 0;
-  for (const scope of scopeSections(doc)) {
-    const groupEls = [...scope.el.querySelectorAll("article,[role='group']")]
-      .filter((g) => ownerSection(g) === scope.el);
+  for (const scope of scopes) {
+    // Content owned by this candidate: nearest candidate-section ancestor is
+    // this element (nested candidates own their own subtrees).
+    const owned = (el: Element): boolean =>
+      nearestCandidate(el, candSet) === scope.el;
+    const groupEls = [
+      ...scope.el.querySelectorAll("article,[role='group']"),
+    ].filter(owned);
+    const looseTables = [...scope.el.querySelectorAll("table")].filter(
+      (t) => owned(t) && t.closest("article,[role='group']") === null,
+    );
+    const looseNotes = [...scope.el.querySelectorAll(NOTE_SEL)].filter(
+      (n) =>
+        owned(n) &&
+        n.closest("article,[role='group']") === null &&
+        n.closest("tr") === null,
+    );
 
-    if (groupEls.length === 0) {
-      // Section holds targets directly → one implicit group.
-      processGroup(scope.el, scope.heading, scope.inScope, scope.heading, groupIndex++);
-    } else {
-      for (const g of groupEls) {
-        const name = sectionHeading(g) ?? scope.heading;
-        processGroup(g, name, scope.inScope, scope.heading, groupIndex++);
-      }
+    for (const g of groupEls) {
+      const name = sectionHeading(g) ?? scope.heading;
+      processGroup({
+        name,
+        inScope: scope.inScope,
+        sectionName: scope.heading,
+        index: groupIndex++,
+        quoteEl: g,
+        descRoot: g,
+        owned: (el) => g.contains(el),
+        tables: [...g.querySelectorAll("table")],
+        notes: [...g.querySelectorAll(NOTE_SEL)].filter(
+          (n) => n.closest("tr") === null,
+        ),
+      });
     }
 
-    // Section-level notes outside any group: engagement-wide boundaries.
-    // (Skipped for implicit groups — processGroup already claims them.)
-    if (groupEls.length > 0) {
-      for (const note of scope.el.querySelectorAll(NOTE_SEL)) {
-        if (note.closest("article,[role='group']") !== null) continue;
-        if (note.closest("tr") !== null) continue;
+    if (looseTables.length > 0) {
+      // Direct content of this section (leaf or wrapper with own tables)
+      // becomes an implicit group; its loose notes apply to that group.
+      processGroup({
+        name: scope.heading,
+        inScope: scope.inScope,
+        sectionName: scope.heading,
+        index: groupIndex++,
+        quoteEl: scope.el,
+        descRoot: scope.el,
+        owned,
+        tables: looseTables,
+        notes: looseNotes,
+      });
+    } else {
+      // Section-level notes outside any group: engagement-wide boundaries.
+      for (const note of looseNotes) {
         const text = textOf(note);
         if (text === "") continue;
         emitRule(text, [], "explicit_program_rule", scope.heading);

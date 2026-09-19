@@ -54,6 +54,24 @@ describe("collectPolicies techniques", () => {
     expect(cred?.conditions.join(" ")).toContain("Acme-supplied test accounts");
   });
 
+  it("collects paragraph rule statements mixed with lists", () => {
+    // A <p> rule alongside the <ul> was previously dropped whenever any li
+    // existed in the section.
+    const para = data.techniques.find(
+      (t) =>
+        t.name === "scanning" &&
+        t.quote.startsWith("Scanning of out-of-scope"),
+    );
+    expect(para).toBeDefined();
+    expect(para?.status).toBe("prohibited");
+    const rec = records.find(
+      (r) =>
+        r.sourceKey.startsWith("dom:details:program-rules:") &&
+        r.quote.startsWith("Scanning of out-of-scope"),
+    );
+    expect(rec?.extractionStatus).toBe("exact");
+  });
+
   it("parses allowed and prohibited rules", () => {
     expect(
       data.techniques.some((t) => t.name === "automation" && t.status === "allowed"),

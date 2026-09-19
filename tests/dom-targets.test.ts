@@ -77,6 +77,51 @@ describe("collectTargets rules", () => {
   });
 });
 
+describe("collectTargets wrapper sections", () => {
+  const wrapped = collectTargets(loadDoc("targets-wrapper.html"), PAGE_URL);
+
+  it("collects a wrapper section's own direct tables as an implicit group", () => {
+    // Previously the "Scope" wrapper was leaf-filtered out and its direct
+    // targets were silently lost.
+    const implicit = wrapped.groups.find((g) => g.name === "Scope");
+    expect(implicit).toBeDefined();
+    expect(implicit?.inScope).toBe(true);
+    const direct = wrapped.targets.find(
+      (t) => t.location === "direct.acme.example",
+    );
+    expect(direct).toBeDefined();
+    expect(direct?.inScope).toBe(true);
+    expect(direct?.groupDomKey).toBe(implicit?.domKey);
+    // The wrapper's loose note applies to its implicit group.
+    const note = wrapped.rules.find((r) =>
+      r.text.includes("authenticated session"),
+    );
+    expect(note?.level).toBe("explicit_program_rule");
+    expect(note?.appliesToDomKeys).toEqual([implicit?.domKey]);
+  });
+
+  it("still collects the nested out-of-scope section", () => {
+    const partner = wrapped.groups.find((g) => g.name === "Partner systems");
+    expect(partner?.inScope).toBe(false);
+    const target = wrapped.targets.find((t) => t.location === "partner.example");
+    expect(target?.inScope).toBe(false);
+    expect(target?.groupDomKey).toBe(partner?.domKey);
+  });
+
+  it("maps ambiguous headers once: 'Target type' → category, 'Target status' → changes", () => {
+    const direct = wrapped.targets.find(
+      (t) => t.location === "direct.acme.example",
+    );
+    expect(direct?.category).toBe("Web application");
+    expect(direct?.changeFlags).toEqual(["New"]);
+    const api = wrapped.targets.find(
+      (t) => t.location === "api-direct.acme.example",
+    );
+    expect(api?.category).toBe("API");
+    expect(api?.changeFlags).toEqual(["Reward updated"]);
+  });
+});
+
 describe("collectTargets records", () => {
   it("emits well-formed records under dom:scope", () => {
     assertRecordsWellFormed(records);

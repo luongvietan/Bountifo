@@ -16,6 +16,10 @@ const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
 export const HEADING_SEL = "h1,h2,h3,h4,h5,h6,[role='heading']";
 export const SECTION_SEL =
   "section,article,details,fieldset,[role='region'],[role='section']";
+// Ownership boundaries for section items: real subsection containers.
+// article/[role=group] are transparent wrappers — their content still
+// belongs to the enclosing section (otherwise article-owned lists vanish).
+const OWNER_SEL = "section,details,fieldset,[role='region'],[role='section']";
 const TEXT_BLOCK_SEL =
   "p,li,dt,dd,blockquote,figcaption,summary,pre,td,th," +
   "h1,h2,h3,h4,h5,h6,[role='paragraph']";
@@ -315,27 +319,37 @@ export function extractStats(container: ParentNode): StatEntry[] {
 }
 
 /**
- * Items of a section: direct li children (deepest only) when the section uses
- * lists, else its text blocks minus headings. Blocks inside nested sections
- * stay with the nested section.
+ * Items of a section: the union of its owned leaf `li`s and its owned non-li
+ * text blocks, so sections mixing paragraphs and lists lose neither. "Owned"
+ * means the nearest OWNER_SEL ancestor is this section — article/[role=group]
+ * wrappers are transparent; nested sections keep their own content. Blocks
+ * inside an li are already covered by that li's text.
  */
 export function sectionItems(
   section: Element,
 ): { el: Element; text: string }[] {
-  const lis = [...section.querySelectorAll("li")].filter(
-    (li) =>
-      li.closest(SECTION_SEL) === section && li.querySelector("li") === null,
-  );
-  if (lis.length > 0) {
-    return lis
-      .map((li) => ({ el: li, text: textOf(li) }))
-      .filter((i) => i.text !== "");
+  const ownedBy = (el: Element): boolean =>
+    (el.parentElement?.closest(OWNER_SEL) ?? null) === section;
+  const els: Element[] = [];
+  for (const li of section.querySelectorAll("li")) {
+    if (!ownedBy(li)) continue;
+    if (li.querySelector("li") !== null) continue; // deepest li only
+    els.push(li);
   }
-  const out: { el: Element; text: string }[] = [];
   for (const block of eachTextBlock(section)) {
     if (block.el.matches(HEADING_SEL)) continue;
-    if (block.el.closest(SECTION_SEL) !== section) continue;
-    out.push(block);
+    if (block.el.closest("li") !== null) continue; // covered by the li itself
+    if (!ownedBy(block.el)) continue;
+    els.push(block.el);
+  }
+  // Restore document order (Node.DOCUMENT_POSITION_FOLLOWING = 4).
+  els.sort(
+    (a, b) => (a.compareDocumentPosition(b) & 4 ? -1 : 1) as -1 | 1,
+  );
+  const out: { el: Element; text: string }[] = [];
+  for (const el of els) {
+    const text = textOf(el);
+    if (text !== "") out.push({ el, text });
   }
   return out;
 }
