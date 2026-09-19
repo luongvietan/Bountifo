@@ -1,4 +1,12 @@
 import { browser } from "wxt/browser";
+import { defineBackground } from "wxt/utils/define-background";
+import { apiRequest } from "../lib/api/client";
+import {
+  fetchEngagementEnrichment,
+  resolveEngagementUuid,
+  testToken,
+} from "../lib/api/engagements";
+import { ApiError } from "../lib/api/errors";
 import { ensureTrustedContexts } from "../lib/storageAccess";
 import {
   parseApiRequest,
@@ -6,13 +14,21 @@ import {
   parsePopupMessage,
   validateJobSender,
   type ActiveJobDescriptor,
+  type ApiRequest,
   type JobMessage,
 } from "../lib/messages";
 
 // Every router response has this shape and contains only static, fixed
 // fields — request payloads (which may carry token/Authorization material)
-// are never echoed back.
-type RouterResponse = { ok: boolean; error?: string; [k: string]: unknown };
+// are never echoed back. API op failures use {kind,message} (sanitized
+// ApiError fields); protocol failures use a short static string.
+type RouterError = string | { kind: string; message: string };
+type RouterResponse = {
+  ok: boolean;
+  data?: unknown;
+  error?: RouterError;
+  [k: string]: unknown;
+};
 
 // Active job descriptors keyed by jobId. Task 9 will persist/rehydrate these
 // via chrome.storage.session; the skeleton store is always empty so job
@@ -33,13 +49,88 @@ function routeJobMessage(
   return { ok: false, error: "not_implemented" };
 }
 
-function routeMessage(
+// testToken() reports verdicts as static detail strings; map them back onto
+// ApiError-style kinds for the {ok:false,error:{kind,message}} envelope.
+const TEST_TOKEN_DETAIL_KIND: Record<string, string> = {
+  unauthorized: "unauthorized",
+  "rate limited, try later": "rate_limited",
+  unreachable: "network",
+};
+
+function apiErrorResponse(err: unknown): RouterResponse {
+  if (err instanceof ApiError) {
+    return { ok: false, error: { kind: err.kind, message: err.message } };
+  }
+  // Unknown failure: static message only — a thrown value's message is not
+  // guaranteed free of request/credential detail (spec §18/§19).
+  return { ok: false, error: { kind: "unknown", message: "unexpected error" } };
+}
+
+async function routeApiRequest(req: ApiRequest): Promise<RouterResponse> {
+  const { op, params } = req;
+  try {
+    switch (op) {
+      case "TEST_TOKEN": {
+        const res = await testToken(params.token);
+        if (res.ok) return { ok: true, data: { detail: res.detail } };
+        return {
+          ok: false,
+          error: {
+            kind: TEST_TOKEN_DETAIL_KIND[res.detail] ?? "network",
+            message: res.detail,
+          },
+        };
+      }
+      case "LIST_ENGAGEMENTS": {
+        const res = await apiRequest({
+          operation: "LIST_ENGAGEMENTS",
+          page: params.page ?? 1,
+        });
+        return { ok: true, data: res };
+      }
+      case "GET_ENGAGEMENT": {
+        // Exactly one selector required (the schema allows either/both).
+        const hasUuid = typeof params.uuid === "string";
+        const hasCode = typeof params.code === "string";
+        if (hasUuid === hasCode) return { ok: false, error: "invalid_params" };
+        let uuid = params.uuid ?? null;
+        if (uuid === null) {
+          uuid = await resolveEngagementUuid(params.code as string);
+          if (uuid === null) {
+            return { ok: false, error: "engagement_not_found" };
+          }
+        }
+        const res = await fetchEngagementEnrichment(params.code ?? "", uuid);
+        if (!res.ok) {
+          return {
+            ok: false,
+            error: { kind: res.error.kind, message: res.error.message },
+          };
+        }
+        return {
+          ok: true,
+          data: { engagement: res.data, records: res.records },
+        };
+      }
+    }
+  } catch (err) {
+    return apiErrorResponse(err);
+  }
+}
+
+// Exported (not just wired into onMessage) so tests can exercise the router
+// without faking a full message dispatch.
+export function routeMessage(
   rawMsg: unknown,
   sender: { id?: string; tab?: { id?: number; url?: string } },
-): RouterResponse {
-  // (a) Named API operations — Task 3 wires the API client.
-  if (parseApiRequest(rawMsg) !== null) {
-    return { ok: false, error: "not_implemented" };
+): RouterResponse | Promise<RouterResponse> {
+  // (a) Named API operations. These exist for extension pages only (options
+  // TEST_TOKEN probe, coordinator-driven fetches); a content-script sender is
+  // identifiable by sender.tab and is always rejected (spec §7.5/§19).
+  const apiReq = parseApiRequest(rawMsg);
+  if (apiReq !== null) {
+    if (sender.tab !== undefined) return { ok: false, error: "forbidden" };
+    return routeApiRequest(apiReq);
   }
   // (b) Popup operations — Task 9 wires job ops, Task 10 wires token ops.
   if (parsePopupMessage(rawMsg) !== null) {

@@ -1,0 +1,129 @@
+{
+  "data": {
+    "type": "engagement",
+    "id": "f2b0fb99-1b2c-45d2-9341-f4a25088ba3a",
+    "attributes": {
+      "name": "Acme Corp Bug Bounty",
+      "code": "acme-corp-bb",
+      "engagement_type": "bug_bounty",
+      "managed": true,
+      "state": "running",
+      "starts_at": "2026-01-01T00:00:00.000Z",
+      "ends_at": "2026-12-31T23:59:59.000Z",
+      "testing_period": "year_round",
+      "last_transition_at": "2026-01-05T12:00:00.000Z",
+      "updated_at": "2026-09-01T08:30:00.000Z",
+      "safe_harbor_status": "full_safe_harbor",
+      "statistics": {
+        "vulnerabilities_rewarded": {
+          "value": "1,234",
+          "window": "last_90_days"
+        },
+        "average_payout": {
+          "value": "$512.00",
+          "window": "last_90_days"
+        },
+        "researchers_participating": {
+          "value": "321",
+          "window": null
+        }
+      }
+    },
+    "relationships": {
+      "target_groups": {
+        "data": [
+          {
+            "type": "target_group",
+            "id": "aaaaaaaa-0000-4000-8000-000000000001"
+          },
+          {
+            "type": "target_group",
+            "id": "aaaaaaaa-0000-4000-8000-000000000002"
+          }
+        ]
+      },
+      "targets": {
+        "data": [
+          {
+            "type": "target",
+            "id": "bbbbbbbb-0000-4000-8000-000000000001"
+          },
+          {
+            "type": "target",
+            "id": "bbbbbbbb-0000-4000-8000-000000000002"
+          }
+        ]
+      }
+    }
+  },
+  "included": [
+    {
+      "type": "target_group",
+      "id": "aaaaaaaa-0000-4000-8000-000000000001",
+      "attributes": {
+        "name": "Web Applications",
+        "in_scope": true,
+        "description": "All customer-facing web applications.",
+        "rewards": {
+          "p1": 3000,
+          "p2": 1500,
+          "p3": 750,
+          "p4": 300,
+          "p5": 100
+        }
+      }
+    },
+    {
+      "type": "target_group",
+      "id": "aaaaaaaa-0000-4000-8000-000000000002",
+      "attributes": {
+        "name": "API Endpoints",
+        "in_scope": true,
+        "description": null,
+        "rewards": {
+          "p1": 1000,
+          "p2": 500,
+          "p3": 200
+        }
+      }
+    },
+    {
+      "type": "target",
+      "id": "bbbbbbbb-0000-4000-8000-000000000001",
+      "attributes": {
+        "uri": "https://*.acme-example.com",
+        "name": "Acme wildcard web property",
+        "category": "website",
+        "tags": ["web", "customer-facing"],
+        "in_scope": true
+      },
+      "relationships": {
+        "target_group": {
+          "data": {
+            "type": "target_group",
+            "id": "aaaaaaaa-0000-4000-8000-000000000001"
+          }
+        }
+      }
+    },
+    {
+      "type": "target",
+      "id": "bbbbbbbb-0000-4000-8000-000000000002",
+      "attributes": {
+        "uri": "10.20.30.0/24",
+        "name": null,
+        "category": "hardware",
+        "tags": [],
+        "in_scope": false
+      },
+      "relationships": {
+        "target_group": {
+          "data": {
+            "type": "target_group",
+            "id": "aaaaaaaa-0000-4000-8000-000000000002"
+          }
+        }
+      }
+    }
+  ]
+}
