@@ -77,13 +77,13 @@ describe("isSupportedEngagementUrl", () => {
 describe("exportFileName", () => {
   it("zero-pads month and day", () => {
     expect(exportFileName("aiven-mbb-og", new Date(2026, 0, 5))).toBe(
-      "bugcrowd-aiven-mbb-og-2026-01-05",
+      "bugcrowd-aiven-mbb-og-2026-01-05.md",
     );
   });
 
   it("matches the exact filename format", () => {
     expect(exportFileName("aiven-mbb-og", new Date(2026, 8, 20))).toBe(
-      "bugcrowd-aiven-mbb-og-2026-09-20",
+      "bugcrowd-aiven-mbb-og-2026-09-20.md",
     );
   });
 });

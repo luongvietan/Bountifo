@@ -32,13 +32,13 @@ export function isSupportedEngagementUrl(raw: string): boolean {
 }
 
 /**
- * `bugcrowd-${code}-${yyyy}-${mm}-${dd}` in local time, zero-padded.
+ * `bugcrowd-${code}-${yyyy}-${mm}-${dd}.md` in local time, zero-padded.
  */
 export function exportFileName(engagementCode: string, date: Date): string {
   const yyyy = date.getFullYear();
   const mm = String(date.getMonth() + 1).padStart(2, "0");
   const dd = String(date.getDate()).padStart(2, "0");
-  return `bugcrowd-${engagementCode}-${yyyy}-${mm}-${dd}`;
+  return `bugcrowd-${engagementCode}-${yyyy}-${mm}-${dd}.md`;
 }
 
 export interface DerivedTargetIdInput {
