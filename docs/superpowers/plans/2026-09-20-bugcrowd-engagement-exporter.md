@@ -856,7 +856,7 @@ Options: password input + `Save token` → `SAVE_TOKEN{token}` (normalize happen
 - Produces: acceptance evidence for spec §21 items that are testable in vitest.
 
 - [ ] **Step 1: Integration tests.**
-  - `export-pipeline.test.ts`: full job start→download; assert `browser.downloads.download` called once with `bugcrowd-<code>-<date>.md`; rendered file contains 16 sections; evidence appendix order = corpus sort; identical evidence injected in two different Promise orders → same corpus hash + same evidence order in file.
+  - `export-pipeline.test.ts`: full job start→download; assert `browser.downloads.download` called once with `bugcrowd-<code>-<date>.md`; rendered file contains YAML front matter + all 15 H2 sections (spec §16 items 1–16) in order; evidence appendix order = corpus sort; identical evidence injected in two different Promise orders → same corpus hash + same evidence order in file.
   - `collection-outcomes.test.ts`: (a) API fails, DOM ok → complete + api_status unavailable; (b) conflicting program-rule vs target-rule evidence → complete + policy.unresolved_conflicts 1, both in file; (c) KI mismatch → partial + warning; (d) session_expired at u05 → failed + NO download; (e) SW "death" between u05/u06 (new coordinator, persisted state) → resumes, no duplicated evidence ids, all units complete; (f) cancel during u07 → cancelled, restore_page sent, no download.
   - `secret-scan.test.ts`: run a full export with credential `hunter2-secret-token`; scan rendered markdown, every sendToTab/sendMessage payload, descriptor JSON, thrown error strings, and console.warn/error spy output for the token and for `Token hunter2`/`Authorization` → zero hits.
 - [ ] **Step 2: Fix any defects surfaced** (each fix = own commit referencing the failing test).
