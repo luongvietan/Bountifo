@@ -96,6 +96,16 @@ describe("collectPolicies techniques", () => {
 });
 
 describe("collectPolicies rule groups", () => {
+  it("collects items from an article-typed section", () => {
+    // Account Requirements is authored as <article> — sectionItems must treat
+    // the queried element itself as an ownership boundary.
+    expect(data.accountRules).toHaveLength(3);
+    const rec = records.find((r) =>
+      r.sourceKey.startsWith("dom:details:account-rules:"),
+    );
+    expect(rec?.quote).toContain("acme.example email domain");
+  });
+
   it("collects account, data, focus, non-focus, and reporting groups", () => {
     expect(data.accountRules).toHaveLength(3);
     expect(data.accountRules[0]).toContain("acme.example email domain");

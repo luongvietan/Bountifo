@@ -483,14 +483,17 @@ export function collectTargets(
     const groupEls = [
       ...scope.el.querySelectorAll("article,[role='group']"),
     ].filter(owned);
+    // scope.el may itself be an <article> candidate — its own closest match
+    // is itself, which must not disqualify its direct content.
+    const inNestedGroup = (el: Element): boolean => {
+      const g = el.closest("article,[role='group']");
+      return g !== null && g !== scope.el;
+    };
     const looseTables = [...scope.el.querySelectorAll("table")].filter(
-      (t) => owned(t) && t.closest("article,[role='group']") === null,
+      (t) => owned(t) && !inNestedGroup(t),
     );
     const looseNotes = [...scope.el.querySelectorAll(NOTE_SEL)].filter(
-      (n) =>
-        owned(n) &&
-        n.closest("article,[role='group']") === null &&
-        n.closest("tr") === null,
+      (n) => owned(n) && !inNestedGroup(n) && n.closest("tr") === null,
     );
 
     for (const g of groupEls) {

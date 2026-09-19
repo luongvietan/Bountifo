@@ -108,6 +108,23 @@ describe("collectTargets wrapper sections", () => {
     expect(target?.groupDomKey).toBe(partner?.domKey);
   });
 
+  it("collects an article-typed scope candidate's direct content", () => {
+    // An <article> that is itself the scope candidate must own its own
+    // direct tables/notes — its closest("article") is itself.
+    const implicit = wrapped.groups.find((g) => g.name === "In-scope targets");
+    expect(implicit).toBeDefined();
+    expect(implicit?.inScope).toBe(true);
+    const target = wrapped.targets.find(
+      (t) => t.location === "article-scope.acme.example",
+    );
+    expect(target).toBeDefined();
+    expect(target?.category).toBe("Web application");
+    expect(target?.inScope).toBe(true);
+    expect(target?.groupDomKey).toBe(implicit?.domKey);
+    const note = wrapped.rules.find((r) => r.text.includes("scope approval"));
+    expect(note?.appliesToDomKeys).toEqual([implicit?.domKey]);
+  });
+
   it("maps ambiguous headers once: 'Target type' → category, 'Target status' → changes", () => {
     const direct = wrapped.targets.find(
       (t) => t.location === "direct.acme.example",

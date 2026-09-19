@@ -328,8 +328,19 @@ export function extractStats(container: ParentNode): StatEntry[] {
 export function sectionItems(
   section: Element,
 ): { el: Element; text: string }[] {
-  const ownedBy = (el: Element): boolean =>
-    (el.parentElement?.closest(OWNER_SEL) ?? null) === section;
+  // "Owned" = nearest boundary ancestor is `section`. `section` itself is
+  // always a boundary — an <article> (not in OWNER_SEL) legitimately returned
+  // by findSection must own its own contents. A nearer OWNER_SEL ancestor
+  // wins, so nested sections keep their own items.
+  const ownedBy = (el: Element): boolean => {
+    let cur = el.parentElement;
+    while (cur !== null) {
+      if (cur === section) return true;
+      if (cur.matches(OWNER_SEL)) return false;
+      cur = cur.parentElement;
+    }
+    return false;
+  };
   const els: Element[] = [];
   for (const li of section.querySelectorAll("li")) {
     if (!ownedBy(li)) continue;
