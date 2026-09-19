@@ -1,0 +1,617 @@
+# Bugcrowd Engagement Exporter — Design Specification
+
+Date: 2026-09-20  
+Design version: 2  
+Status: Ready for user review
+
+## 1. Purpose
+
+Build a personal Chrome Manifest V3 extension that exports the bug-bounty-relevant content of the currently open Bugcrowd engagement into one Markdown file for an AI agent.
+
+The output is an evidence-backed program dossier. It must support downstream scope checking, attack-surface modeling, duplicate avoidance, and hypothesis generation without turning missing or inferred information into permission.
+
+The exporter does not perform reconnaissance, security testing, or vulnerability submission.
+
+## 2. Design principles
+
+1. No evidence means no fact.
+2. No explicit permission means no permission to execute.
+3. Missing, conflicting, or incomplete data remains explicit.
+4. The exporter records source levels but never invents rule precedence.
+5. Raw evidence and normalized facts remain linked through immutable references.
+6. The researcher-visible brief is authoritative for what the researcher can currently see.
+7. API data enriches the brief but cannot replace authenticated DOM collection.
+8. The exporter never reads or exports private submissions.
+
+## 3. Success criteria
+
+An export succeeds when:
+
+- The user opens a Bugcrowd engagement, clicks `Export full engagement`, and receives one deterministic Markdown file.
+- Details, scope, targets, rewards, Known Issues, VRT rules, testing rules, announcements, changelog, recent activity, participation, and response statistics are collected when available.
+- Every asserted permission or restriction (`allowed`, `prohibited`, or `conditional`), scope boundary, and safety rule references one or more evidence objects. An `unspecified` permission may have no evidence because it explicitly represents the absence of an authoritative statement.
+- Every non-zero Known Issues target is opened, paginated, and checked against its displayed count.
+- API failure does not block DOM collection.
+- Incomplete collection cannot be labeled complete.
+- The API token never appears in page content, progress state, logs, errors, or the exported file.
+- No analytics or data are sent outside Bugcrowd.
+
+## 4. Included data
+
+### 4.1 Engagement metadata
+
+- Name, code, official UUID when available, canonical URL, engagement type, and managed-bounty indicators.
+- Lifecycle status, testing start/end, testing period label, last status transition, and last brief update.
+- Safe Harbor presence and level as explicitly displayed.
+- Coordinated disclosure and collaboration policy.
+- Vulnerabilities rewarded, validation time, average payout, participant/follower counts, and the time window attached to each statistic.
+
+### 4.2 Scope and rewards
+
+- Every target group and whether it is in scope.
+- Group descriptions and exact P1–P5 reward ranges; unavailable priorities remain `null`.
+- Every target's exact location, category/type, tags, documentation links, and visible change flags.
+- Target-specific rules and the target or group IDs to which they apply.
+- Explicit out-of-scope targets and third-party boundaries.
+
+### 4.3 Policy and safety
+
+- Safe Harbor and authorization statements.
+- Allowed, prohibited, conditional, and unspecified testing techniques.
+- Automation, scanning, brute force, denial of service, social engineering, physical testing, credential testing, multi-account testing, cross-tenant testing, third-party testing, PII access, data exfiltration, and persistent access rules.
+- Account ownership, resource ownership, required email domain, supplied credentials, account creation, and tenant/organization constraints.
+- Customer-data, secret-handling, stop-condition, retention, and deletion requirements.
+- Focus areas and explicit non-focus vulnerability classes.
+- Report, proof-of-concept, evidence, reproduction, attachment, duplicate, and submission requirements.
+
+### 4.4 VRT and Known Issues
+
+- VRT version, baseline behavior, exclusions, program deviations, target-specific rules, conditions, and notes.
+- Known Issues for every target, preserving the original columns and displayed row values.
+- Structured Known Issues records when the page exposes recognizable fields, without discarding the original row evidence.
+
+### 4.5 Changes and activity
+
+- All announcements and engagement changelog entries available to the signed-in researcher.
+- Recent activity and recently accepted reports shown for the engagement.
+- Source timestamps and URLs for each item.
+
+## 5. Excluded data
+
+- The user's submissions and all private submission details.
+- Complete Hall of Fame and leaderboard data.
+- The complete CrowdStream feed beyond the recent engagement activity included in the Details page.
+- Like, dislike, follow, share, and hide controls.
+- Navigation, breadcrumbs, footer content, decorative images, and duplicate responsive markup.
+- AI-written summaries, inferred authorization, testing recommendations, or vulnerability reports.
+- Historical snapshot comparison and change detection; these are version 2 features of the product, not schema version 2 of this document.
+
+## 6. Data sources
+
+### 6.1 Official Bugcrowd API
+
+The exporter targets Bugcrowd API major version V1 and is developed and tested against the published V1.1.0 schema current at the design date. A token may advance through backward-compatible V1 minor and patch releases without making the extension treat every minor version as a new API family.
+
+Every API request includes:
+
+- `Accept: application/vnd.bugcrowd+json`
+- `Authorization: Token <credential>`
+
+The exporter records `api_major_target: V1`, `api_schema_tested: 1.1.0`, and the exact API version observed from response metadata or headers when Bugcrowd exposes it. Absence of an observed-version signal is recorded as `null`, not inferred. The primary read-only operations are:
+
+- `GET https://api.bugcrowd.com/engagements`
+- `GET https://api.bugcrowd.com/engagements/{id}`
+
+It requests the engagement brief, target groups, targets, and reward ranges through JSON:API fields and includes. It respects the documented 60 requests per minute per IP limit. This API limit is never interpreted as a testing or scanning limit for an engagement target.
+
+The exporter resolves an engagement UUID from page metadata when possible. Otherwise it pages through the engagements index and matches the URL code. No match is a non-critical API failure.
+
+### 6.2 Authenticated Bugcrowd UI
+
+The content script uses the current signed-in researcher session to collect:
+
+- The Details page and all its semantic sections.
+- Exact target locations, tags, target flags, and target-specific Known Issues.
+- Announcements and changelog.
+- Recent activity, accepted-report summaries, participation, and response statistics.
+
+Same-origin requests are used when they return complete authenticated content. Controlled DOM interaction or navigation is the fallback for dynamic data.
+
+### 6.3 Source precedence
+
+- API wins for official UUIDs, lifecycle timestamps, relationship IDs, and integer reward amounts.
+- Current researcher-visible DOM wins for policy text, exact visible scope, target locations/tags, Known Issues, and page-only statistics.
+- Material disagreement is represented as conflict. The exporter does not silently select a permission outcome.
+- `source_level` is recorded for downstream policy engines but does not impose precedence.
+
+Supported source levels include:
+
+- `page_header`
+- `target_specific_rule`
+- `explicit_program_rule`
+- `announcement`
+- `vrt_deviation`
+- `default_vrt`
+- `known_issue_note`
+- `api_field`
+
+## 7. Extension architecture
+
+### 7.1 Popup
+
+The popup:
+
+- Enables export only on a supported Bugcrowd engagement URL.
+- Provides `Export full engagement`, `Cancel`, and `Settings`.
+- Shows the current phase and progress, including the Known Issues target counter.
+- Reconnects to an active job after being closed and reopened.
+- Displays collection status, API status, DOM status, warning count, and unresolved conflict count as independent dimensions.
+
+### 7.2 Settings
+
+Settings provides masked token input plus `Save token`, `Test token`, and `Clear token`.
+
+The user may paste either the credential value or a value beginning with `Token `. The extension stores one normalized credential in `chrome.storage.local`. It states that Chrome local storage is local to the profile but is not an encrypted secret vault.
+
+During installation and at every service-worker startup, the extension must restrict local storage before reading or writing credentials:
+
+```js
+await chrome.storage.local.setAccessLevel({
+  accessLevel: "TRUSTED_CONTEXTS",
+});
+```
+
+If access-level restriction fails, API credential storage and API collection fail closed; DOM-only export remains available. The content script must never be able to read the credential from `chrome.storage.local`.
+
+### 7.3 Background service worker
+
+The service worker:
+
+- Is the only component allowed to read the API token.
+- Performs allowlisted API operations and bounded retry handling.
+- Receives sanitized extraction results.
+- Rehydrates active jobs from persisted checkpoints whenever it starts.
+- Creates evidence objects, normalized facts, hashes, and integrity records.
+- Renders the Markdown and initiates the download.
+
+The token and Authorization header are never sent to the content script.
+
+The background message API exposes named operations, not an authenticated fetch primitive. Supported API operations are limited to `TEST_TOKEN`, `LIST_ENGAGEMENTS`, and `GET_ENGAGEMENT`; the service worker constructs every Bugcrowd API URL and header from validated typed parameters. A content-script message cannot supply an API URL, hostname, Authorization header, or arbitrary request options.
+
+Before accepting a job-scoped message, the service worker validates the message schema, extension sender ID, job ID, sender tab ID, sender tab URL under `https://bugcrowd.com/`, and expected job phase. Extension-page operations such as `TEST_TOKEN` use a separate schema and reject tab-derived parameters.
+
+### 7.4 Content script
+
+The content script:
+
+- Parses the engagement code and preserves the initial URL.
+- Extracts semantic DOM content using roles, labels, headings, tables, and stable attributes.
+- Avoids generated CSS classes as primary selectors.
+- Collects authenticated sections and controls Known Issues dialogs/drawers.
+- Restores the initial URL and closes exporter-opened UI after completion or cancellation.
+
+### 7.5 Internal boundaries
+
+The implementation is divided into independent units:
+
+- Source collectors produce source records.
+- Evidence builder canonicalizes source records into immutable evidence.
+- Normalizers produce evidence-backed facts without making policy decisions.
+- Integrity checker detects missing sections, count mismatches, and conflicts.
+- Markdown renderer consumes only the versioned document model.
+
+The job coordinator is a persisted state machine. No canonical job state exists only in service-worker globals.
+
+- `chrome.storage.session` stores the small active-job descriptor: job ID, tab ID, engagement code, phase, checkpoint, completed units, pending units, warning counters, and cancellation flag.
+- Extension-origin IndexedDB stores intermediate source records, evidence records, normalized fragments, and unit results keyed by job ID and unit ID.
+- Each collection unit is idempotent and restartable.
+- A unit commits its result transactionally before advancing its checkpoint.
+- A repeated unit replaces or confirms the same deterministic record rather than appending a duplicate.
+- On service-worker startup, the coordinator reads the active-job descriptor, verifies referenced intermediate records, and resumes the first incomplete unit.
+- If the content script reconnects after a worker restart or page navigation, it reports page readiness and continues the expected unit after sender and phase validation.
+
+## 8. Chrome permissions
+
+Manifest V3 permissions:
+
+- `activeTab`
+- `scripting`
+- `storage`
+- `downloads`
+
+Host permissions:
+
+- `https://bugcrowd.com/*`
+- `https://api.bugcrowd.com/*`
+
+No arbitrary-site, browsing-history, clipboard, remote-code, or telemetry permissions are included.
+
+## 9. Evidence model
+
+Every evidence object is immutable and content-addressed.
+
+```yaml
+id: ev_7c9b52d8a91f
+source_key: dom:details:program-rules:automation
+source:
+  url: https://bugcrowd.com/engagements/aiven-mbb-og
+  type: dom
+  authenticated: true
+locator:
+  section: Program Rules
+  subsection: Automated testing
+source_level: explicit_program_rule
+collected_at: 2026-09-20T01:10:22+07:00
+quote: Automated scanning is permitted only against explicitly listed targets.
+content_hash: sha256:7c9b52d8a91fc705fd6f3f56ea2fa8964e29686789a8ad8f8db5a1966f237175
+extraction:
+  status: exact
+  parser_version: 2.0.0
+```
+
+Rules:
+
+- `id` is `ev_` plus the first 12 hexadecimal characters of the SHA-256 digest of `EvidenceHashInputV1`.
+- `content_hash` is the full SHA-256 digest of the same preimage.
+- `source_key` identifies the logical source location across future snapshots.
+- `quote` is the exact normalized source text, not a generated paraphrase.
+- Extraction status is `exact`, `partial`, or `failed`.
+- V1 does not emit uncalibrated numerical confidence scores.
+- Partial evidence cannot establish any asserted permission status: `allowed`, `prohibited`, or `conditional`.
+
+`EvidenceHashInputV1` contains exactly:
+
+```yaml
+schema_version: 2
+source_type: dom
+source_authenticated: true
+canonical_source_url: https://bugcrowd.com/engagements/aiven-mbb-og
+source_key: dom:details:program-rules:automation
+source_level: explicit_program_rule
+canonical_locator:
+  section: Program Rules
+  subsection: Automated testing
+normalized_quote: Automated scanning is permitted only against explicitly listed targets.
+```
+
+The preimage excludes collection time, parser runtime/version, job ID, Promise completion order, and volatile DOM IDs. Therefore the same statement at the same logical authenticated source produces the same ID; a different source, locator, authentication context, or statement produces a different ID.
+
+## 10. Identifiers and applicability
+
+Official API UUIDs are used when available. Otherwise the exporter creates a deterministic target ID from:
+
+- Stable engagement identity.
+- Canonical exact target location; when no location exists, the explicit target name is a documented lower-quality fallback.
+- Stable target type/category discriminator.
+
+Target-group membership is a property/reference and is not part of the default target identity. Moving a target between reward or scope groups must not create a new target ID.
+
+If the same canonical location/name and type occur more than once, the exporter adds a deterministic occurrence discriminator after canonical sorting and marks the identity as duplicate-disambiguated. Derived records expose `id_source: derived` and `identity_quality: exact_location`, `name_fallback`, or `duplicate_disambiguated`.
+
+Applicability uses IDs rather than free-text names:
+
+```yaml
+applies_to:
+  type: target_ids
+  ids:
+    - target_7c59a0dc
+```
+
+Allowed applicability types:
+
+- `all_targets`
+- `target_ids`
+- `target_group_ids`
+- `engagement`
+
+## 11. Evidence-backed policy facts
+
+Permission-like constraints use exactly four source statuses:
+
+- `allowed`
+- `prohibited`
+- `conditional`
+- `unspecified`
+
+Non-permission facts use domain-specific states. For example, Safe Harbor uses `present`, `absent`, or `unclear`.
+
+```yaml
+automated_scanning:
+  status: conditional
+  conditions:
+    - id: condition_001
+      text: Only against targets explicitly listed in scope.
+  applies_to:
+    type: target_ids
+    ids:
+      - target_7c59a0dc
+  evidence_refs:
+    - ev_7c9b52d8a91f
+  conflict:
+    detected: false
+    evidence_refs: []
+  extraction:
+    status: exact
+```
+
+Every asserted permission status (`allowed`, `prohibited`, or `conditional`) requires at least one exact explicit supporting evidence object. Partial evidence may remain attached for human review, but it cannot establish any asserted status; the normalized status remains `unspecified`.
+
+## 12. Conflict model
+
+Conflicting evidence is preserved rather than resolved by the exporter.
+
+```yaml
+conflict:
+  detected: true
+  evidence_refs:
+    - ev_a104986dfc10
+    - ev_8974e2fbc442
+resolution:
+  status: unresolved
+```
+
+The exporter records each source's level and timestamp. It does not assume that target-specific rules, announcements, program rules, or VRT text override each other.
+
+Recommended downstream semantics are documented but are not emitted as Bugcrowd facts:
+
+- Explicit allowed evidence may be evaluated for `ALLOW` after conditions and applicability pass.
+- Explicit prohibited evidence produces `DENY`.
+- Unspecified, conflict, or incomplete collection produces `REVIEW`.
+- An unattended agent treats `REVIEW` as `execution_allowed: false`.
+
+`unspecified` is never rewritten as `prohibited`.
+
+## 13. Known Issues collection
+
+For each target:
+
+1. Record the displayed issue count.
+2. Skip expansion only when the displayed count is exactly zero.
+3. Open the Known Issues control and wait for a semantic ready condition.
+4. Capture column labels and every displayed row.
+5. Compute a page signature from canonical column labels and rows.
+6. Advance through enabled pagination or load-more controls.
+7. Stop at a disabled/end control or repeated signature.
+8. Deduplicate exact repeated rows while preserving order.
+9. Close the control and continue.
+10. Compare collected and displayed counts.
+
+Each row retains raw evidence. Recognized fields such as VRT category, variant, priority, unique count, total count, target, status, and notes are normalized only when explicit labels support the mapping.
+
+A count mismatch creates a collection warning and prevents the Known Issues section from being marked complete.
+
+## 14. Canonicalization and hashing
+
+V1 includes hashing even though historical diffing is deferred.
+
+Canonicalization rules:
+
+- UTF-8 encoding.
+- LF line endings.
+- Unicode NFC normalization.
+- Canonical JSON for structured data with object keys sorted lexicographically.
+- Arrays preserve source order unless a schema field explicitly declares set semantics.
+- Canonical source URLs lowercase scheme/host, remove default ports and fragments, remove known tracking parameters, and preserve path plus content-affecting query parameters.
+- Canonical locators contain only stable semantic fields such as section, subsection, target ID, table identity, page index, and row index; they exclude runtime DOM node IDs.
+- Volatile UI IDs, job IDs, collection timestamps, parser runtime/version, and scheduling order are excluded from evidence content hashes.
+- Before calculating `evidence_corpus_hash` or rendering the evidence appendix, evidence objects are sorted by fixed source-type order, then `source_key`, canonical-locator JSON, and evidence ID.
+- The fixed source-type order is `api`, then `dom`.
+- The normalized model sorts ID-addressed sets by stable ID while preserving source order for semantically ordered content such as announcements and changelog entries.
+- `normalized_hash` excludes export timestamp, job ID, progress state, and other volatile collection metadata.
+
+Collection integrity fields:
+
+```yaml
+collection:
+  status: complete
+  api_status: complete
+  dom_status: complete
+  parser_version: 2.0.0
+  evidence_corpus_hash: sha256:6ec9ca63d39936f920c4de95f5c4fb08e597a699e841093117a11e8a89ba0c12
+  normalized_hash: sha256:16b23df250b2effc02db49829d265a119ad4d3e02b98acb943bf8e60ac72f72a
+integrity:
+  evidence_hash_valid: true
+  known_issues_counts_valid: true
+  required_sections_complete: true
+quality:
+  warnings: []
+policy:
+  conflicts_present: false
+  unresolved_conflicts: 0
+```
+
+`evidence_corpus_hash` hashes the canonically sorted evidence objects and is independent of asynchronous collection completion order. It does not claim to hash the entire raw HTML document. `normalized_hash` hashes the canonical normalized fact model, not the rendered Markdown.
+
+`collection.status` is strictly one of `complete`, `partial`, or `failed`. Warnings and policy conflicts never create additional collection-status values.
+
+## 15. Collection workflow
+
+1. Validate the active engagement URL.
+2. Create a job ID, persist the active-job descriptor in `chrome.storage.session`, and initialize its IndexedDB record store without storing secrets.
+3. Collect Details and discover stable target/group identifiers.
+4. In parallel where safe, query the official API and collect independent page sections.
+5. Collect and validate all Known Issues sequentially to avoid UI races.
+6. Exhaust announcements and changelog pagination.
+7. Collect recent activity, accepted reports, participation, and response statistics.
+8. Build evidence objects.
+9. Normalize evidence-backed facts.
+10. Detect missing sections, count mismatches, and conflicts.
+11. Compute canonical hashes.
+12. Render and download the Markdown.
+13. Restore the original page state and clear the active descriptor and intermediate records after the final result is acknowledged.
+
+Every workflow step is a named idempotent unit. Before starting a unit, the coordinator persists the expected phase and unit ID. After receiving a valid result, it commits the deterministic unit output to IndexedDB and only then marks the unit complete and advances the checkpoint.
+
+## 16. Markdown document structure
+
+The output file is named:
+
+`bugcrowd-{engagement-code}-{YYYY-MM-DD}.md`
+
+It contains:
+
+1. YAML front matter with schema, source, engagement identity, independent collection/API/DOM statuses, integrity flags, hashes, warnings, and policy conflicts.
+2. `Agent Facts` as a YAML code block containing evidence-backed normalized fields.
+3. Engagement overview and key statistics.
+4. Authorization and Safe Harbor.
+5. In-scope and out-of-scope inventory.
+6. Reward matrices.
+7. Known Issues grouped by target.
+8. VRT policy.
+9. Testing, account, resource, and data constraints.
+10. Focus areas and explicit exclusions.
+11. Credentials and access.
+12. Reporting requirements.
+13. Announcements and changelog.
+14. Recent activity, participation, and response statistics.
+15. Evidence objects.
+16. Collection provenance, conflicts, missing sections, and warnings.
+
+Rich source content preserves headings, lists, tables, code, emphasis, and absolute links. Policy text is not summarized, translated, or reinterpreted.
+
+## 17. Progress and cancellation
+
+`chrome.storage.session` stores the active job ID, tab ID, engagement code, phase, unit checkpoint, completed/pending unit IDs, progress counters, warnings, and cancellation flag. It never stores the token, Authorization header, or the complete dossier.
+
+Intermediate canonical records are stored in extension-origin IndexedDB so a replacement service worker can resume without relying on lost global variables. The design guarantees recovery from service-worker termination within the same browser session. Closing or restarting the browser cancels the active V1 job; historical cross-session job recovery is outside scope.
+
+Closing the popup does not cancel collection. Reopening it reconnects to the active job.
+
+Cancellation stops before the next request or UI action, closes exporter-opened UI, restores the initial URL, and does not automatically download a partial file.
+
+## 18. Error handling
+
+Warnings, completeness, and conflicts are independent:
+
+- `collection.status: complete` means every required collection unit completed and all required count validations passed.
+- `collection.status: partial` means at least one required advertised unit is missing, truncated, or fails validation.
+- `collection.status: failed` means the dataset is unusable because a critical prerequisite failed.
+- API unavailability may coexist with complete DOM collection and therefore does not automatically make the overall collection partial.
+- A policy conflict may coexist with complete collection; it is represented under `policy`, not by changing collection status.
+
+The following may create warnings without necessarily making collection partial:
+
+- Missing, invalid, unauthorized, or rate-limited API token.
+- API engagement not found by code.
+- A statistic that the page does not expose for this engagement.
+- Conflicting authoritative evidence when both sources were collected completely.
+
+The following make collection partial:
+
+- Known Issues count mismatch or truncated Known Issues pagination.
+- Failure to collect an advertised required section.
+- A selector failure that prevents completion of a required collection unit.
+
+API `429` honors `Retry-After`; otherwise the exporter uses bounded exponential backoff with jitter.
+
+Critical failures produce `collection.status: failed` and no automatic download:
+
+- Unsupported active URL.
+- Browser session expiry or redirect to login during DOM collection.
+- Complete failure to collect Details.
+- Active engagement tab closure.
+
+Errors never include cookies, tokens, Authorization headers, or complete raw HTTP headers.
+
+## 19. Security and privacy
+
+- The API token is stored only in `chrome.storage.local` and is never synchronized.
+- `chrome.storage.local` is restricted to `TRUSTED_CONTEXTS` during installation and at every service-worker startup before any credential access.
+- Only the background service worker reads the token.
+- The extension does not claim the token is encrypted.
+- Requests are restricted to Bugcrowd host permissions.
+- The background exposes no generic authenticated `fetch(url)` message. All authenticated requests are constructed from an operation allowlist and validated typed parameters.
+- No remote JavaScript, CDN dependency, analytics SDK, telemetry, or eval-like code is permitted.
+- Page text is untrusted data and cannot alter permissions, destinations, or token handling.
+- Private submissions are neither requested nor exported.
+- Evidence excerpts contain only engagement content intentionally visible to the signed-in researcher.
+
+## 20. Testing strategy
+
+### Unit tests
+
+- URL parsing and deterministic ID generation.
+- Token normalization and secret redaction.
+- Background operation allowlisting, message-schema validation, sender/tab/job/phase validation, and rejection of URL/header injection.
+- API engagement, brief, target group, target, and reward parsing.
+- DOM metadata, statistics, policy, target, announcement, changelog, and activity parsing.
+- Evidence content addressing and stable `source_key` generation.
+- Canonical JSON and reproducible hashes.
+- Evidence-hash preimage behavior: identical logical source/text is stable, identical text at different sources differs, and changed text differs.
+- Corpus hashing and evidence rendering under randomized asynchronous completion order.
+- Derived target-ID stability when only target-group membership changes.
+- Four-state permission semantics and Safe Harbor domain states.
+- Applicability by target/group IDs.
+- Conflict detection without automatic resolution.
+- Known Issues pagination, exact deduplication, and count validation.
+- Markdown escaping, link normalization, and deterministic file naming.
+
+### Fixture and integration tests
+
+- Multiple in-scope and out-of-scope target groups.
+- Zero, one, and multi-page Known Issues.
+- Target-specific and program-level rule conflicts.
+- Valid token, no token, malformed token, `401`, `403`, and `429`.
+- A compatible V1 minor-version response and a response with no observable exact-version signal.
+- Complete collection with warnings, complete collection with unresolved policy conflicts, partial collection without conflicts, and failed collection.
+- Missing optional sections and isolated selector changes.
+- Browser session expiry.
+- Popup reconnection and cancellation.
+- Service-worker termination between units and during an idempotent unit retry.
+- Checkpoint recovery with committed intermediate records and rejection of a checkpoint that references missing records.
+- Secret scans across progress state, logs, errors, and output.
+
+Fixtures are sanitized and contain no real tokens, cookies, private submissions, or personal account data.
+
+### Manual acceptance test
+
+Use Aiven Managed Bug Bounty as the primary end-to-end case:
+
+1. Export without a token and verify DOM fallback.
+2. Export with a valid token and verify API enrichment.
+3. Compare target groups, rewards, locations, tags, and Known Issues counts with the live brief.
+4. Verify rules have evidence references and no inferred permission.
+5. Verify announcements, changelog, recent activity, accepted reports, participation, validation time, vulnerabilities rewarded, and average payout.
+6. Recompute hashes from canonical models and confirm equality.
+7. Search output and logs for token material and Authorization headers; none may exist.
+
+## 21. Acceptance criteria
+
+- The unpacked extension installs without Manifest V3 errors.
+- A content-script integration test confirms that `chrome.storage.local` does not expose the API credential after `TRUSTED_CONTEXTS` is applied.
+- Content-script attempts to request an arbitrary authenticated URL or inject request headers are rejected.
+- Export is enabled only on supported engagement URLs.
+- No-token and valid-token flows both work.
+- An export resumes after forced service-worker termination without duplicated evidence or skipped units.
+- Every normalized permission or restriction is evidence-backed or remains `unspecified`.
+- No `allowed`, `prohibited`, or `conditional` status is produced solely from partial evidence.
+- Every applicability record uses stable IDs.
+- Conflicts remain unresolved facts and are visible to downstream consumers.
+- Collection completeness, API/DOM availability, integrity flags, warnings, and policy conflicts are represented independently.
+- Every non-zero Known Issues target is attempted and validated.
+- Changelog and announcements are exhausted, not limited to previews.
+- Required activity, participation, payout, and validation statistics are included when exposed.
+- No private submissions are accessed.
+- Authentication loss cannot produce an output labeled complete.
+- Evidence and normalized hashes are reproducible.
+- Identical evidence collected in different Promise completion orders produces the same corpus hash and rendered evidence order.
+- Moving a derived-ID target between groups does not change its target ID.
+- Output structure and file naming are deterministic.
+
+## 22. Deferred product features
+
+- Snapshot persistence and history.
+- Diff engine and rule history.
+- Scope, reward, target, and Known Issues change detection.
+- Attack-surface delta generation.
+- Batch or scheduled engagement exports.
+- Firefox/Safari packaging and Chrome Web Store publication.
+- AI-generated recommendations or autonomous testing.
+- Cloud storage or upload to an AI service.
+
+## 23. References
+
+- Bugcrowd API Getting Started: <https://docs.bugcrowd.com/api/getting-started/>
+- Bugcrowd API Usage: <https://docs.bugcrowd.com/api/usage/>
+- Bugcrowd OpenAPI 1.1.0: <https://bugcrowd.com/openapi/1.1.0/openapi.yml>
+- Bugcrowd Researcher Brief Details: <https://docs.bugcrowd.com/researchers/engagement-management/details/>
