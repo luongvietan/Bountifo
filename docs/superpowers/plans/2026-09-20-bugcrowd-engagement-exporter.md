@@ -168,7 +168,7 @@ export function parseEngagementUrl(raw: string): ParsedEngagementUrl | null;
 //   matches https://bugcrowd.com/engagements/<code>(optional subpath/query); null otherwise
 export function isSupportedEngagementUrl(raw: string): boolean;
 export function exportFileName(engagementCode: string, date: Date): string;
-//   `bugcrowd-${code}-${yyyy}-${mm}-${dd}` local time, zero-padded
+//   `bugcrowd-${code}-${yyyy}-${mm}-${dd}.md` local time, zero-padded, INCLUDING the .md extension (spec §16)
 export interface DerivedTargetIdInput {
   engagementId: string;            // API UUID else canonical engagement URL
   location: string | null; name: string | null; type: string | null; occurrence?: number;
