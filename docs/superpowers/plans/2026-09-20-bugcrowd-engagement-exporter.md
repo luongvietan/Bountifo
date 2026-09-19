@@ -379,7 +379,7 @@ export interface DomTargetGroup { domKey: string; name: string; inScope: boolean
   rewards: {p1:number|null;p2:number|null;p3:number|null;p4:number|null;p5:number|null} }
 export interface DomTarget { domKey: string; groupDomKey: string|null; location: string|null;
   name: string|null; category: string|null; tags: string[]; docLinks: string[]; changeFlags: string[];
-  displayedKnownIssuesCount: number|null; kiControlLabel: string|null }
+  inScope: boolean; displayedKnownIssuesCount: number|null; kiControlLabel: string|null }
 export interface DomRule { text: string; appliesToDomKeys: string[]; level: SourceLevel }
 export function collectTargets(doc: Document, pageUrl: string):
   { records: SourceRecord[]; groups: DomTargetGroup[]; targets: DomTarget[]; rules: DomRule[] };
