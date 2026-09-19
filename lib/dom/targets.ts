@@ -480,9 +480,12 @@ export function collectTargets(
     // this element (nested candidates own their own subtrees).
     const owned = (el: Element): boolean =>
       nearestCandidate(el, candSet) === scope.el;
+    // Elements that are themselves candidates self-process (mirroring how
+    // nested <section> candidates work) — excluding them here prevents
+    // their content being emitted twice.
     const groupEls = [
       ...scope.el.querySelectorAll("article,[role='group']"),
-    ].filter(owned);
+    ].filter((g) => owned(g) && !candSet.has(g));
     // scope.el may itself be an <article> candidate — its own closest match
     // is itself, which must not disqualify its direct content.
     const inNestedGroup = (el: Element): boolean => {
@@ -498,6 +501,10 @@ export function collectTargets(
 
     for (const g of groupEls) {
       const name = sectionHeading(g) ?? scope.heading;
+      // Direct content only: content inside a nested group or a nested
+      // candidate belongs to that element, which processes it separately.
+      const direct = (el: Element): boolean =>
+        owned(el) && el.closest("article,[role='group']") === g;
       processGroup({
         name,
         inScope: scope.inScope,
@@ -505,10 +512,10 @@ export function collectTargets(
         index: groupIndex++,
         quoteEl: g,
         descRoot: g,
-        owned: (el) => g.contains(el),
-        tables: [...g.querySelectorAll("table")],
+        owned: direct,
+        tables: [...g.querySelectorAll("table")].filter(direct),
         notes: [...g.querySelectorAll(NOTE_SEL)].filter(
-          (n) => n.closest("tr") === null,
+          (n) => direct(n) && n.closest("tr") === null,
         ),
       });
     }

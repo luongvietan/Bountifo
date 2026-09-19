@@ -139,6 +139,50 @@ describe("collectTargets wrapper sections", () => {
   });
 });
 
+describe("collectTargets nested candidates", () => {
+  const nested = collectTargets(
+    loadDoc("targets-nested-candidate.html"),
+    PAGE_URL,
+  );
+
+  it("emits a heading-matching <article> nested in a candidate <section> once", () => {
+    // The article is a scope candidate itself — it self-processes as an
+    // implicit group; the outer section must not also emit it via groupEls.
+    const inScopeGroups = nested.groups.filter(
+      (g) => g.name === "In-scope targets",
+    );
+    expect(inScopeGroups).toHaveLength(1);
+    const hits = nested.targets.filter(
+      (t) => t.location === "nested.acme.example",
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.groupDomKey).toBe(inScopeGroups[0]?.domKey);
+    expect(hits[0]?.inScope).toBe(true);
+    const notes = nested.rules.filter((r) => r.text.includes("VPN access"));
+    expect(notes).toHaveLength(1);
+    expect(notes[0]?.appliesToDomKeys).toEqual([inScopeGroups[0]?.domKey]);
+    // The outer "Scope" candidate has no direct content → no group.
+    expect(nested.groups.find((g) => g.name === "Scope")).toBeUndefined();
+    // One target record, not a -2-suffixed duplicate.
+    const recs = nested.records.filter((r) =>
+      r.sourceKey.startsWith("dom:scope:target:nested-acme-example"),
+    );
+    expect(recs).toHaveLength(1);
+  });
+
+  it("does not let a non-candidate group reach into a nested candidate", () => {
+    // <div role="group"> wrapping a candidate <article>: the article owns
+    // its table; the group emits without stealing the candidate's content.
+    const apiGroups = nested.groups.filter((g) => g.name === "API targets");
+    expect(apiGroups).toHaveLength(1);
+    const deep = nested.targets.filter(
+      (t) => t.location === "deep.acme.example",
+    );
+    expect(deep).toHaveLength(1);
+    expect(deep[0]?.groupDomKey).toBe(apiGroups[0]?.domKey);
+  });
+});
+
 describe("collectTargets records", () => {
   it("emits well-formed records under dom:scope", () => {
     assertRecordsWellFormed(records);

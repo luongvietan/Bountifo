@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head><title>Acme Corp Bug Bounty | Bugcrowd</title></head>
+<body>
+<main aria-label="Engagement scope">
+  <section aria-labelledby="scope-heading">
+    <h2 id="scope-heading">Scope</h2>
+    <!-- An article whose own heading is scope-y: it is a candidate itself
+         and must self-process — the outer section must not also emit its
+         content as a group. -->
+    <article aria-labelledby="nested-scope-heading">
+      <h3 id="nested-scope-heading">In-scope targets</h3>
+      <table aria-label="Targets">
+        <thead><tr><th>Target</th><th>Category</th></tr></thead>
+        <tbody><tr><td>nested.acme.example</td><td>Web application</td></tr></tbody>
+      </table>
+      <p role="note">Nested article targets require VPN access.</p>
+    </article>
+    <!-- A non-candidate group wrapping a nested candidate: the group's
+         tables must not reach into the nested candidate either. -->
+    <div role="group" aria-labelledby="partner-heading">
+      <h3 id="partner-heading">Partner targets</h3>
+      <article aria-labelledby="api-heading">
+        <h4 id="api-heading">API targets</h4>
+        <table aria-label="Targets">
+          <thead><tr><th>Target</th><th>Category</th></tr></thead>
+          <tbody><tr><td>deep.acme.example</td><td>API</td></tr></tbody>
+        </table>
+      </article>
+    </div>
+  </section>
+</main>
+</body>
+</html>

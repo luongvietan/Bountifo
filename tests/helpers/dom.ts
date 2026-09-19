@@ -8,6 +8,7 @@ import detailsHtml from "../fixtures/dom/details.html?raw";
 import policiesHtml from "../fixtures/dom/policies.html?raw";
 import sessionExpiredHtml from "../fixtures/dom/session-expired.html?raw";
 import targetsHtml from "../fixtures/dom/targets.html?raw";
+import targetsNestedCandidateHtml from "../fixtures/dom/targets-nested-candidate.html?raw";
 import targetsWrapperHtml from "../fixtures/dom/targets-wrapper.html?raw";
 
 export const PAGE_URL = "https://bugcrowd.com/engagements/acme-bb";
@@ -19,6 +20,7 @@ const FIXTURES: Record<string, string> = {
   "policies.html": policiesHtml,
   "session-expired.html": sessionExpiredHtml,
   "targets.html": targetsHtml,
+  "targets-nested-candidate.html": targetsNestedCandidateHtml,
   "targets-wrapper.html": targetsWrapperHtml,
 };
 
