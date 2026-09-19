@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head><title>Acme Corp Bug Bounty | Bugcrowd</title></head>
+<body>
+<main aria-label="Engagement scope">
+  <section aria-labelledby="scope-heading">
+    <h2 id="scope-heading">Scope</h2>
+    <table aria-label="Targets">
+      <thead>
+        <tr><th>Target</th><th>Category</th><th>Known issues</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>vpn.acme.example</td>
+          <td>Network service</td>
+          <td>
+            <span aria-label="5 known issues">5</span>
+            <button type="button">View known issues</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+</main>
+<div role="dialog" aria-label="Known issues" hidden>
+  <button type="button" aria-label="Close">×</button>
+  <table>
+    <thead>
+      <tr><th>Priority</th><th>Variant</th><th>Count</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>P1</td><td>RCE via VPN config</td><td>1</td></tr>
+      <tr><td>P4</td><td>Weak cipher suite</td><td>1</td></tr>
+    </tbody>
+  </table>
+  <nav aria-label="Pagination">
+    <button type="button" aria-label="Next page" disabled>Next</button>
+  </nav>
+</div>
+</body>
+</html>

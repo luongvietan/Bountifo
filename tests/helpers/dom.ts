@@ -5,6 +5,10 @@ import type { SourceLevel, SourceRecord } from "../../lib/types";
 import activityHtml from "../fixtures/dom/activity.html?raw";
 import activityPage2Html from "../fixtures/dom/activity-page2.html?raw";
 import detailsHtml from "../fixtures/dom/details.html?raw";
+import kiMismatchHtml from "../fixtures/dom/ki-mismatch.html?raw";
+import kiMultiHtml from "../fixtures/dom/ki-multi.html?raw";
+import kiOneHtml from "../fixtures/dom/ki-one.html?raw";
+import kiZeroHtml from "../fixtures/dom/ki-zero.html?raw";
 import policiesHtml from "../fixtures/dom/policies.html?raw";
 import sessionExpiredHtml from "../fixtures/dom/session-expired.html?raw";
 import targetsHtml from "../fixtures/dom/targets.html?raw";
@@ -17,6 +21,10 @@ const FIXTURES: Record<string, string> = {
   "activity.html": activityHtml,
   "activity-page2.html": activityPage2Html,
   "details.html": detailsHtml,
+  "ki-mismatch.html": kiMismatchHtml,
+  "ki-multi.html": kiMultiHtml,
+  "ki-one.html": kiOneHtml,
+  "ki-zero.html": kiZeroHtml,
   "policies.html": policiesHtml,
   "session-expired.html": sessionExpiredHtml,
   "targets.html": targetsHtml,
