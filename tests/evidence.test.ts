@@ -7,6 +7,7 @@ import {
   evidenceHashInputV1,
   normalizedHash,
   sortEvidenceForCorpus,
+  validateEvidenceSet,
 } from "../lib/evidence";
 import type { SourceRecord } from "../lib/types";
 
@@ -375,6 +376,19 @@ describe("normalizedHash", () => {
     expect(a).toBe(b);
     const c = await normalizedHash({ a: { c: "x", d: [1, 2] }, b: 2 });
     expect(c).not.toBe(a);
+  });
+});
+
+describe("validateEvidenceSet", () => {
+  it("recomputes evidence hashes instead of accepting valid-looking corruption", async () => {
+    const records = [makeRec()];
+    const evidence = await buildEvidence(records, { collectedAt: COLLECTED });
+    await expect(validateEvidenceSet(records, evidence)).resolves.toBe(true);
+    await expect(
+      validateEvidenceSet(records, [
+        { ...evidence[0]!, content_hash: `sha256:${"f".repeat(64)}` },
+      ]),
+    ).resolves.toBe(false);
   });
 });
 

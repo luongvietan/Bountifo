@@ -41,9 +41,12 @@ export async function getCredential(): Promise<string | null> {
   return typeof value === "string" ? value : null;
 }
 
-/** Removes the stored credential; a no-op while storage is locked. */
+/**
+ * Removes the stored credential unconditionally. A failed lockdown check must
+ * prevent reading/writing a token, but it must never make an existing secret
+ * undeletable from the trusted service-worker context.
+ */
 export async function clearCredential(): Promise<void> {
-  if (!(await credentialStorageUsable())) return;
   await browser.storage.local.remove(CREDENTIAL_STORAGE_KEY);
 }
 

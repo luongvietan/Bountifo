@@ -1,7 +1,12 @@
 import { browser } from "wxt/browser";
 import { normalizeText } from "../canonical";
 import { downloadMarkdown } from "../download";
-import { buildEvidence, evidenceCorpusHash, normalizedHash } from "../evidence";
+import {
+  buildEvidence,
+  evidenceCorpusHash,
+  normalizedHash,
+  validateEvidenceSet,
+} from "../evidence";
 import { exportFileName, isSupportedEngagementUrl, parseEngagementUrl } from "../ids";
 import type { JobMessage } from "../messages";
 import { validateJobSender } from "../messages";
@@ -504,8 +509,9 @@ export class JobCoordinator {
           : [`unit_${result.status}:${result.unitId}`],
     }));
     const corpusHash = await evidenceCorpusHash(evidence);
+    const evidenceHashValid = await validateEvidenceSet(records, evidence);
     const placeholder = `sha256:${"0".repeat(64)}`;
-    let integrity = computeIntegrity({ outcomes, kiResults, apiFailed: api === null, domCriticalFailure: null, facts, evidence, corpusHash, normalizedHash: placeholder });
+    let integrity = computeIntegrity({ outcomes, kiResults, apiFailed: api === null, domCriticalFailure: null, facts, evidence, corpusHash, normalizedHash: placeholder, evidenceHashValid });
     const args = {
       jobId: descriptor.jobId,
       generatedAt: this.deps.now(),
@@ -529,7 +535,7 @@ export class JobCoordinator {
     const stripped = stripVolatile(draft) as any;
     stripped.collection.normalized_hash = "";
     const hash = await normalizedHash(stripped);
-    integrity = computeIntegrity({ outcomes, kiResults, apiFailed: api === null, domCriticalFailure: null, facts, evidence, corpusHash, normalizedHash: hash });
+    integrity = computeIntegrity({ outcomes, kiResults, apiFailed: api === null, domCriticalFailure: null, facts, evidence, corpusHash, normalizedHash: hash, evidenceHashValid });
     const document = assembleDocument({ ...args, integrity });
     await commitUnit(db, descriptor.jobId, "u11_integrity_check", { blob: { kind: "document", value: document } }, { unitId: "u11_integrity_check", status: "ok", committedAt: this.deps.now() });
     await this.persist({ unresolvedConflicts: integrity.policy.unresolved_conflicts, warnings: integrity.quality.warnings.length });

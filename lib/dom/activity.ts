@@ -29,7 +29,6 @@ export interface ParticipationStats {
   [key: string]: { value: string; window: string | null };
 }
 
-const MAX_PAGES = 10;
 const NEXT_LINK_TEXT_RE = /^(next|next page|older|show more|load more|see more|more)$/i;
 const NEXT_LINK_LABEL_RE = /next|older|more pages|load more|show more/i;
 const ISO_DATE_RE = /\d{4}-\d{2}-\d{2}(?:[T ][\d:.-]+Z?)?/;
@@ -164,7 +163,8 @@ interface BucketResult {
 /**
  * Collects one feed bucket; for announcements/changelog, follows the next-page
  * link inside the section via fetchPage until absent, a null/failed fetch, a
- * page cap, or a repeated item signature (spec §6.2, §15 step 6).
+ * or a repeated page URL (spec §6.2, §15 step 6). There is no silent page
+ * cap: advertised history must be exhausted for a complete collection.
  */
 async function collectBucket(
   bucket: (typeof BUCKETS)[number],
@@ -181,7 +181,7 @@ async function collectBucket(
   let doc = startDoc;
   let url = startUrl;
 
-  for (let depth = 0; depth < MAX_PAGES; depth++) {
+  for (let depth = 0; ; depth++) {
     const section = findSection(doc, bucket.re);
     if (section === null) break;
     sectionName = sectionName ?? sectionHeading(section);

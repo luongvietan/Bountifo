@@ -14,6 +14,28 @@ function mockFetch() {
 }
 
 describe("collectActivity", () => {
+  it("does not silently truncate announcement history after ten pages", async () => {
+    const pageUrl = (page: number) => `${PAGE_URL}/announcements?page=${page}`;
+    const docFor = (page: number) =>
+      new DOMParser().parseFromString(
+        `<section><h2>Announcements</h2><article><h3>Item ${page}</h3><p>Body ${page}</p></article>${
+          page < 12 ? `<a rel="next" href="${pageUrl(page + 1)}">Next</a>` : ""
+        }</section>`,
+        "text/html",
+      );
+    const fetchPage = vi.fn(async (url: string) => {
+      const page = Number(new URL(url).searchParams.get("page"));
+      return Number.isInteger(page) && page >= 2 && page <= 12
+        ? docFor(page)
+        : null;
+    });
+    const result = await collectActivity(docFor(1), pageUrl(1), fetchPage);
+    expect(result.announcements.map((item) => item.title)).toEqual(
+      Array.from({ length: 12 }, (_, i) => `Item ${i + 1}`),
+    );
+    expect(fetchPage).toHaveBeenCalledTimes(11);
+  });
+
   it("exhausts announcement pagination via fetchPage until no next link", async () => {
     const fetchPage = mockFetch();
     const res = await collectActivity(loadDoc("activity.html"), PAGE_URL, fetchPage);

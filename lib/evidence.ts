@@ -160,6 +160,36 @@ export async function evidenceCorpusHash(evs: Evidence[]): Promise<string> {
 }
 
 /**
+ * Rebuilds the immutable evidence set from its source records and compares the
+ * hash projections. This catches valid-looking but incorrect ids/hashes (or a
+ * quote/source/locator changed without updating its hash); timestamp and
+ * parser metadata remain deliberately outside the hash contract.
+ */
+export async function validateEvidenceSet(
+  records: SourceRecord[],
+  evidence: Evidence[],
+): Promise<boolean> {
+  const rebuilt = await buildEvidence(records, { collectedAt: "" });
+  const expected = new Map(
+    rebuilt.map((item) => [
+      item.id,
+      `${item.content_hash}\n${canonicalJson(hashInputProjection(item))}`,
+    ]),
+  );
+  const actual = new Map(
+    evidence.map((item) => [
+      item.id,
+      `${item.content_hash}\n${canonicalJson(hashInputProjection(item))}`,
+    ]),
+  );
+  if (expected.size !== actual.size) return false;
+  for (const [id, projection] of expected) {
+    if (actual.get(id) !== projection) return false;
+  }
+  return true;
+}
+
+/**
  * `sha256:`+hex over canonicalJson of a model. The caller strips volatile
  * fields (export timestamp, job id, progress state) beforehand.
  */

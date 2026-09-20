@@ -150,14 +150,14 @@ describe("credential ops fail closed when storage is locked", () => {
     expect(stored[CREDENTIAL_STORAGE_KEY]).toBeUndefined();
   });
 
-  it("does not remove a stored credential when locked", async () => {
+  it("still removes a stored credential when lockdown verification fails", async () => {
     await fakeBrowser.storage.local.set({ apiCredential: "abc123" });
     const { clearCredential, CREDENTIAL_STORAGE_KEY } = await import(
       "../lib/tokenOps"
     );
     await expect(clearCredential()).resolves.toBeUndefined();
     const stored = await fakeBrowser.storage.local.get(CREDENTIAL_STORAGE_KEY);
-    expect(stored[CREDENTIAL_STORAGE_KEY]).toBe("abc123");
+    expect(stored[CREDENTIAL_STORAGE_KEY]).toBeUndefined();
   });
 
   it("reports invalid input even when storage is locked (normalize runs first)", async () => {

@@ -97,6 +97,8 @@ export function computeIntegrity(args: {
   evidence: Evidence[];
   corpusHash: string;
   normalizedHash: string;
+  /** Caller-supplied recomputation result; format checks remain the fallback. */
+  evidenceHashValid?: boolean;
 }): IntegrityReport {
   const { outcomes, kiResults, apiFailed, domCriticalFailure } = args;
   const byId = new Map(outcomes.map((o) => [o.unitId, o]));
@@ -182,8 +184,9 @@ export function computeIntegrity(args: {
   // present and well-formed, and that every evidence object carries a
   // well-formed content hash.
   const evidence_hash_valid =
-    SHA256_RE.test(args.corpusHash) &&
-    args.evidence.every((e) => SHA256_RE.test(e.content_hash));
+    args.evidenceHashValid ??
+    (SHA256_RE.test(args.corpusHash) &&
+      args.evidence.every((e) => SHA256_RE.test(e.content_hash)));
 
   return {
     collection: {
