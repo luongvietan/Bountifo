@@ -111,6 +111,7 @@ describe("RUN_UNIT dispatch", () => {
     const order: string[] = [];
     vi.mocked(deps.ensureRendered!).mockImplementation(async () => {
       order.push("render");
+      return { settled: true, reason: null };
     });
     vi.mocked(deps.collectTargets).mockImplementation(() => {
       order.push("collect");

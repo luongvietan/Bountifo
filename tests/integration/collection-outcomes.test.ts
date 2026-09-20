@@ -38,6 +38,24 @@ describe("collection outcomes", () => {
     expect(markdown).toContain("ki_count_mismatch");
   });
 
+  it("names an unrendered brief in the warnings", async () => {
+    // The brief renders lazily; a hidden tab never renders it at all. What
+    // was collected is still exported, and the dossier says why it may be
+    // thin rather than leaving an empty section to speak for itself.
+    const { markdown } = await run({ renderStall: "page_hidden" });
+    expect(markdown).toContain("render_not_settled:page_hidden");
+    // One warning, not one per unit that read the page.
+    expect(markdown!.match(/render_not_settled:page_hidden/g)).toHaveLength(1);
+  });
+
+  it("does not call a rendering shortfall a missing section", async () => {
+    // Every section did collect here, so the export is still complete; the
+    // warning is a caveat, not a verdict.
+    const { markdown } = await run({ renderStall: "still_loading" });
+    expect(markdown).toContain("status: complete");
+    expect(markdown).toContain("render_not_settled:still_loading");
+  });
+
   it("fails on session expiry and never downloads", async () => {
     const { coordinator, download, messages } = await run({ fatalKind: "collect_targets" });
     expect(coordinator.state?.phase).toBe("failed");

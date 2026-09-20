@@ -35,6 +35,8 @@ export interface HarnessOptions {
   conflict?: boolean;
   kiMismatch?: boolean;
   fatalKind?: string;
+  /** Reported by the content script when the brief never finished rendering. */
+  renderStall?: string;
 }
 
 export function harness(options: HarnessOptions = {}) {
@@ -57,7 +59,19 @@ export function harness(options: HarnessOptions = {}) {
     getTabUrl: vi.fn(async () => URL),
     now: vi.fn(() => "2026-09-20T02:00:00Z"),
     apiEnrich: vi.fn(async () => ({ ok: false, error: { kind: "not_found", message: "not found" } } as never)),
-    sendToTab: vi.fn(async (_tabId, raw) => {
+    sendToTab: vi.fn(async (tabId, raw) => {
+      const envelope = await reply(tabId, raw);
+      const stall = options.renderStall;
+      return stall === undefined ||
+        typeof envelope !== "object" ||
+        envelope === null ||
+        (envelope as { ok?: boolean }).ok !== true
+        ? envelope
+        : { ...(envelope as object), renderStall: stall };
+    }),
+  };
+
+  async function reply(_tabId: unknown, raw: unknown) {
       messages.push(raw);
       const msg = raw as { kind: string; params?: { target?: typeof TARGET } };
       if (msg.kind === options.fatalKind) {
@@ -83,8 +97,8 @@ export function harness(options: HarnessOptions = {}) {
       }
       if (msg.kind === "restore_page") return { ok: true, result: {} };
       throw new Error(`unexpected ${msg.kind}`);
-    }),
-  };
+  }
+
   return { deps, messages };
 }
 

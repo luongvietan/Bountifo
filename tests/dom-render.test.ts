@@ -83,3 +83,85 @@ describe("ensureRendered", () => {
     });
   });
 });
+
+describe("ensureRendered on a page that will not render", () => {
+  it("does not call a skeleton settled just because it stopped growing", async () => {
+    // A loading brief holds its shape: stable element count, a bottom to
+    // reach, and nothing in it.
+    const page = lazyPage({ chunks: 2 });
+    const result = await ensureRendered(
+      { ...page.target, pending: () => true },
+      { maxSteps: 5 },
+    );
+    expect(result.settled).toBe(false);
+    expect(result.reason).toBe("still_loading");
+    expect(result.steps).toBe(5);
+  });
+
+  it("settles once the placeholders give way to content", async () => {
+    const page = lazyPage({ chunks: 2 });
+    let loading = true;
+    const result = await ensureRendered(
+      {
+        ...page.target,
+        pending: () => {
+          const was = loading;
+          loading = false; // the second look finds the brief rendered
+          return was;
+        },
+      },
+      { maxSteps: 8 },
+    );
+    expect(result.settled).toBe(true);
+    expect(result.reason).toBeNull();
+  });
+
+  it("waits out a hidden tab instead of reading an empty page", async () => {
+    // A hidden tab never runs the brief's lazy rendering, so no amount of
+    // scrolling helps; the guard spends its budget waiting.
+    const page = lazyPage({ chunks: 4 });
+    const scrolledTo: number[] = [];
+    const result = await ensureRendered(
+      {
+        ...page.target,
+        scrollTo: (y) => {
+          scrolledTo.push(y);
+          page.target.scrollTo(y);
+        },
+        visible: () => false,
+      },
+      { maxSteps: 5 },
+    );
+    expect(result.settled).toBe(false);
+    expect(result.reason).toBe("page_hidden");
+    // The only scroll is the one that puts the reader back where they were.
+    expect(scrolledTo).toEqual([0]);
+  });
+
+  it("renders the brief when the reader comes back", async () => {
+    const page = lazyPage({ chunks: 3 });
+    let hidden = 3;
+    const result = await ensureRendered(
+      { ...page.target, visible: () => hidden-- <= 0 },
+      { maxSteps: 20 },
+    );
+    expect(result.settled).toBe(true);
+    expect(page.revealed()).toBe(3);
+  });
+
+  it("names the step cap when the page just keeps growing", async () => {
+    let size = 0;
+    const endless: RenderTarget = {
+      scrollY: () => 0,
+      scrollTo: () => {
+        size += 10;
+      },
+      height: () => size * 100,
+      viewport: () => 800,
+      size: () => size,
+      wait: async () => undefined,
+    };
+    const result = await ensureRendered(endless, { maxSteps: 4 });
+    expect(result).toMatchObject({ settled: false, reason: "step_cap" });
+  });
+});

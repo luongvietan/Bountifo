@@ -52,7 +52,7 @@ export interface CoordinatorDeps {
   download?: typeof downloadMarkdown;
 }
 
-type Envelope = { ok: boolean; result?: unknown; error?: { kind?: string; message?: string } };
+type Envelope = { ok: boolean; result?: unknown; error?: { kind?: string; message?: string }; renderStall?: string };
 type CollectorResult = Record<string, unknown> & { records?: SourceRecord[] };
 
 const REQUIRED = new Set<UnitId>([
@@ -95,6 +95,19 @@ function asEnvelope(value: unknown): Envelope {
     return { ok: false, error: { kind: "invalid_response", message: "invalid content response" } };
   }
   return value as Envelope;
+}
+
+/**
+ * A unit that read the brief before it finished rendering. Named in the
+ * quality warnings so an empty section has a stated cause rather than looking
+ * like a program with nothing in it.
+ */
+function renderWarning(output: unknown): string[] {
+  if (typeof output !== "object" || output === null) return [];
+  const stall = (output as { renderStall?: unknown }).renderStall;
+  return typeof stall === "string" && stall !== ""
+    ? [`render_not_settled:${stall}`]
+    : [];
 }
 
 function withoutRecords(value: CollectorResult): Record<string, unknown> {
@@ -303,12 +316,17 @@ export class JobCoordinator {
       if (!envelope.ok) return this.recordFailure(unitId, envelope.error?.kind ?? "unit_failed");
       const output = (envelope.result ?? {}) as CollectorResult;
       const blobKind = UNIT_BLOB[unitId]!;
+      // A unit that read a page which never finished rendering succeeded at
+      // what it could do. The shortfall is recorded on the result so the
+      // dossier can say so, and survives a service-worker restart with it.
+      const stall =
+        typeof envelope.renderStall === "string" ? envelope.renderStall : null;
       await commitUnit(
         db,
         descriptor.jobId,
         unitId,
         { records: output.records ?? [], blob: { kind: blobKind, value: unitId === "u03_collect_details" || unitId === "u06_collect_policy" ? output.data : withoutRecords(output) } },
-        { unitId, status: "ok", committedAt },
+        { unitId, status: "ok", committedAt, ...(stall === null ? {} : { output: { renderStall: stall } }) },
       );
       return { warning: false, fatal: false };
     }
@@ -505,10 +523,12 @@ export class JobCoordinator {
       status: result.status === "ok" ? "ok" : result.status,
       required: REQUIRED.has(result.unitId as UnitId),
       critical: CRITICAL.has(result.unitId as UnitId),
-      warnings:
-        result.status === "ok"
+      warnings: [
+        ...(result.status === "ok"
           ? []
-          : [`unit_${result.status}:${result.unitId}`],
+          : [`unit_${result.status}:${result.unitId}`]),
+        ...renderWarning(result.output),
+      ],
     }));
     const corpusHash = await evidenceCorpusHash(evidence);
     const evidenceHashValid = await validateEvidenceSet(records, evidence);

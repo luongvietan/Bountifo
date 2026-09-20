@@ -38,6 +38,12 @@ export interface UnitEnvelope {
   ok: boolean;
   result?: unknown;
   error?: UnitError;
+  /**
+   * Why the brief never finished rendering, when it did not. Carried on the
+   * envelope rather than inside a collector's result: it describes the page
+   * the unit read, not the thing the unit collected.
+   */
+  renderStall?: string;
 }
 
 /** RUN_UNIT {jobId, unitId, kind, params} — background → content script. */
@@ -83,9 +89,13 @@ export interface OrchestratorDeps {
   ) => void;
   /**
    * Brings the lazily-rendered brief into existence before anything is read.
-   * Runs once per page; a failure here never blocks collection.
+   * Runs once per page; a failure here never blocks collection, but an
+   * unsettled page is reported so the dossier can say the brief was read
+   * before it finished rendering.
    */
-  ensureRendered?: () => Promise<void>;
+  ensureRendered?: () => Promise<
+    { settled: boolean; reason: string | null } | undefined
+  >;
 }
 
 export interface Orchestrator {
@@ -111,13 +121,19 @@ function asDomTarget(raw: unknown): DomTarget | null {
 export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   const openedElements = new Set<Element>();
   let kiDone = 0;
-  let rendered: Promise<void> | null = null;
+  let rendered: Promise<string | null> | null = null;
+  let renderStall: string | null = null;
 
   /** Once per page, and never a reason to abandon a collection. */
   const ensureRendered = async (): Promise<void> => {
     if (deps.ensureRendered === undefined) return;
-    rendered ??= deps.ensureRendered().catch(() => undefined);
-    await rendered;
+    rendered ??= deps
+      .ensureRendered()
+      .then((outcome) =>
+        outcome === undefined || outcome.settled ? null : outcome.reason,
+      )
+      .catch(() => null);
+    renderStall = await rendered;
   };
 
   // Everything the KI driver opens is tracked so restore_page can close it.
@@ -198,6 +214,24 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     if (unit.kind !== "restore_page") await ensureRendered();
 
     try {
+      return stamp(await runUnit(unit));
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message.slice(0, 300) : "unit failed";
+      return envelopeErr("unit_failed", message);
+    }
+  }
+
+  /** Marks an envelope with the page's render state, when it fell short. */
+  function stamp(envelope: UnitEnvelope): UnitEnvelope {
+    if (renderStall === null) return envelope;
+    return { ...envelope, renderStall };
+  }
+
+  async function runUnit(
+    unit: z.infer<typeof RunUnitMsg>,
+  ): Promise<UnitEnvelope> {
+    {
       switch (unit.kind) {
         case "collect_details":
           return { ok: true, result: deps.collectDetails(deps.doc, deps.initialUrl) };
@@ -241,10 +275,6 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         default:
           return envelopeErr("unknown_unit_kind", `unknown unit kind: ${unit.kind}`);
       }
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message.slice(0, 300) : "unit failed";
-      return envelopeErr("unit_failed", message);
     }
   }
 
@@ -352,9 +382,7 @@ export default defineContentScript({
       collectKnownIssues,
       isSessionExpired,
       fetchPage: sameOriginFetchPage,
-      ensureRendered: async () => {
-        await ensureBriefRendered(windowTarget(window));
-      },
+      ensureRendered: () => ensureBriefRendered(windowTarget(window)),
       emitProgress: (jobId, unitId, counters) => {
         void browser.runtime
           .sendMessage({ op: "UNIT_PROGRESS", jobId, unitId, counters })
