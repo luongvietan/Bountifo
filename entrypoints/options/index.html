@@ -4,9 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Bugcrowd Engagement Exporter Options</title>
+    <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <div id="app"></div>
+    <main>
+      <h1>API token</h1>
+      <p id="token-status" class="status">Checking status…</p>
+      <label for="token">Bugcrowd API token</label>
+      <input id="token" type="password" autocomplete="off" spellcheck="false" />
+      <div class="actions">
+        <button id="save" class="primary">Save token</button>
+        <button id="test">Test token</button>
+        <button id="clear" class="danger">Clear token</button>
+      </div>
+      <p id="result" aria-live="polite"></p>
+      <p class="disclaimer">Stored in Chrome local storage, which is local to this browser profile but is not an encrypted secret vault.</p>
+    </main>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

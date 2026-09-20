@@ -4,9 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Bugcrowd Engagement Exporter</title>
+    <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <div id="app"></div>
+    <main>
+      <header>
+        <p class="eyebrow">Bugcrowd</p>
+        <h1>Engagement Exporter</h1>
+      </header>
+      <p id="page-status" class="muted">Checking the active tab…</p>
+      <dl id="job-status" aria-live="polite"></dl>
+      <p id="feedback" class="feedback" aria-live="polite"></p>
+      <div class="actions">
+        <button id="export" class="primary" disabled>Export full engagement</button>
+        <button id="cancel" class="danger" hidden>Cancel</button>
+        <button id="settings" class="quiet">Settings</button>
+      </div>
+    </main>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

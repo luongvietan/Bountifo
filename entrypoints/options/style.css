@@ -1,0 +1,12 @@
+:root { color-scheme: light dark; font: 15px/1.5 system-ui, sans-serif; }
+body { margin: 0; background: #0f172a; color: #f8fafc; }
+main { width: min(620px, calc(100% - 40px)); margin: 48px auto; }
+h1 { margin-bottom: 4px; }
+label { display: block; margin: 24px 0 6px; font-weight: 650; }
+input { box-sizing: border-box; width: 100%; border: 1px solid #475569; border-radius: 7px; padding: 10px; background: #111827; color: inherit; }
+.actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 12px; }
+button { border: 0; border-radius: 7px; padding: 9px 13px; background: #334155; color: white; cursor: pointer; font: inherit; font-weight: 650; }
+.primary { background: #f59e0b; color: #111827; }
+.danger { background: #991b1b; }
+.status { color: #cbd5e1; }
+.disclaimer { margin-top: 28px; padding: 12px; border-left: 3px solid #f59e0b; color: #cbd5e1; }

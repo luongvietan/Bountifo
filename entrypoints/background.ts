@@ -15,6 +15,11 @@ import {
   type ApiRequest,
 } from "../lib/messages";
 import { JobCoordinator } from "../lib/job/coordinator";
+import {
+  clearCredential,
+  hasCredential,
+  saveCredential,
+} from "../lib/tokenOps";
 
 // Every router response has this shape and contains only static, fixed
 // fields — request payloads (which may carry token/Authorization material)
@@ -131,6 +136,14 @@ export function routeMessage(
         return coordinator.cancel().then(() => ({ ok: true }));
       case "GET_JOB_STATE":
         return { ok: true, state: coordinator.state };
+      case "SAVE_TOKEN":
+        return saveCredential(popup.token).then((result) =>
+          result.ok ? { ok: true } : { ok: false, error: result.reason },
+        );
+      case "CLEAR_TOKEN":
+        return clearCredential().then(() => ({ ok: true }));
+      case "GET_TOKEN_STATUS":
+        return hasCredential().then((configured) => ({ ok: true, configured }));
       default:
         return { ok: false, error: "not_implemented" };
     }
