@@ -31,8 +31,17 @@ export interface KiResult {
   collectedCount: number;
   columns: string[];
   rows: KiRow[];
-  /** True only when collection was skipped because displayedCount === 0. */
+  /**
+   * True when no dialog was opened: displayedCount === 0, the feature was
+   * not exposed at all, or it was advertised but yielded no usable control.
+   */
   skipped: boolean;
+  /**
+   * The brief advertised Known Issues for this target — a count badge, a
+   * control, or a Known Issues column on its table. When false the feature
+   * is genuinely absent and a null displayedCount is not a gap.
+   */
+  advertised: boolean;
   countMatches: boolean;
   warnings: string[];
   /** level "known_issue_note"; sourceKey "dom:ki:<targetDomKey>". */
@@ -204,15 +213,26 @@ export async function collectKnownIssues(
   const rowPages: number[] = [];
 
   // Nothing exposed, nothing to collect: a brief that renders its targets as
-  // plain list items carries neither a count badge nor a control. That is an
-  // absent feature, not a target we failed to open, so it raises no warning
-  // and leaves the count validation intact (spec §13 skips only what the page
-  // itself reports as empty or does not offer).
-  const kiNotExposed =
-    displayedCount === null &&
-    (target.kiControlLabel === null || target.kiControlLabel === undefined);
+  // plain list items carries neither a count badge nor a control nor a Known
+  // Issues column. That is an absent feature, not a target we failed to open,
+  // so it raises no warning and leaves the count validation intact (spec §13
+  // skips only what the page itself reports as empty or does not offer).
+  const hasControl =
+    target.kiControlLabel !== null &&
+    target.kiControlLabel !== undefined &&
+    target.kiControlLabel !== "";
+  const advertised =
+    displayedCount !== null || hasControl || target.kiAdvertised === true;
+  const kiNotExposed = !advertised;
   if (displayedCount === 0 || kiNotExposed) {
     skipped = true;
+  } else if (displayedCount === null && !hasControl) {
+    // The column exists but yields neither a count nor a reliable control.
+    // Driving a dialog by name fallback would risk opening an unrelated
+    // control, so the target records its verification gap instead: the
+    // warning marks the count unverified and the integrity check fails it.
+    skipped = true;
+    warnings.push(`ki_dialog_not_opened:${target.domKey}`);
   } else {
     let dialog: Element | null = null;
     try {
@@ -317,6 +337,7 @@ export async function collectKnownIssues(
     columns,
     rows,
     skipped,
+    advertised,
     countMatches,
     warnings,
     records,

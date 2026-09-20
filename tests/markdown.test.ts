@@ -127,12 +127,14 @@ function model(): DocumentModel {
         text: "CSRF",
         submission_status: "excluded" as const,
         testing_status: "unspecified" as const,
+        reward_status: "unspecified" as const,
         evidence_refs: ["ev_csrf"],
       },
       {
         text: "DoS is not permitted",
         submission_status: "excluded" as const,
         testing_status: "prohibited" as const,
+        reward_status: "unspecified" as const,
         evidence_refs: [],
       },
     ],
@@ -156,6 +158,7 @@ function model(): DocumentModel {
           applies_to: "All targets",
           status: "out_of_scope" as const,
           note: null,
+          evidence_refs: ["ev_vrt_dos"],
         },
       ],
       exclusions: ["Self-XSS"],
@@ -296,8 +299,8 @@ describe("renderAgentFacts", () => {
     const block = renderAgentFacts(model());
     const parsed = parseYaml(block.replace(/^```yaml\n/, "").replace(/\n```$/, ""));
     expect(parsed.submission_exclusions).toEqual([
-      { text: "CSRF", submission_status: "excluded", testing_status: "unspecified", evidence_refs: ["ev_csrf"] },
-      { text: "DoS is not permitted", submission_status: "excluded", testing_status: "prohibited", evidence_refs: [] },
+      { text: "CSRF", submission_status: "excluded", testing_status: "unspecified", reward_status: "unspecified", evidence_refs: ["ev_csrf"] },
+      { text: "DoS is not permitted", submission_status: "excluded", testing_status: "prohibited", reward_status: "unspecified", evidence_refs: [] },
     ]);
     expect(parsed.authorized_scope.listed_targets.status).toBe("conditional");
     expect(parsed.authorized_scope.unlisted_targets.status).toBe("prohibited");

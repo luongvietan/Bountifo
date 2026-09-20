@@ -106,6 +106,8 @@ export interface DocumentModel {
     text: string;
     submission_status: "excluded";
     testing_status: PermissionStatus;
+    /** Reward axis: "ineligible" only on explicit reward-denial language. */
+    reward_status: "ineligible" | "unspecified";
     evidence_refs: string[];
   }[];
   /** Exclusive scope authorization: listed targets vs everything else. */
@@ -126,6 +128,8 @@ export interface DocumentModel {
       applies_to: string | null;
       status: "out_of_scope" | "in_scope" | "conditional";
       note: string | null;
+      /** Evidence ids for the exact row record behind this rule. */
+      evidence_refs: string[];
     }[];
     exclusions: string[];
     deviations: string[];
@@ -525,6 +529,7 @@ export function assembleDocument(args: AssembleArgs): DocumentModel {
     text: item.text,
     submission_status: item.submissionStatus,
     testing_status: item.testingStatus,
+    reward_status: item.rewardStatus,
     // Quote-based: a line that also stated a technique rule was recorded as
     // that technique, so both facts share the one evidence object.
     evidence_refs: refsForQuote(item.text),
@@ -552,6 +557,7 @@ export function assembleDocument(args: AssembleArgs): DocumentModel {
       applies_to: rule.appliesTo,
       status: rule.status,
       note: rule.note,
+      evidence_refs: refsForQuote(rule.quote),
     })),
     exclusions: [...(policy?.vrt.exclusions ?? [])],
     deviations: [...(policy?.vrt.deviations ?? [])],

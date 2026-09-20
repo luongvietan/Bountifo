@@ -1,4 +1,12 @@
 import { normalizeText } from "../canonical";
+import {
+  SCOPE_AUTHORIZATION_EXCLUSIVE_RE,
+  SCOPE_BOUNDARY_RES,
+  rewardStatusOf,
+  techniqueFindingsIn,
+  techniqueMatches,
+  testingStatusOf,
+} from "../model/policyText";
 import type {
   ExtractionStatus,
   PermissionStatus,
@@ -30,7 +38,10 @@ export interface PolicyData {
   safeHarborStatements: string[];
   authorizationStatements: string[];
   techniques: {
+    /** Fact key — the taxonomy name, narrowed by an in-sentence qualifier. */
     name: string;
+    /** The taxonomy entry the sentence named (unnarrowed). */
+    baseName: string;
     status: PermissionStatus;
     conditions: string[];
     quote: string;
@@ -40,15 +51,17 @@ export interface PolicyData {
   focusAreas: string[];
   nonFocusAreas: string[];
   /**
-   * Excluded submission types as two independent axes (§11 domain-specific
+   * Excluded submission types on three independent axes (§11 domain-specific
    * states): the brief refusing a report says nothing about whether the
    * activity may be tested, so `testingStatus` stays `unspecified` unless the
-   * line itself forbids the activity.
+   * line itself forbids the activity, and `rewardStatus` only drops to
+   * `ineligible` on explicit reward language.
    */
   exclusions: {
     text: string;
     submissionStatus: "excluded";
     testingStatus: PermissionStatus;
+    rewardStatus: "ineligible" | "unspecified";
   }[];
   /**
    * The exclusive authorization form ("testing is only authorized on …"),
@@ -79,106 +92,10 @@ export interface PolicyData {
       appliesTo: string | null;
       status: "out_of_scope" | "in_scope" | "conditional";
       note: string | null;
+      /** The row's verbatim text — the record quote evidence resolves to. */
+      quote: string;
     }[];
   };
-}
-
-// Spec §4.3 technique names with semantic keyword patterns.
-const TECHNIQUES: { name: string; slug: string; re: RegExp }[] = [
-  { name: "automation", slug: "automation", re: /\bautomat(?:ed|ion|ic)\b/i },
-  { name: "scanning", slug: "scanning", re: /\bscans?\b|\bscanning\b|\bscanner/i },
-  { name: "brute force", slug: "brute-force", re: /brute[\s-]?force|credential\s*stuff/i },
-  { name: "denial of service", slug: "denial-of-service", re: /denial[\s-]?of[\s-]?service|\b(?:d?dos)\b/i },
-  { name: "social engineering", slug: "social-engineering", re: /social[\s-]?engineer|phishing|vishing|smishing|impersonat/i },
-  { name: "physical testing", slug: "physical-testing", re: /physical(?:ly)?[\s-]?(?:test|access|attack|security|offices?|data\s*cent)/i },
-  { name: "credential testing", slug: "credential-testing", re: /credential[\s-]?test|test(?:ing)?\s+(?:of\s+)?credentials?|login\s+attempts?/i },
-  { name: "multi-account", slug: "multi-account", re: /multi(?:ple)?[\s-]?accounts?|multiple\s+accounts?|account\s+sharing|shared\s+accounts?/i },
-  // "cross-tenant" stays the generic bucket. The two rules below are the
-  // distinction a brief actually draws: testing between accounts you own is
-  // usually invited, touching another customer's data never is.
-  { name: "cross-tenant", slug: "cross-tenant", re: /cross[\s-]?tenant|cross[\s-]?client|cross[\s-]?organi[sz]ation/i },
-  { name: "cross-account testing", slug: "cross-account-testing", re: /cross[\s-]?account|accounts?\s+that\s+you\s+own/i },
-  // Subject must be another *party* — "other accounts' services" is the
-  // researcher's own second account, which the cross-account rule governs.
-  { name: "other customer data", slug: "other-customer-data", re: /(?:other|another)\s+(?:users?|customers?|tenants?)(?:'|’)?s?\s+(?:data|services?|accounts?|information)/i },
-  { name: "third-party", slug: "third-party", re: /third[\s-]?part(?:y|ies)/i },
-  { name: "PII access", slug: "pii-access", re: /\bpii\b|personally\s+identifiable|personal\s+(?:data|information)|(?:access|accessed|accessing|retain(?:ed|ing)?|cop(?:y|ied|ying)|download(?:ed|ing)?|collect(?:ed|ing)?)\s+(?:any\s+|user\s+|customer\s+|personal\s+)*data\b|\bdata\s+accessed\b/i },
-  { name: "data exfiltration", slug: "data-exfiltration", re: /exfiltrat|data\s+theft|dump(?:ing)?\s+(?:data|databases?)/i },
-  { name: "persistent access", slug: "persistent-access", re: /persist(?:ent|ence)|backdoor|web\s*shell|maintain(?:ing)?\s+access/i },
-];
-
-/** Spec §4.3 techniques a rule line names, in declaration order. */
-function techniqueMatches(text: string): typeof TECHNIQUES {
-  return TECHNIQUES.filter((t) => {
-    t.re.lastIndex = 0;
-    return t.re.test(text);
-  });
-}
-
-const PROHIBITED_RE =
-  /prohibit|forbidden|not\s+permitted|not\s+allowed|may\s+not|must\s+not|do(?:es)?\s+not|cannot|can't|won't|never|banned|disallowed|not\s+authorized/i;
-const QUALIFIED_PROHIBITION_RE =
-  /(?:prohibit|forbidden|not\s+permitted|may\s+not|must\s+not|do(?:es)?\s+not|cannot)[^.;]*\b(?:unless|except\s+(?:when|if|for|with|upon)|except\s+to\s+the\s+extent|only\s+(?:on|during|when|if))\b/i;
-const CONDITIONAL_RE =
-  /permitted\s+only|allowed\s+only|authorized\s+only|\bonly\s+(?:against|with|for|if|when|on|to|after|within|from|during|under|by|in)\b|with\s+(?:prior\s+)?(?:written\s+)?(?:approval|authorization|permission|consent)|requires?\s+(?:prior\s+)?(?:approval|permission|authorization|consent)|provided\s+(?:that|you)|as\s+long\s+as|subject\s+to|limited\s+to|approved\s+in\s+advance|except\s+(?:when|if|for|with|upon)|except\s+to\s+the\s+extent|\bunless\b/i;
-const ALLOWED_RE =
-  /(?:is|are)\s+(?:permitted|allowed|authorized|encouraged|welcomed)|may\s+(?:be\s+)?(?:tested|used|performed|conducted)|\bpermitted\b|\ballowed\b|\bauthorized\b|\bencouraged\b|\bwelcomed\b/i;
-
-const CONDITION_CLAUSE_RES = [
-  /\bonly\s+(against|with|for|if|when|on|to|after|within|from|during|under|by|in)\s+([^.;]+)/i,
-  /\bwith\s+(prior\s+)?(written\s+)?(approval|authorization|permission|consent)(?:\s+from\s+([^.;]+))?/i,
-  /\bprovided\s+(?:that\s+)?([^.;]+)/i,
-  /\bas\s+long\s+as\s+([^.;]+)/i,
-  /\bsubject\s+to\s+([^.;]+)/i,
-  /\brequires?\s+([^.;]+)/i,
-  /\bunless\s+([^.;]+)/i,
-  /\buse\s+only\s+([^.;]+)/i,
-  /\bonly\s+(?:use|test|target|interact)(?:\s*\/\s*\w+)*\s+(?:with\s+|on\s+|against\s+)?([^.;]+)/i,
-  /\bexcept\s+(when|if|for|with|upon)\s+([^.;]+)/i,
-  /\bexcept\s+to\s+the\s+extent\s+([^.;]+)/i,
-  /\blimited\s+to\s+([^.;]+)/i,
-  /\bif\s+([^.;]+)/i,
-  /\bmust\s+not\s+(?:be\s+)?([^.;]+)/i,
-];
-
-/**
- * "Use only X" / "only test X" states a condition on the activity itself. It
- * outranks an incidental negation elsewhere in the sentence, which usually
- * describes the attack scenario rather than the rule.
- */
-const EXPLICIT_CONDITION_RE =
-  /\buse\s+only\s+[^.;]+|\bonly\s+(?:use|test|target|interact)(?:\s*\/\s*\w+)*(?:\s+with|\s+on|\s+against)?\b[^.;]+/i;
-
-/** allowed/prohibited/conditional from rule text; null → unspecified. */
-function statusOf(text: string): PermissionStatus | null {
-  EXPLICIT_CONDITION_RE.lastIndex = 0;
-  if (EXPLICIT_CONDITION_RE.test(text)) return "conditional";
-  const prohibited = PROHIBITED_RE.test(text);
-  const qualified = QUALIFIED_PROHIBITION_RE.test(text);
-  if (prohibited && !qualified) return "prohibited";
-  if (qualified || CONDITIONAL_RE.test(text)) return "conditional";
-  if (prohibited) return "prohibited";
-  if (ALLOWED_RE.test(text)) return "allowed";
-  return null;
-}
-
-/** Condition clauses lifted from the rule text (normalized). */
-function conditionsOf(text: string): string[] {
-  const out: string[] = [];
-  for (const re of CONDITION_CLAUSE_RES) {
-    // Every occurrence of each clause shape is a distinct condition — a
-    // sentence may carry two "if …" clauses.
-    const flags = re.flags.includes("g") ? re.flags : `${re.flags}g`;
-    const global = new RegExp(re.source, flags);
-    let m: RegExpExecArray | null;
-    while ((m = global.exec(text)) !== null) {
-      const clause = (m.length > 2 ? `${m[1]} ${m[2]}` : (m[1] ?? m[0])).trim();
-      const normalized = clause.replace(/\s+/g, " ");
-      if (normalized !== "" && !out.includes(normalized)) out.push(normalized);
-      if (m[0] === "") global.lastIndex++;
-    }
-  }
-  return out;
 }
 
 const SECTION_RES = {
@@ -220,45 +137,12 @@ const AUTHORIZATION_SENTENCE_RES = [
 ];
 
 /**
- * The exclusive form of an authorization sentence. "Only authorized on X"
- * asserts two things at once — X is testable under that condition, and
- * anything outside X is not — so it yields two facts over one evidence object.
- */
-const SCOPE_AUTHORIZATION_RE =
-  /\btesting\s+is\s+only\s+authorized\s+(?:on|against|for)\s+([^.;]+)/i;
-
-/**
- * Sentences that refuse a *report* rather than an activity. A brief may reject
- * a submission type in prohibitive words ("do not submit …", "reports … will
- * not be accepted") while saying nothing about testing, so these lines never
- * establish a testing status (§11: no asserted status without explicit
- * evidence).
- */
-const SUBMISSION_EXCLUSION_RES = [
-  /\b(?:reports?|submissions?|findings?)\b[^.;]*\b(?:not\s+(?:be\s+)?(?:accepted|eligible|rewarded|valid)|will\s+be\s+closed|are\s+excluded)/i,
-  /\bdo(?:es)?\s+not\s+(?:submit|report)\b/i,
-  /\bnot\s+eligible\s+for\s+(?:an?\s+)?(?:reward|bounty|payout|payment)/i,
-];
-
-/**
  * Record-dedupe key. Two records are duplicates only when the same normalized
  * text comes from the same canonical location; the same sentence under another
  * heading keeps its own record, so provenance is never collapsed away.
  */
 function sectionKey(section: string, text: string): string {
   return JSON.stringify([section, text]);
-}
-
-/**
- * Testing status a line asserts about the activity itself; `unspecified` when
- * the line is framed around what the program will accept.
- */
-function testingStatusOf(text: string): PermissionStatus {
-  for (const re of SUBMISSION_EXCLUSION_RES) {
-    re.lastIndex = 0;
-    if (re.test(text)) return "unspecified";
-  }
-  return statusOf(text) ?? "unspecified";
 }
 
 /**
@@ -388,45 +272,42 @@ export function collectPolicies(
   };
 
   /**
-   * Per-technique permission statements in one rule line. Returns false when
-   * the line names no technique or states no status, leaving the caller to
-   * record the line as plain text.
+   * Per-sentence technique findings in one rule line (§11): a finding needs a
+   * technique mention AND an explicit normative predicate in the same
+   * sentence. Returns false when the line yields no findings, leaving the
+   * caller to record it as plain text — a topic mention alone is evidence of
+   * a subject, never of a permission.
    */
   const emitTechniques = (
     text: string,
     keyPrefix: string,
     locator: SourceLocator,
   ): boolean => {
-    const matched = techniqueMatches(text);
-    if (matched.length === 0) return false;
-    const status = testingStatusOf(text);
-    if (status === "unspecified") return false; // normalizers' job
-    const conditions = status === "conditional" ? conditionsOf(text) : [];
-    // One line may back several facts and still be exact evidence: a brief
-    // that forbids three named activities in one sentence has said so about
-    // each of them. Attribution is only guesswork when the same line asserts
-    // opposite polarities without naming which activity takes which.
-    EXPLICIT_CONDITION_RE.lastIndex = 0;
-    const mixed =
-      ALLOWED_RE.test(text) &&
-      PROHIBITED_RE.test(text) &&
-      !EXPLICIT_CONDITION_RE.test(text);
-    // A "conditional" assertion whose condition could not be extracted is not
-    // exact evidence — downstream treats conditional with an empty condition
-    // list as vacuously satisfied. Emit it partial so the fact stays
-    // unspecified and reviewable rather than falsely permissive.
-    const unconditioned = status === "conditional" && conditions.length === 0;
+    const findings = techniqueFindingsIn(text);
+    if (findings.length === 0) return false;
     emittedTechniqueTexts.add(normalizeText(text));
-    for (const tech of matched) {
-      const technique = { name: tech.name, status, conditions, quote: text };
+    for (const finding of findings) {
+      // A "conditional" assertion whose condition could not be extracted is
+      // not exact evidence — downstream treats an empty condition list as
+      // vacuously satisfied. Emit it partial so the fact stays unspecified
+      // and reviewable rather than falsely permissive.
+      const unconditioned =
+        finding.status === "conditional" && finding.conditions.length === 0;
+      const technique = {
+        name: finding.name,
+        baseName: finding.baseName,
+        status: finding.status,
+        conditions: finding.conditions,
+        quote: text,
+      };
       data.techniques.push(technique);
       emit(
         keyPrefix,
-        tech.slug,
+        finding.slug,
         text,
         technique,
         "explicit_program_rule",
-        mixed || unconditioned ? "partial" : "exact",
+        finding.ambiguous || unconditioned ? "partial" : "exact",
         locator,
       );
     }
@@ -479,6 +360,7 @@ export function collectPolicies(
           text: item.text,
           submissionStatus: "excluded",
           testingStatus: testingStatusOf(item.text),
+          rewardStatus: rewardStatusOf(item.text),
         });
       }
       if (exclusions && emitTechniques(item.text, keyPrefix, { section: heading })) {
@@ -522,10 +404,17 @@ export function collectPolicies(
   const authorizationCorpus: string[] = [];
   for (const { el, text } of eachTextBlock(doc)) {
     if (el.matches(HEADING_SEL)) continue;
-    const classified = AUTHORIZATION_SENTENCE_RES.some((re) => {
-      re.lastIndex = 0;
-      return re.test(text);
-    });
+    const classified =
+      AUTHORIZATION_SENTENCE_RES.some((re) => {
+        re.lastIndex = 0;
+        return re.test(text);
+      }) ||
+      // Boundary phrasings ("anything not declared as a target is out of
+      // scope") state the same authorization limit from the unlisted side.
+      SCOPE_BOUNDARY_RES.some((re) => {
+        re.lastIndex = 0;
+        return re.test(text);
+      });
     if (!classified) continue;
     authorizationCorpus.push(text);
     const section = precedingHeadingText(doc, el) ?? "Authorization";
@@ -547,11 +436,13 @@ export function collectPolicies(
 
   // One sentence can carry more than one policy class. The exclusive form
   // states a condition on the listed targets and a prohibition on everything
-  // else — two facts over one sentence, neither a blanket "allowed".
+  // else — two facts over one sentence, neither a blanket "allowed". It takes
+  // precedence over boundary phrasings, which state the same limit without
+  // naming the listed side.
   for (const statement of authorizationCorpus) {
     if (data.scopeAuthorization !== null) break;
-    SCOPE_AUTHORIZATION_RE.lastIndex = 0;
-    const m = SCOPE_AUTHORIZATION_RE.exec(statement);
+    SCOPE_AUTHORIZATION_EXCLUSIVE_RE.lastIndex = 0;
+    const m = SCOPE_AUTHORIZATION_EXCLUSIVE_RE.exec(statement);
     if (m === null) continue;
     const listed = (m[1] ?? "").trim();
     // No record of its own: the sentence is already evidence, and both facts
@@ -565,6 +456,24 @@ export function collectPolicies(
       quote: statement,
     };
   }
+  if (data.scopeAuthorization === null) {
+    for (const statement of authorizationCorpus) {
+      const boundary = SCOPE_BOUNDARY_RES.some((re) => {
+        re.lastIndex = 0;
+        return re.test(statement);
+      });
+      if (!boundary) continue;
+      data.scopeAuthorization = {
+        listedTargets: {
+          status: "conditional",
+          conditions: ["target must be explicitly declared in scope"],
+        },
+        unlistedTargets: { status: "prohibited" },
+        quote: statement,
+      };
+      break;
+    }
+  }
 
   // Program rules: per-technique permission statements. Every matching
   // section is read — a brief splits its testing rules across headings.
@@ -576,14 +485,14 @@ export function collectPolicies(
     const heading = rulesScope.heading ?? "Program Rules";
     let rowIndex = 0;
     for (const item of rulesScope.items) {
-      const named = techniqueMatches(item.text).length > 0;
       const emitted = emitTechniques(item.text, "program-rules", {
         section: heading,
         rowIndex,
       });
-      if (!emitted && !named) {
-        // Rule line naming no known technique: bucket it by keywords so the
-        // statement is preserved; record keeps its real section.
+      if (!emitted) {
+        // Rule line stating no permission fact — whether it names a known
+        // technique or not. A mention without a normative predicate is still
+        // evidence worth keeping, just never as a technique assertion.
         const bucket = FALLBACK_BUCKETS.find((b) => {
           b.re.lastIndex = 0;
           return b.re.test(item.text);
@@ -651,6 +560,7 @@ export function collectPolicies(
             ? ("in_scope" as const)
             : ("out_of_scope" as const),
         note: note === "" || note === "-" || note === "—" ? null : note,
+        quote: cells.join(" "),
       };
       data.vrt.scopeRules.push(rule);
       emit(

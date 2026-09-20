@@ -52,6 +52,7 @@ function ki(overrides: Partial<KiResult> = {}): KiResult {
     columns: ["Priority"],
     rows: [{ cells: ["P1"] }, { cells: ["P2"] }],
     skipped: false,
+    advertised: true,
     countMatches: true,
     warnings: [],
     records: [],

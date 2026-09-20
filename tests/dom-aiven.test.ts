@@ -67,7 +67,13 @@ describe("Aiven reward groups", () => {
 
 describe("Aiven VRT scope rules", () => {
   it("keeps the VRT table as VRT policy", () => {
-    expect(policy.data.vrt.scopeRules).toEqual([
+    // Each rule carries its row's verbatim quote for evidence resolution.
+    for (const rule of policy.data.vrt.scopeRules) {
+      expect(rule.quote.length).toBeGreaterThan(0);
+    }
+    expect(
+      policy.data.vrt.scopeRules.map(({ quote: _quote, ...rule }) => rule),
+    ).toEqual([
       {
         category: "Application-Level Denial-of-Service (DoS)",
         vrtVersion: "1.18",

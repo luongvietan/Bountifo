@@ -165,10 +165,13 @@ export function computeIntegrity(args: {
   // §13: a target counts as verified only when it was opened, paginated and
   // checked. A mismatch fails that, and so does never getting the dialog open
   // or never seeing a displayed count — calling those "valid" would assert a
-  // check the collection never performed.
+  // check the collection never performed. An advertised Known Issues feature
+  // with an unknown displayed count is a gap (unknown ≠ 0 ≠ valid); only a
+  // target whose brief genuinely exposes nothing skips cleanly.
   const knownIssuesCountsValid = kiResults.every(
     (ki) =>
       ki.countMatches &&
+      !(ki.displayedCount === null && ki.advertised) &&
       !ki.warnings.some((w) => UNVERIFIED_KI_RE.test(w)),
   );
   if (!knownIssuesCountsValid) {

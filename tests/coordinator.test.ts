@@ -43,6 +43,7 @@ const TARGET = {
   changeFlags: [],
   displayedKnownIssuesCount: 0,
   kiControlLabel: null,
+  kiAdvertised: true,
 };
 
 function scriptedDeps(messages: unknown[]): CoordinatorDeps {
@@ -73,7 +74,7 @@ function scriptedDeps(messages: unknown[]): CoordinatorDeps {
         return { ok: true, result: { records: [], announcements: [], changelog: [], recentActivity: [], acceptedReports: [], stats: {} } };
       }
       if (msg.kind === "collect_ki") {
-        return { ok: true, result: { targetDomKey: TARGET.domKey, displayedCount: 0, collectedCount: 0, columns: [], rows: [], skipped: true, countMatches: true, warnings: [], records: [] } };
+        return { ok: true, result: { targetDomKey: TARGET.domKey, displayedCount: 0, collectedCount: 0, columns: [], rows: [], skipped: true, advertised: true, countMatches: true, warnings: [], records: [] } };
       }
       if (msg.kind === "restore_page") return { ok: true, result: {} };
       throw new Error(`unexpected unit ${msg.kind}`);
@@ -227,7 +228,7 @@ describe("JobCoordinator", () => {
       db,
       descriptor.jobId,
       "u08_known_issues",
-      { blob: { kind: "kiResults", value: [{ targetDomKey: TARGET.domKey, displayedCount: 0, collectedCount: 0, columns: [], rows: [], skipped: true, countMatches: true, warnings: [], records: [] }] } },
+      { blob: { kind: "kiResults", value: [{ targetDomKey: TARGET.domKey, displayedCount: 0, collectedCount: 0, columns: [], rows: [], skipped: true, advertised: true, countMatches: true, warnings: [], records: [] }] } },
       { unitId: "u08_known_issues", status: "ok", committedAt: "t", output: { kiDone: [TARGET.domKey] } },
     );
     db.close();

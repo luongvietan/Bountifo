@@ -29,6 +29,7 @@ function makeTarget(over: Partial<DomTarget> = {}): DomTarget {
     changeFlags: [],
     displayedKnownIssuesCount: 3,
     kiControlLabel: "View known issues",
+    kiAdvertised: true,
     ...over,
   };
 }
@@ -167,7 +168,11 @@ describe("collectKnownIssues (§13)", () => {
     const res = await collectKnownIssues(
       driver,
       document,
-      makeTarget({ displayedKnownIssuesCount: null, kiControlLabel: null }),
+      makeTarget({
+        displayedKnownIssuesCount: null,
+        kiControlLabel: null,
+        kiAdvertised: false,
+      }),
       PAGE_URL,
     );
     expect(driver.open).not.toHaveBeenCalled();
@@ -175,6 +180,35 @@ describe("collectKnownIssues (§13)", () => {
     expect(res.collectedCount).toBe(0);
     expect(res.countMatches).toBe(true);
     expect(res.warnings).toEqual([]);
+  });
+
+  it("records an unverified gap when KI is advertised but yields no count or control", async () => {
+    // The Statuspage failure mode: the targets table carries a Known Issues
+    // column, but the row renders neither a count badge nor an openable
+    // control. Driving a name-matched dialog would risk opening an unrelated
+    // control, so the target stays unverified — and integrity must read
+    // advertised+unknown as a gap, never as a valid zero.
+    const driver = spyDriver();
+    const res = await collectKnownIssues(
+      driver,
+      document,
+      makeTarget({
+        displayedKnownIssuesCount: null,
+        kiControlLabel: null,
+        kiAdvertised: true,
+      }),
+      PAGE_URL,
+    );
+    expect(driver.open).not.toHaveBeenCalled();
+    expect(res.skipped).toBe(true);
+    expect(res.advertised).toBe(true);
+    expect(res.displayedCount).toBeNull();
+    expect(res.warnings).toContain(
+      "ki_dialog_not_opened:target:api-acme-example",
+    );
+    expect(res.warnings).toContain(
+      "ki_displayed_count_unavailable:target:api-acme-example",
+    );
   });
 
   it("does not skip when the count is merely absent (null)", async () => {

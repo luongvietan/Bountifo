@@ -119,6 +119,7 @@ function domTarget(overrides: Partial<DomTarget> = {}): DomTarget {
     changeFlags: ["new"],
     displayedKnownIssuesCount: 1,
     kiControlLabel: "1 known issue",
+    kiAdvertised: true,
     ...overrides,
   };
 }
@@ -147,6 +148,7 @@ function policy(overrides: Partial<PolicyData> = {}): PolicyData {
         text: "CSRF",
         submissionStatus: "excluded" as const,
         testingStatus: "unspecified" as const,
+        rewardStatus: "unspecified" as const,
       },
     ],
     scopeAuthorization: {
@@ -172,6 +174,7 @@ function policy(overrides: Partial<PolicyData> = {}): PolicyData {
           appliesTo: "All targets",
           status: "out_of_scope" as const,
           note: null,
+          quote: "Application-Level Denial-of-Service (DoS) ( 1.18 ) All targets Out of scope",
         },
       ],
     },
@@ -198,6 +201,7 @@ function kiResult(overrides: Partial<KiResult> = {}): KiResult {
     columns: ["Priority", "Variant"],
     rows: [{ cells: ["P1", "xss"], recognized: { priority: "P1" } }],
     skipped: false,
+    advertised: true,
     countMatches: true,
     warnings: [],
     records: [],
@@ -707,6 +711,7 @@ describe("assembleDocument — VRT scope rules", () => {
         applies_to: "All targets",
         status: "out_of_scope",
         note: null,
+        evidence_refs: [],
       },
     ]);
     expect(m.targets.some((t) => (t.name ?? "").includes("Denial"))).toBe(false);
@@ -717,7 +722,7 @@ describe("assembleDocument — policy projection", () => {
   it("carries submission exclusions and scope authorization as typed facts", () => {
     const m = assembleDocument(baseArgs());
     expect(m.submissionExclusions).toEqual([
-      { text: "CSRF", submission_status: "excluded", testing_status: "unspecified", evidence_refs: [] },
+      { text: "CSRF", submission_status: "excluded", testing_status: "unspecified", reward_status: "unspecified", evidence_refs: [] },
     ]);
     expect(m.scopeAuthorization).toMatchObject({
       listed_targets: {

@@ -29,6 +29,7 @@ const TARGET: DomTarget = {
   changeFlags: [],
   displayedKnownIssuesCount: 1,
   kiControlLabel: "View known issues",
+  kiAdvertised: true,
 };
 
 function fakeKiDriver(): KiDriver {

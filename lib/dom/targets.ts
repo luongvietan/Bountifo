@@ -48,6 +48,12 @@ export interface DomTarget {
   changeFlags: string[];
   displayedKnownIssuesCount: number | null;
   kiControlLabel: string | null;
+  /**
+   * The target's table advertises a Known Issues column. When true, an absent
+   * count *and* an absent control is a collection gap, not a feature the
+   * brief never offered — the column's existence is the advertisement.
+   */
+  kiAdvertised: boolean;
 }
 
 export interface DomRule {
@@ -512,6 +518,7 @@ export function collectTargets(
 
         const kiCell = cols.ki !== undefined ? cells[cols.ki] : undefined;
         const ki = knownIssues(kiCell);
+        const kiAdvertised = cols.ki !== undefined;
 
         const targetKey = `target:${uniqueSlug(
           slugify(location ?? name ?? `target-${rowIndex + 1}`),
@@ -529,6 +536,7 @@ export function collectTargets(
           changeFlags,
           displayedKnownIssuesCount: ki.count,
           kiControlLabel: ki.control,
+          kiAdvertised,
         };
         targets.push(target);
         lastTargetKey = targetKey;

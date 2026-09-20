@@ -211,11 +211,12 @@ export function renderMarkdown(model: DocumentModel): string {
     model.submissionExclusions.length === 0
       ? bulletLines(model.nonFocusAreas)
       : mdTable(
-          ["Excluded submission", "Submission", "Testing"],
+          ["Excluded submission", "Submission", "Testing", "Reward"],
           model.submissionExclusions.map((item) => [
             item.text,
             item.submission_status,
             item.testing_status,
+            item.reward_status,
           ]),
         );
   const scope = model.scopeAuthorization;

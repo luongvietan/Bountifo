@@ -14,6 +14,7 @@ export const TARGET = {
   changeFlags: [],
   displayedKnownIssuesCount: 1,
   kiControlLabel: "Known Issues",
+  kiAdvertised: true,
 };
 
 function record(sourceKey: string, quote: string, data: unknown, level: "explicit_program_rule" | "target_specific_rule" = "explicit_program_rule") {
@@ -43,12 +44,17 @@ export function harness(options: HarnessOptions = {}) {
   const messages: unknown[] = [];
   const programText = "Automated scanning is allowed.";
   const targetText = "Automated scanning is prohibited.";
-  const policyRecord = record("dom:details:program-rules:automation", programText, {
-    name: "automation",
-    status: "allowed",
-    conditions: [],
-    quote: programText,
-  });
+  const policyRecord = record(
+    "dom:details:program-rules:automated-scanning",
+    programText,
+    {
+      name: "automated scanning",
+      baseName: "scanning",
+      status: "allowed",
+      conditions: [],
+      quote: programText,
+    },
+  );
   const targetRecord = record(
     "dom:scope:rule:automation",
     targetText,
@@ -87,13 +93,13 @@ export function harness(options: HarnessOptions = {}) {
       if (msg.kind === "collect_policy") {
         const records = [policyRecord];
         if (options.reverseRecords) records.reverse();
-        return { ok: true, result: { records, data: { safeHarborStatements: [], authorizationStatements: [], techniques: [{ name: "automation", status: "allowed", conditions: [], quote: programText }], accountRules: [], dataRules: [], focusAreas: ["XSS"], nonFocusAreas: [], reportingRequirements: ["Include PoC"], vrt: { version: "2.0", baseline: "P3", exclusions: [], deviations: [], targetSpecific: [], notes: [] } } } };
+        return { ok: true, result: { records, data: { safeHarborStatements: [], authorizationStatements: [], techniques: [{ name: "automated scanning", baseName: "scanning", status: "allowed", conditions: [], quote: programText }], accountRules: [], dataRules: [], focusAreas: ["XSS"], nonFocusAreas: [], reportingRequirements: ["Include PoC"], vrt: { version: "2.0", baseline: "P3", exclusions: [], deviations: [], targetSpecific: [], notes: [] } } } };
       }
       if (msg.kind === "collect_activity") {
         return { ok: true, result: { records: [], announcements: [], changelog: [], recentActivity: [], acceptedReports: [], stats: {} } };
       }
       if (msg.kind === "collect_ki") {
-        return { ok: true, result: { targetDomKey: msg.params?.target?.domKey ?? TARGET.domKey, displayedCount: 1, collectedCount: options.kiMismatch ? 0 : 1, columns: ["Priority"], rows: options.kiMismatch ? [] : [{ cells: ["P1"] }], skipped: false, countMatches: !options.kiMismatch, warnings: options.kiMismatch ? ["ki_count_mismatch:target:example-com"] : [], records: [] } };
+        return { ok: true, result: { targetDomKey: msg.params?.target?.domKey ?? TARGET.domKey, displayedCount: 1, collectedCount: options.kiMismatch ? 0 : 1, columns: ["Priority"], rows: options.kiMismatch ? [] : [{ cells: ["P1"] }], skipped: false, advertised: true, countMatches: !options.kiMismatch, warnings: options.kiMismatch ? ["ki_count_mismatch:target:example-com"] : [], records: [] } };
       }
       if (msg.kind === "restore_page") return { ok: true, result: {} };
       throw new Error(`unexpected ${msg.kind}`);

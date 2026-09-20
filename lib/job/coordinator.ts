@@ -18,6 +18,13 @@ import {
   type AssertionInput,
 } from "../model/facts";
 import { computeIntegrity, type UnitOutcome } from "../model/integrity";
+import {
+  conditionsOf,
+  sentenceStatuses,
+  sentencesOf,
+  statusOfSentence,
+  techniqueFindingsIn,
+} from "../model/policyText";
 import { assignTargetIdentities } from "../model/targetIds";
 import { renderMarkdown } from "../render/markdown";
 import type { ApiEngagementData, Evidence, PermissionFact, SourceRecord } from "../types";
@@ -131,24 +138,35 @@ function groupMatch(dom: { name: string }, api: ApiEngagementData | null) {
   return api.targetGroups.find((group) => normalizeText(group.name) === name) ?? null;
 }
 
-function ruleStatus(text: string): "allowed" | "prohibited" | "conditional" | "unspecified" {
-  if (/\b(?:must\s+not|do\s+not|not\s+allowed|prohibited|forbidden|never)\b/i.test(text)) return "prohibited";
-  if (/\b(?:only|unless|provided\s+that|with\s+(?:prior\s+)?permission)\b/i.test(text)) return "conditional";
-  if (/\b(?:allowed|permitted|may)\b/i.test(text)) return "allowed";
-  return "unspecified";
-}
-
-function ruleTechniqueKey(text: string, fallbackIndex: number): string {
-  const known: [RegExp, string][] = [
-    [/automat/i, "automation"],
-    [/\bscann?(?:ing|er|ers|ed|s)?\b/i, "scanning"],
-    [/brute[\s-]?force|credential\s*stuff/i, "brute force"],
-    [/denial[\s-]?of[\s-]?service|\bd?dos\b/i, "denial of service"],
-    [/social[\s-]?engineer|phishing|vishing|smishing/i, "social engineering"],
-    [/physical(?:ly)?[\s-]?(?:test|access|attack)/i, "physical testing"],
-  ];
-  return known.find(([pattern]) => pattern.test(text))?.[1] ??
-    `target_rule_${String(fallbackIndex + 1).padStart(3, "0")}`;
+/**
+ * Assertions a target-specific rule supports (§10/§11). Technique findings
+ * carry the sentence-level status and validated conditions; a rule whose
+ * normative predicate names no known technique falls back to a target_rule
+ * key; a rule with no normative predicate is prose and yields no fact —
+ * keyword co-occurrence never establishes a permission.
+ */
+function ruleAssertions(
+  text: string,
+  fallbackIndex: number,
+): { key: string; status: AssertionInput["status"]; conditions: string[] }[] {
+  const findings = techniqueFindingsIn(text);
+  if (findings.length > 0) {
+    return findings.map((f) => ({
+      key: f.name,
+      status: f.status,
+      conditions: f.conditions,
+    }));
+  }
+  return sentenceStatuses(text).map((status) => ({
+    key: `target_rule_${String(fallbackIndex + 1).padStart(3, "0")}`,
+    status,
+    conditions:
+      status === "conditional"
+        ? sentencesOf(text)
+            .filter((s) => statusOfSentence(s) === "conditional")
+            .flatMap(conditionsOf)
+        : [],
+  }));
 }
 
 export class JobCoordinator {
@@ -480,12 +498,14 @@ export class JobCoordinator {
             ? { type: "target_group_ids" as const, ids: [...new Set(groupIds)].sort() }
             : { type: "engagement" as const };
       const matching = evidence.filter((item) => normalizeText(item.quote) === normalizeText(rule.text));
-      addAssertion(ruleTechniqueKey(rule.text, index), {
-        status: ruleStatus(rule.text),
-        conditions: [],
-        applies_to,
-        evidence: matching,
-      });
+      for (const assertion of ruleAssertions(rule.text, index)) {
+        addAssertion(assertion.key, {
+          status: assertion.status,
+          conditions: assertion.conditions,
+          applies_to,
+          evidence: matching,
+        });
+      }
     }
     const techniques: Record<string, PermissionFact> = Object.fromEntries(
       [...assertionsByTechnique.entries()].map(([key, assertions]) => [

@@ -31,7 +31,9 @@ describe("collectPolicies statements", () => {
 
 describe("collectPolicies techniques", () => {
   it("covers all spec §4.3 technique names", () => {
-    const names = new Set(data.techniques.map((t) => t.name));
+    // Fact names may carry an in-sentence qualifier ("automated scanning"),
+    // so coverage is checked against the taxonomy entry each fact named.
+    const names = new Set(data.techniques.map((t) => t.baseName));
     for (const name of ALL_TECHNIQUES) expect(names.has(name)).toBe(true);
   });
 
@@ -43,9 +45,12 @@ describe("collectPolicies techniques", () => {
 
   it("parses conditional rules and extracts their condition clauses", () => {
     const scanning = data.techniques.find(
-      (t) => t.name === "scanning" && t.status === "conditional",
+      (t) => t.baseName === "scanning" && t.status === "conditional",
     );
     expect(scanning).toBeDefined();
+    // "Automated scanning is permitted only against…" narrows to the
+    // compound activity — never a blanket scanning or automation fact.
+    expect(scanning?.name).toBe("automated scanning");
     expect(scanning?.quote).toContain("permitted only against");
     expect(scanning?.conditions.join(" ")).toContain("explicitly listed targets");
     const cred = data.techniques.find(
@@ -59,10 +64,13 @@ describe("collectPolicies techniques", () => {
     // existed in the section.
     const para = data.techniques.find(
       (t) =>
-        t.name === "scanning" &&
+        t.baseName === "scanning" &&
         t.quote.startsWith("Scanning of out-of-scope"),
     );
     expect(para).toBeDefined();
+    // The fact is scoped to what the sentence rules on — out-of-scope
+    // assets — not scanning generally.
+    expect(para?.name).toBe("scanning (of out-of-scope assets)");
     expect(para?.status).toBe("prohibited");
     const rec = records.find(
       (r) =>
@@ -73,9 +81,16 @@ describe("collectPolicies techniques", () => {
   });
 
   it("parses allowed and prohibited rules", () => {
+    // "Automated tooling is allowed…" is an automation fact narrowed to the
+    // named activity — the bare "automation" key must not exist.
     expect(
-      data.techniques.some((t) => t.name === "automation" && t.status === "allowed"),
+      data.techniques.some(
+        (t) => t.baseName === "automation" && t.status === "allowed",
+      ),
     ).toBe(true);
+    expect(
+      data.techniques.some((t) => t.name === "automation"),
+    ).toBe(false);
     for (const name of [
       "brute force",
       "denial of service",
@@ -89,7 +104,7 @@ describe("collectPolicies techniques", () => {
       "persistent access",
     ]) {
       expect(
-        data.techniques.some((t) => t.name === name && t.status === "prohibited"),
+        data.techniques.some((t) => t.baseName === name && t.status === "prohibited"),
       ).toBe(true);
     }
   });
@@ -152,6 +167,7 @@ describe("collectPolicies submission exclusions", () => {
       text: "Clickjacking",
       submissionStatus: "excluded",
       testingStatus: "unspecified",
+      rewardStatus: "unspecified",
     });
     expect(exclusion("Open redirect")?.testingStatus).toBe("unspecified");
     expect(exclusion("zero-day")?.testingStatus).toBe("unspecified");
@@ -208,7 +224,9 @@ describe("collectPolicies records", () => {
     const multi = tech.filter((r) =>
       r.quote.includes("Automated scanning and brute force"),
     );
-    expect(multi.length).toBe(3);
+    // Two findings, not three: "automated" modifies "scanning" — it is not a
+    // separate blanket automation claim.
+    expect(multi.length).toBe(2);
     expect(multi.every((r) => r.extractionStatus === "exact")).toBe(true);
     // A clean single-technique line is exact.
     const single = tech.find((r) => r.quote.startsWith("Denial of service"));
@@ -235,7 +253,10 @@ describe("collectPolicies heading-bounded current Bugcrowd content", () => {
   });
 
   it("keeps the explicit testing-authorization sentence without an Authorization heading", () => {
+    // The boundary phrasing on the out-of-scope card is the same limit stated
+    // from the unlisted side — it is an authorization statement too.
     expect(current.data.authorizationStatements).toEqual([
+      "Any asset not explicitly listed in scope above falls outside this program.",
       "Testing is only authorized on the targets listed as in scope. All other assets are out of scope.",
     ]);
   });
