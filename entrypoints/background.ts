@@ -12,11 +12,9 @@ import {
   parseApiRequest,
   parseJobMessage,
   parsePopupMessage,
-  validateJobSender,
-  type ActiveJobDescriptor,
   type ApiRequest,
-  type JobMessage,
 } from "../lib/messages";
+import { JobCoordinator } from "../lib/job/coordinator";
 
 // Every router response has this shape and contains only static, fixed
 // fields — request payloads (which may carry token/Authorization material)
@@ -30,24 +28,12 @@ type RouterResponse = {
   [k: string]: unknown;
 };
 
-// Active job descriptors keyed by jobId. Task 9 will persist/rehydrate these
-// via chrome.storage.session; the skeleton store is always empty so job
-// messages currently fail closed with { ok: false }.
-const activeJobs = new Map<string, ActiveJobDescriptor>();
-
-function routeJobMessage(
-  msg: JobMessage,
-  sender: { id?: string; tab?: { id?: number; url?: string } },
-): RouterResponse {
-  const job = activeJobs.get(msg.jobId);
-  if (!job) return { ok: false, error: "unknown_job" };
-  // Task 9 supplies the real per-unit expected phase; until then the
-  // descriptor's own persisted phase is the only expectation available.
-  const validation = validateJobSender(sender, msg, job, job.phase);
-  if (!validation.ok) return { ok: false, error: "forbidden" };
-  // Task 9 wires unit handling (PAGE_READY / UNIT_PROGRESS / UNIT_RESULT).
-  return { ok: false, error: "not_implemented" };
-}
+export const coordinator = new JobCoordinator({
+  sendToTab: (tabId, msg) => browser.tabs.sendMessage(tabId, msg),
+  apiEnrich: fetchEngagementEnrichment,
+  now: () => new Date().toISOString(),
+  getTabUrl: async (tabId) => (await browser.tabs.get(tabId)).url ?? null,
+});
 
 // testToken() reports verdicts as static detail strings; map them back onto
 // ApiError-style kinds for the {ok:false,error:{kind,message}} envelope.
@@ -133,14 +119,27 @@ export function routeMessage(
     return routeApiRequest(apiReq);
   }
   // (b) Popup operations — Task 9 wires job ops, Task 10 wires token ops.
-  if (parsePopupMessage(rawMsg) !== null) {
-    return { ok: false, error: "not_implemented" };
+  const popup = parsePopupMessage(rawMsg);
+  if (popup !== null) {
+    switch (popup.op) {
+      case "START_EXPORT":
+        return coordinator.start(popup.tabId);
+      case "CANCEL_EXPORT":
+        if (coordinator.state !== null && coordinator.state.jobId !== popup.jobId) {
+          return { ok: false, error: "unknown_job" };
+        }
+        return coordinator.cancel().then(() => ({ ok: true }));
+      case "GET_JOB_STATE":
+        return { ok: true, state: coordinator.state };
+      default:
+        return { ok: false, error: "not_implemented" };
+    }
   }
   // (c) Job-scoped content-script messages — sender validated against the
   // stored job descriptor (Task 9 wires the descriptor store).
   const jobMsg = parseJobMessage(rawMsg);
   if (jobMsg !== null) {
-    return routeJobMessage(jobMsg, sender);
+    return coordinator.handleJobMessage(jobMsg, sender) as Promise<RouterResponse>;
   }
   return { ok: false, error: "unknown_message" };
 }
@@ -149,6 +148,7 @@ export default defineBackground(() => {
   // Lock down chrome.storage.local at every service-worker startup, before
   // any credential access (spec §7.2/§19).
   void ensureTrustedContexts();
+  void coordinator.resume();
 
   browser.runtime.onInstalled.addListener(() => {
     void ensureTrustedContexts();
