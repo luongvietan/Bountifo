@@ -5,9 +5,9 @@ import type {
   SourceRecord,
 } from "../types";
 import {
-  HEADING_SEL,
   SECTION_SEL,
   type SectionScope,
+  eachTextBlock,
   extractStats,
   findSection,
   findSectionScope,
@@ -115,8 +115,11 @@ function itemElements(scope: SectionScope): Element[] {
     (el.parentElement?.closest(SECTION_SEL) ?? null) === section;
   const articles = [...section.querySelectorAll("article")].filter(owned);
   if (articles.length > 0) return articles;
+  // A feed card is a top-level list item, not the deepest one. Cards carry a
+  // metadata list of their own ("By dyl0", "Reward $13,200", "Priority P2"),
+  // and reaching for the innermost item turned one submission into four.
   const lis = [...section.querySelectorAll("li")].filter(
-    (li) => owned(li) && li.querySelector("li") === null,
+    (li) => owned(li) && li.parentElement?.closest("li") == null,
   );
   if (lis.length > 0) return lis;
   const trs = [...section.querySelectorAll("tbody tr")].filter(owned);
@@ -140,19 +143,35 @@ function itemTimestamp(el: Element): string | null {
   return m === null ? null : m[0];
 }
 
+/** A lead line longer than this is body text, not a title. */
+const MAX_TITLE = 160;
+
+/**
+ * A card's own lead: its first block — the heading when it has one, else the
+ * opening paragraph ("WaynesWorld announced …", "Submission accepted on
+ * target: …"). Reaching for the first heading *anywhere* inside a card picked
+ * up subheads from an announcement's body, and the first link picked up the
+ * researcher's profile, so three unrelated announcements all came back titled
+ * "create a ticket with Bugcrowd Support". A leaf card has no inner block at
+ * all; there the link text is the only name it offers.
+ */
+function cardTitle(el: Element, linkText: string): string | null {
+  for (const block of eachTextBlock(el)) {
+    return block.text.length <= MAX_TITLE ? block.text : null;
+  }
+  return linkText !== "" ? linkText : null;
+}
+
 function toItem(
   el: Element,
   kind: ActivityItem["kind"],
   pageUrl: string,
 ): ActivityItem {
-  const heading = el.querySelector(HEADING_SEL);
-  const headingText = textOf(heading);
   const link = el.querySelector("a[href]");
   const linkText = textOf(link);
-  const title = headingText !== "" ? headingText : linkText || null;
   return {
     kind,
-    title,
+    title: cardTitle(el, linkText),
     body: textOf(el),
     timestamp: itemTimestamp(el),
     sourceUrl:

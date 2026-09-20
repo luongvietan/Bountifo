@@ -686,7 +686,7 @@ describe("assembleDocument — sections", () => {
     const m = assembleDocument(
       baseArgs({ techniques: { automation: conflicted, scanning: fact() } }),
     );
-    expect(m.techniques.automation.conflict.detected).toBe(true);
+    expect(m.techniques.automation?.conflict.detected).toBe(true);
     expect(m.provenance.conflicts).toEqual([
       { factKey: "automation", evidence_refs: ["ev_a", "ev_b"] },
     ]);

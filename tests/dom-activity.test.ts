@@ -112,6 +112,41 @@ describe("collectActivity", () => {
   });
 });
 
+describe("collectActivity nested feed cards", () => {
+  it("keeps a card whole instead of harvesting its metadata chips", async () => {
+    // The live feed is section > ul > li(card) > div > ul > li(chip). Taking
+    // the deepest list item turned one submission into four fragments:
+    // "By dyl0", "Reward $13,200", "Priority P2"...
+    const doc = new DOMParser().parseFromString(
+      `<main><section id="recent-activities"><h3>Recent activity</h3>
+        <a href="/crowdstream">View all CrowdStream activity</a>
+        <ul role="list">
+          <li role="listitem"><div>Submission accepted on target: Aiven for Clickhouse
+            <ul role="list">
+              <li role="listitem"><span>By dyl0</span></li>
+              <li role="listitem"><span>Reward $13,200</span></li>
+              <li role="listitem"><span>Priority P2</span></li>
+            </ul>
+            <time datetime="2026-07-27">27 Jul 2026</time></div></li>
+          <li role="listitem"><div>Submission accepted on target: api.aiven.io
+            <ul role="list">
+              <li role="listitem"><span>By Private user</span></li>
+              <li role="listitem"><span>Priority P1</span></li>
+            </ul>
+            <time datetime="2026-05-25">25 May 2026</time></div></li>
+        </ul></section></main>`,
+      "text/html",
+    );
+    const res = await collectActivity(doc, PAGE_URL, async () => null);
+    expect(res.recentActivity).toHaveLength(2);
+    expect(res.recentActivity[0]?.body).toContain("Aiven for Clickhouse");
+    expect(res.recentActivity[0]?.body).toContain("Reward $13,200");
+    expect(res.recentActivity[0]?.body).toContain("Priority P2");
+    expect(res.recentActivity[0]?.timestamp).toBe("2026-07-27");
+    expect(res.recentActivity.map((i) => i.body)).not.toContain("By dyl0");
+  });
+});
+
 describe("collectActivity current Bugcrowd feed cards", () => {
   it("keeps each top-level card as one complete activity item", async () => {
     const current = await collectActivity(

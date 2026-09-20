@@ -18,7 +18,7 @@ describe("secret scan", () => {
     const warnings: unknown[][] = [];
     vi.spyOn(console, "error").mockImplementation((...args) => { errors.push(args); });
     vi.spyOn(console, "warn").mockImplementation((...args) => { warnings.push(args); });
-    const download = vi.spyOn(browser.downloads, "download").mockResolvedValue(1);
+    const download = vi.spyOn(browser.downloads, "download").mockResolvedValue(undefined);
     const h = harness();
     const coordinator = new JobCoordinator(h.deps);
     await coordinator.start(7);

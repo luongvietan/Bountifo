@@ -9,7 +9,7 @@ describe("downloadMarkdown", () => {
   it("downloads UTF-8 Markdown through a deterministic data URL", async () => {
     const download = vi
       .spyOn(browser.downloads, "download")
-      .mockResolvedValue(7);
+      .mockResolvedValue(undefined);
 
     await downloadMarkdown("bugcrowd-acme-2026-09-20.md", "hello ✓");
 

@@ -184,11 +184,30 @@ function headingRank(h: Element): number {
   return m === null ? 2 : Number(m[1]);
 }
 
-/** True when `section` holds another heading of the same or higher rank. */
+// Card containers: a list item, a table cell, a figure. Whatever a card holds
+// is that card's content, not the section's structure.
+const CARD_SEL =
+  "li,article,td,th,figure,[role='listitem'],[role='gridcell'],[role='row']";
+
+/** True when `h` lives inside a card of `section` rather than at its own level. */
+function inCard(section: Element, h: Element): boolean {
+  const card = h.closest(CARD_SEL);
+  return card !== null && card !== section && section.contains(card);
+}
+
+/**
+ * True when `section` holds another heading of the same or higher rank *at the
+ * section's own level*. Headings inside a card do not count: an announcement
+ * body carries its own <h3> subheads, and reading those as peers of the feed's
+ * heading shrinks the feed's scope to the title row — the cards themselves end
+ * up outside it and the whole feed is lost.
+ */
 function hasRivalHeading(section: Element, h: Element): boolean {
   const rank = headingRank(h);
   for (const other of section.querySelectorAll(HEADING_SEL)) {
-    if (other !== h && headingRank(other) <= rank) return true;
+    if (other === h) continue;
+    if (inCard(section, other)) continue;
+    if (headingRank(other) <= rank) return true;
   }
   return false;
 }
@@ -320,6 +339,8 @@ export function findSectionScope(
     if (
       section !== null &&
       section.querySelector(HEADING_SEL) === h &&
+      // A heading inside a card labels the card, never the section around it.
+      !inCard(section, h) &&
       !hasRivalHeading(section, h)
     ) {
       return {

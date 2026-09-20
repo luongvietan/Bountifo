@@ -95,11 +95,15 @@ export async function purgeJob(db: JobDb, jobId: string): Promise<void> {
     const rows = (await tx.objectStore(store).getAll()) as Record<string, unknown>[];
     for (const row of rows) {
       if (row.jobId !== jobId) continue;
-      const key =
-        store === "sourceRecords" ? [jobId, row.sourceKey] :
-        store === "evidence" ? [jobId, row.evidenceId] :
-        store === "facts" ? [jobId, row.factKey] :
-        store === "unitResults" ? [jobId, row.unitId] : [jobId, row.kind];
+      // Every store is keyed [jobId, <its own string key>]; the rows come
+      // back untyped, so the second half is narrowed here rather than cast
+      // at the call.
+      const second =
+        store === "sourceRecords" ? row.sourceKey :
+        store === "evidence" ? row.evidenceId :
+        store === "facts" ? row.factKey :
+        store === "unitResults" ? row.unitId : row.kind;
+      const key: IDBValidKey = [jobId, String(second)];
       await tx.objectStore(store).delete(key);
     }
   }

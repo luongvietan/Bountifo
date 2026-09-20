@@ -120,7 +120,9 @@ export type SenderValidation = { ok: true } | { ok: false; reason: string };
 export function validateJobSender(
   sender: { id?: string; tab?: { id?: number; url?: string } },
   msg: { jobId: string },
-  job: ActiveJobDescriptor,
+  // Only the three fields the check reads: any descriptor shape satisfies it,
+  // stored or in-memory.
+  job: { jobId: string; tabId: number; phase: string },
   expectedPhase: string,
 ): SenderValidation {
   if (sender.id !== browser.runtime.id) {

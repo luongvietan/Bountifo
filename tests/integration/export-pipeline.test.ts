@@ -8,7 +8,7 @@ import { decodeMarkdown, harness } from "./helpers";
 beforeEach(() => fakeBrowser.reset());
 
 async function run(reverseRecords = false): Promise<string> {
-  const download = vi.spyOn(browser.downloads, "download").mockResolvedValue(1);
+  const download = vi.spyOn(browser.downloads, "download").mockResolvedValue(undefined);
   const coordinator = new JobCoordinator(harness({ reverseRecords }).deps);
   await coordinator.start(7);
   await coordinator.waitForIdle();

@@ -210,6 +210,13 @@ const AUTHORIZATION_SENTENCE_RES = [
   /\bnot\s+authorized\b/i,
   /\bonly\s+test\b/i,
   /\bdo\s+not\s+test\b/i,
+  // The grant stated from the program's side. OpenAI's brief never says
+  // "testing is authorized"; it says what it can and cannot authorize, and
+  // that boundary — research on its own systems, not on third parties — is
+  // exactly the fact an agent needs before it touches anything.
+  /\b(?:can|cannot|can\s?not|are\s+unable\s+to)\s+authorize\b/i,
+  /\bauthorize\s+(?:your|any)\s+(?:research|testing|efforts?|activities)\b/i,
+  /\bauthorized\s+testing\b/i,
 ];
 
 /**

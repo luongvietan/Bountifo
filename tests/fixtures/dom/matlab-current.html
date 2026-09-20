@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head><title>Bug Bounty: MATLAB Online - Ongoing Bug Bounty Engagement - Bugcrowd</title></head>
+  <body>
+    <!-- The single-group shape. Two traps live here: the one scope card is
+         named "In Scope", which is a badge word rather than a group name, and
+         the card holds a long "Target Overview" block under its own <h2> —
+         a heading that outranks the section's own <h3> without being its peer.
+         There is also a policy section literally headed "Out of Scope" that
+         lists excluded finding types, which is not a scope group. -->
+    <main role="main">
+      <div id="researcher-engagement-brief-root">
+        <header>
+          <ul role="list"><li role="listitem"><small>Bug Bounty</small></li></ul>
+          <h2>MATLAB Online - Ongoing Bug Bounty Engagement</h2>
+          <ul role="list"><li role="listitem"><span>Scope rating </span><span>1 out of 4</span></li></ul>
+        </header>
+
+        <div id="description"><p>MATLAB Online extends the capabilities of MATLAB to the cloud.</p></div>
+
+        <section>
+          <h3 id="targets">Targets <span><div><span>1 out of 4</span></div></span></h3>
+          <div>
+            <ul role="list">
+              <li role="listitem">
+                <div>
+                  <div>
+                    <div><div><h2>In Scope </h2></div><div><span>In scope</span></div></div>
+                    <figure role="group" id="PriorityBarChart-1">
+                      <figcaption>Payment reward chart</figcaption>
+                      <dl>
+                        <div><dt><span>P1</span></dt><dd><span>$</span><span>3000</span> <span>&ndash;&nbsp;</span><span>$</span><span>7000</span></dd></div>
+                        <div><dt><span>P2</span></dt><dd><span>$</span><span>1200</span> <span>&ndash;&nbsp;</span><span>$</span><span>3000</span></dd></div>
+                      </dl>
+                    </figure>
+                  </div>
+                  <div><div><div><div>
+                    <h2>Target Overview</h2>
+                    <ul>
+                      <li><p>This is a browser-based version of MATLAB, designed to execute user-supplied MATLAB code.</p></li>
+                      <li><p>MATLAB Online runs in a Docker container on a Linux host running in Amazon EC2.</p></li>
+                    </ul>
+                  </div></div></div>
+                  <div><table>
+                    <thead><tr><th>Name / Location</th><th>Tags</th><th>Known issues</th></tr></thead>
+                    <tbody>
+                      <tr><td><span data-tooltip-content="website"><code>https://matlab.mathworks.com/</code></span></td><td><ul role="list"><li><span>Website Testing</span></li></ul></td><td><span><output>3</output></span><button aria-label="See Known Issues for https://matlab.mathworks.com/"><span></span></button></td></tr>
+                    </tbody>
+                  </table></div>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </section>
+
+        <section>
+          <div>
+            <h1>Program Rules</h1>
+            <p>Testing is only authorized on the targets listed as In-Scope. Any domain/property of MathWorks not listed explicitly in the targets section is out of scope.</p>
+            <h2>Engagement Guidelines</h2>
+            <ul>
+              <li>Persistent testing on any publicly facing functionality is not permitted. Any created content must be deleted within FIVE minutes.</li>
+            </ul>
+            <h2>Out of Scope</h2>
+            <p>The following finding types are specifically excluded from the bounty:</p>
+            <ul>
+              <li>Denial of Service attacks of any type.</li>
+              <li>Social engineering/phishing attacks</li>
+              <li>Self XSS</li>
+            </ul>
+          </div>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

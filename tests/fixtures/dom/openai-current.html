@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head><title>Bug Bounty: Safety Bug Bounty - Bugcrowd</title></head>
+  <body>
+    <!-- The prose-heavy multi-group shape. Each scope card carries paragraphs
+         that begin "In Scope:" / "Out of Scope:" as *sentences*, which must
+         never be read as scope badges, and the engagement's own name is an h2
+         in the header while the policy sections below are h1. The brief never
+         says "testing is authorized" — it says what it can and cannot
+         authorize. -->
+    <main role="main">
+      <div id="researcher-engagement-brief-root">
+        <header>
+          <ul role="list"><li role="listitem"><small>Bug Bounty</small></li></ul>
+          <h2>Safety Bug Bounty</h2>
+          <ul role="list"><li role="listitem"><span>Scope rating </span><span>1 out of 4</span></li></ul>
+        </header>
+
+        <section>
+          <h3 id="targets">Targets <span><div><span>1 out of 4</span></div></span></h3>
+          <div>
+            <ul role="list">
+              <li role="listitem">
+                <div>
+                  <div>
+                    <div><div><h2>Agentic Tools Including MCP</h2></div><div><span>In scope</span></div></div>
+                    <figure role="group" id="PriorityBarChart-2">
+                      <figcaption>Payment reward chart</figcaption>
+                      <dl>
+                        <div><dt><span>P1</span></dt><dd><span>$</span><span>5500</span> <span>&ndash;&nbsp;</span><span>$</span><span>7500</span></dd></div>
+                        <div><dt><span>P2</span></dt><dd><span>$</span><span>2500</span> <span>&ndash;&nbsp;</span><span>$</span><span>3500</span></dd></div>
+                      </dl>
+                    </figure>
+                  </div>
+                  <div><div><div><div>
+                    <p>Abuse risks in our agentic products, defined as any product that performs an action on behalf of the user.</p>
+                    <ul>
+                      <li><strong>In Scope:</strong> Indirect / third-party prompt injection that causes an agent to misuse a Connector or MCP tool.</li>
+                      <li><strong>Out of Scope:</strong> Testing that requires accessing accounts, tenants, or data you do not own.</li>
+                    </ul>
+                  </div></div></div>
+                  <div><table>
+                    <thead><tr><th>Name / Location</th><th>Tags</th><th>Known issues</th></tr></thead>
+                    <tbody>
+                      <tr><td><span data-tooltip-content="other"><code>Agentic Tools</code></span></td><td><ul role="list"><li><span>Artificial Intelligence</span></li></ul></td><td><span><output>18</output></span><button aria-label="See Known Issues for Agentic Tools"><span></span></button></td></tr>
+                    </tbody>
+                  </table></div>
+                </div>
+              </li>
+              <li role="listitem">
+                <div>
+                  <div>
+                    <div><div><h2>Content Issues</h2></div><div><span>Out of scope</span></div></div>
+                  </div>
+                  <div><div><div><div>
+                    <p>The model generates responses that violate our policy on disallowed content.</p>
+                  </div></div></div>
+                  <div><table>
+                    <thead><tr><th>Name / Location</th><th>Tags</th><th>Known issues</th></tr></thead>
+                    <tbody>
+                      <tr><td><span data-tooltip-content="other"><code>Content</code></span></td><td></td><td><span><output>0</output></span></td></tr>
+                    </tbody>
+                  </table></div>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </section>
+
+        <section>
+          <div>
+            <h1>Program Rules</h1>
+            <p>Safety and abuse testing may result in account enforcement including bans. Please note that authorized testing does not exempt you from all of our terms of service.</p>
+            <h1>Safe Harbor</h1>
+            <p>We consider your safety and security research to be "authorized" under the Computer Fraud and Abuse Act.</p>
+            <p>Please understand that, while we can authorize your research on our systems and services, we cannot authorize your efforts on third-party products.</p>
+          </div>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

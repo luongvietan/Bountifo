@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head><title>Bug Bounty: Nubank Brasil - Bugcrowd</title></head>
+  <body>
+    <!-- Nubank's brief shape. Two things here break naive scoping:
+         (1) each feed heading sits in a title row next to a "View all …"
+             link, so the heading's sibling run is that link and nothing else;
+         (2) announcement cards carry their own <h3> subheads, which rank the
+             same as the feed's own <h3>.
+         Together they used to collapse "What's new" to a single item whose
+         body was the nav link. -->
+    <main id="researcher-engagement-brief-root">
+      <header>
+        <ul><li>Bug Bounty</li></ul>
+        <h1>Nubank Brasil Managed Bug Bounty Program</h1>
+      </header>
+
+      <div id="description">
+        <p>We are one of the world's largest digital banking platforms.</p>
+        <h2>Response Targets</h2>
+        <ul><li>First Response: 2 days</li></ul>
+      </div>
+
+      <section>
+        <h3 id="targets">Targets <span><div><span>4 out of 4</span></div></span></h3>
+        <div>
+          <ul role="list">
+            <li role="listitem">
+              <div>
+                <div>
+                  <div><div><h2>Core Assets</h2></div><div><span>In scope</span></div></div>
+                  <figure role="group" id="PriorityBarChart-1">
+                    <figcaption>Payment reward chart</figcaption>
+                    <dl>
+                      <div><dt><span>P1</span></dt><dd><span>$</span><span>2000</span> <span>–&nbsp;</span><span>$</span><span>4000</span></dd></div>
+                      <div><dt><span>P2</span></dt><dd><span>$</span><span>1000</span> <span>–&nbsp;</span><span>$</span><span>2000</span></dd></div>
+                    </dl>
+                  </figure>
+                </div>
+                <div><table>
+                  <thead><tr><th>Name / Location</th><th>Tags</th><th>Known issues</th></tr></thead>
+                  <tbody>
+                    <tr><td><span data-tooltip-content="android"><code><a href="https://play.google.com/store/apps/details?id=com.nu.production">Nubank Android: Play Store</a></code><div><code>https://play.google.com/store/apps/details?id=com.nu.production</code></div></span></td><td><ul role="list"><li><span>Android</span></li></ul></td><td><span><output>5</output></span><button aria-label="See Known Issues for Nubank Android: Play Store"><span></span></button></td></tr>
+                    <tr><td><span data-tooltip-content="api"><code>prod-*.nubank.com.br</code></span></td><td></td><td><span><output>4</output></span><button aria-label="See Known Issues for prod-*.nubank.com.br"><span></span></button></td></tr>
+                  </tbody>
+                </table></div>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section>
+        <div>
+          <div><h3 id="whats_new">What&rsquo;s new</h3></div>
+          <div><a href="/engagements/nubank/announcements">View all announcements</a></div>
+        </div>
+        <ul role="list">
+          <li role="listitem">
+            <div>
+              <div><img alt="WaynesWorld&rsquo;s avatar"></div>
+              <div>
+                <p><span>WaynesWorld</span> announced <span>The Arraia Bonus Promo is Ending Soon!</span></p>
+                <ul role="list"><li role="listitem"><span><time datetime="2026-06-26T16:30:27Z">3 months ago</time></span></li></ul>
+                <div><div><div>
+                  <p>Hi Hackers,</p>
+                  <hr>
+                  <h3>The Heated Payouts</h3>
+                  <p>Last push before rewards return to normal on June 30th.</p>
+                </div></div></div>
+              </div>
+            </div>
+          </li>
+          <li role="listitem">
+            <div>
+              <div><img alt="sanciont&rsquo;s avatar"></div>
+              <div>
+                <p><span>sanciont</span> announced <span>Temporary Promotion: Arraia dos Bounties!</span></p>
+                <ul role="list"><li role="listitem"><span><time datetime="2026-06-01T14:11:38Z">4 months ago</time></span></li></ul>
+                <div><div><div>
+                  <p>Rewards are boosted through June.</p>
+                  <h3>How it works</h3>
+                  <p>Submit as usual; the bonus is applied at payout.</p>
+                </div></div></div>
+              </div>
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <section id="recent-activities">
+        <div>
+          <div><h3 id="recent_activity">Recent activity</h3></div>
+          <div><a href="/engagements/nubank/crowdstream">View all CrowdStream activity</a></div>
+        </div>
+        <ul role="list">
+          <li role="listitem">
+            <div><img></div>
+            <div>
+              <p>Submission accepted on target: prod-*.nubank.com.br</p>
+              <ul role="list">
+                <li role="listitem">By <a href="https://bugcrowd.com/h/bckz">bckz</a></li>
+                <li role="listitem">Engagement <a href="/engagements/nubank">Nubank Brasil Managed Bug Bounty Program</a></li>
+                <li role="listitem">Priority <span>P1</span></li>
+              </ul>
+              <span>Accepted on 18 Sep 2026</span>
+            </div>
+          </li>
+          <li role="listitem">
+            <div><img></div>
+            <div>
+              <p>Submission accepted on target: *.nubank.com.br</p>
+              <ul role="list">
+                <li role="listitem">By <a href="https://bugcrowd.com/h/ZheverXploit">ZheverXploit</a></li>
+                <li role="listitem">Priority <span>P4</span></li>
+              </ul>
+              <span>Accepted on 8 Sep 2026</span>
+            </div>
+          </li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>

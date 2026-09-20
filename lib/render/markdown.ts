@@ -121,12 +121,19 @@ function renderEvidence(evidence: Evidence[]): string {
       const locator = [item.locator.section, item.locator.subsection]
         .filter((part): part is string => part !== undefined)
         .join(" / ");
+      // Everything the content hash covers is printed beside it, so a
+      // reader can recompute the corpus from this file alone instead of
+      // taking `evidence_hash_valid` on trust (spec 14, 21).
       const metadata = [
         `- Source key: ${escapeMd(item.source_key)}`,
         `- Source level: ${escapeMd(item.source_level)}`,
+        `- Source type: ${item.source.type}`,
         `- URL: ${item.source.url}`,
+        `- Authenticated: ${item.source.authenticated}`,
         `- Section: ${locator === "" ? "—" : escapeMd(locator)}`,
-        `- Extraction: ${item.extraction.status}`,
+        `- Collected at: ${escapeMd(item.collected_at)}`,
+        `- Content hash: ${escapeMd(item.content_hash)}`,
+        `- Extraction: ${item.extraction.status} (parser ${escapeMd(item.extraction.parser_version)})`,
       ].join("\n");
       return `### ${item.id}\n\n${metadata}\n\n${quoted(item.quote)}`;
     })

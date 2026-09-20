@@ -337,6 +337,21 @@ describe("renderMarkdown", () => {
     expect(parsed.vrt_scope_rules[0].status).toBe("out_of_scope");
   });
 
+  it("gives each evidence object what an independent check needs", () => {
+    // Recomputing the corpus hash from the file requires every field the hash
+    // covers: the quote, where it came from, when, and under which parser.
+    const rendered = renderMarkdown(model());
+    const item = model().evidence[0]!;
+    const block = rendered.slice(rendered.indexOf(`### ${item.id}`));
+    expect(block).toContain(`- Content hash: ${escapeMd(item.content_hash)}`);
+    expect(block).toContain(`- Collected at: ${escapeMd(item.collected_at)}`);
+    expect(block).toContain(`- Source type: ${item.source.type}`);
+    expect(block).toContain("- Authenticated: true");
+    expect(block).toContain(
+      `- Extraction: ${item.extraction.status} (parser ${escapeMd(item.extraction.parser_version)})`,
+    );
+  });
+
   it("lists collection issues under provenance", () => {
     const rendered = renderMarkdown(model());
     expect(rendered).toContain("### Collection issues");

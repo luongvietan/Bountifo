@@ -11,6 +11,9 @@ import kiOneHtml from "../fixtures/dom/ki-one.html?raw";
 import kiZeroHtml from "../fixtures/dom/ki-zero.html?raw";
 import policiesHtml from "../fixtures/dom/policies.html?raw";
 import aivenCurrentHtml from "../fixtures/dom/aiven-current.html?raw";
+import nubankCurrentHtml from "../fixtures/dom/nubank-current.html?raw";
+import matlabCurrentHtml from "../fixtures/dom/matlab-current.html?raw";
+import openaiCurrentHtml from "../fixtures/dom/openai-current.html?raw";
 import pinterestCurrentHtml from "../fixtures/dom/pinterest-current.html?raw";
 import sessionExpiredHtml from "../fixtures/dom/session-expired.html?raw";
 import targetsHtml from "../fixtures/dom/targets.html?raw";
@@ -35,6 +38,9 @@ const FIXTURES: Record<string, string> = {
   "targets-wrapper.html": targetsWrapperHtml,
   "webdotcom-current.html": webdotcomCurrentHtml,
   "aiven-current.html": aivenCurrentHtml,
+  "nubank-current.html": nubankCurrentHtml,
+  "matlab-current.html": matlabCurrentHtml,
+  "openai-current.html": openaiCurrentHtml,
   "pinterest-current.html": pinterestCurrentHtml,
 };
 
