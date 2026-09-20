@@ -246,9 +246,13 @@ function activityEmpty(a: AssembleArgs["activity"]): boolean {
 
 /**
  * Deep-clone of the model minus exactly the volatile fields — `generated_at`,
- * `job_id`, and `provenance.collected_at` — so `normalizedHash` output is
- * stable across identical collections. Nothing else is removed (evidence
- * `collected_at` stays; evidence hashes already exclude it independently).
+ * `job_id`, and `collected_at` wherever it names a per-run collection
+ * timestamp (`provenance.collected_at` and each `evidence[].collected_at`) —
+ * so `normalizedHash` output is stable across identical collections (spec
+ * §14: normalized_hash excludes volatile collection metadata; §21 requires
+ * reproducible hashes). Evidence `collected_at` is already excluded from
+ * `evidence_corpus_hash` by the EvidenceHashInputV1 projection, so stripping
+ * it here keeps the two hashes consistent. Nothing else is removed.
  */
 export function stripVolatile(model: DocumentModel): object {
   const clone = JSON.parse(JSON.stringify(model)) as Record<
@@ -258,11 +262,17 @@ export function stripVolatile(model: DocumentModel): object {
     generated_at?: string;
     job_id?: string;
     provenance?: { collected_at?: string };
+    evidence?: { collected_at?: string }[];
   };
   delete clone.generated_at;
   delete clone.job_id;
   if (clone.provenance !== undefined) {
     delete clone.provenance.collected_at;
+  }
+  if (Array.isArray(clone.evidence)) {
+    for (const e of clone.evidence) {
+      delete e.collected_at;
+    }
   }
   return clone;
 }

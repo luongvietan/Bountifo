@@ -317,10 +317,14 @@ describe("stripVolatile", () => {
     expect(
       (stripped.provenance as Record<string, unknown>).collected_at,
     ).toBeUndefined();
-    // Nothing else is removed.
+    // Nothing else is removed — evidence stays, minus its own volatile
+    // collected_at stamp (excluded from normalized_hash like the evidence
+    // corpus hash projection).
     expect(stripped.schema_version).toBe(DOCUMENT_SCHEMA_VERSION);
     expect(stripped.engagement).toEqual(model.engagement);
-    expect(stripped.evidence).toEqual(model.evidence);
+    expect(stripped.evidence).toEqual(
+      model.evidence.map(({ collected_at: _drop, ...rest }) => rest),
+    );
     expect(stripped.collection).toEqual(model.collection);
     expect(stripped.provenance).toEqual({
       parser_version: PARSER_VERSION,
@@ -345,6 +349,28 @@ describe("stripVolatile", () => {
     const hashA = await normalizedHash(stripVolatile(a));
     const hashB = await normalizedHash(stripVolatile(b));
     expect(hashA).toBe(hashB);
+  });
+
+  it("normalizedHash is identical when only evidence collected_at differs", async () => {
+    const earlier = assembleDocument(baseArgs());
+    const later = assembleDocument(
+      baseArgs({
+        jobId: "job_qq77rr88",
+        generatedAt: "2031-05-05T05:05:05Z",
+        collectedAt: "2031-05-05T05:05:00Z",
+        evidence: [
+          ev("ev_dom2", "dom:details:program-rules:do-not-exfiltrate"),
+          ev("ev_api1", "api:engagement:acme", "api"),
+          ev("ev_dom1", "dom:details:account-rules:use-your-own-account"),
+          ev("ev_ki1", "dom:ki:target:example-com"),
+          ev("ev_vrt", "dom:details:vrt:version"),
+        ].map((e) => ({ ...e, collected_at: "2031-05-05T05:00:00Z" })),
+      }),
+    );
+    expect(later.evidence[0]!.collected_at).toBe("2031-05-05T05:00:00Z");
+    expect(await normalizedHash(stripVolatile(earlier))).toBe(
+      await normalizedHash(stripVolatile(later)),
+    );
   });
 
   it("normalizedHash differs when a non-volatile field differs", async () => {
