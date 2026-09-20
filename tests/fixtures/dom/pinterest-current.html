@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+  <head><title>Bug Bounty: Pinterest - Bugcrowd</title></head>
+  <body>
+    <!-- Pinterest's brief renders no header block inside main, and every
+         policy section is an h1 that sits *inside* the scope section whose
+         own first heading is the targets counter. -->
+    <main id="researcher-engagement-brief-root">
+      <header>
+        <ul><li>Bug Bounty</li></ul>
+        <h2>Pinterest</h2>
+      </header>
+      <section>
+        <h3 id="targets">Targets 4 out of 4</h3>
+        <ul>
+          <li>
+            <div><h2>in scope</h2></div>
+            <table>
+              <thead><tr><th>Name / Location</th><th>Tags</th><th>Known issues</th></tr></thead>
+              <tbody>
+                <tr><td><a href="https://www.pinterest.com">www.pinterest.com</a><span>https://www.pinterest.com</span></td><td><ul><li>Website Testing</li></ul></td><td><span aria-label="4 known issues">4</span><button>See Known Issues for www.pinterest.com</button></td></tr>
+                <tr><td>Browser Extension</td><td></td><td><span aria-label="0 known issues">0</span><button>See Known Issues for Browser Extension</button></td></tr>
+              </tbody>
+            </table>
+          </li>
+        </ul>
+
+        <p>Testing is only authorized on the targets listed as In-Scope. Any Pinterest property not listed is out of scope.</p>
+
+        <h2>Testing Guidelines</h2>
+        <ul>
+          <li>Accessing personal data or PII of other users is permitted only with written approval from Pinterest security.</li>
+        </ul>
+
+        <h1>Safe Harbor</h1>
+        <p>When conducting vulnerability research according to this policy, we consider this research to be:</p>
+        <ul>
+          <li>Authorized in accordance with the Computer Fraud and Abuse Act.</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>

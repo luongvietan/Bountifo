@@ -45,9 +45,19 @@ export function renderAgentFacts(model: DocumentModel): string {
   );
   const facts = {
     techniques,
+    // Kept beside the techniques so a consumer cannot mistake a refused report
+    // for a forbidden activity: the two axes are named separately (§11).
+    submission_exclusions: model.submissionExclusions,
+    // Named `authorized_scope` so the key can never read as an HTTP
+    // Authorization header in a scan of the output (§19).
+    authorized_scope: model.scopeAuthorization,
+    // A Scope Guard needs the VRT verdicts beside the target list: they rule
+    // whole vulnerability classes in or out regardless of asset.
+    vrt_scope_rules: model.vrt.scope_rules,
     safe_harbor: model.engagement.safeHarbor,
     collection: model.collection,
     integrity: model.integrity,
+    collection_issues: model.provenance.collection_issues,
     policy: model.policy,
   };
   return `\`\`\`yaml\n${stringifyYaml(facts, { lineWidth: 0 }).trimEnd()}\n\`\`\``;
@@ -57,8 +67,10 @@ function value(value: string | number | boolean | null): string {
   return value === null ? "—" : escapeMd(String(value));
 }
 
-function formatAmount(amount: number | null): string {
+function formatAmount(amount: number | string | null): string {
   if (amount === null) return "—";
+  // A visible range is already formatted as the brief showed it.
+  if (typeof amount === "string") return amount === "" ? "—" : escapeMd(amount);
   const [whole, fraction] = String(amount).split(".");
   const grouped = whole!.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return fraction === undefined ? grouped : `${grouped}.${fraction}`;
@@ -186,6 +198,32 @@ export function renderMarkdown(model: DocumentModel): string {
     formatAmount(group.rewards.p5),
   ]);
 
+  // The two exclusion axes stay in separate columns; collapsing them into one
+  // bullet is what let "not accepted" read as "not testable".
+  const exclusions =
+    model.submissionExclusions.length === 0
+      ? bulletLines(model.nonFocusAreas)
+      : mdTable(
+          ["Excluded submission", "Submission", "Testing"],
+          model.submissionExclusions.map((item) => [
+            item.text,
+            item.submission_status,
+            item.testing_status,
+          ]),
+        );
+  const scope = model.scopeAuthorization;
+  const scopeAuthorization =
+    scope === null
+      ? ""
+      : `${[
+          `- Listed targets: ${scope.listed_targets.status}`,
+          ...scope.listed_targets.conditions.map(
+            (condition) => `  - ${escapeMd(condition)}`,
+          ),
+          `- Unlisted targets: ${scope.unlisted_targets.status}`,
+          `- Source: ${quoted(scope.quote)}${evidenceRefs(scope.evidence_refs)}`,
+        ].join("\n")}\n\n`;
+
   const authStatements = authorizationEvidence(model).map(
     (item) => `${item.quote}${evidenceRefs([item.id])}`,
   );
@@ -200,6 +238,21 @@ export function renderMarkdown(model: DocumentModel): string {
     `- Version: ${value(model.vrt.version)}`,
     `- Baseline: ${value(model.vrt.baseline)}`,
     `- Evidence: ${model.vrt.evidence_refs.length === 0 ? "—" : model.vrt.evidence_refs.map(escapeMd).join(", ")}`,
+    "",
+    "### Scope rules",
+    "",
+    model.vrt.scope_rules.length === 0
+      ? "None recorded."
+      : mdTable(
+          ["Vulnerability class", "VRT", "Applies to", "Status", "Note"],
+          model.vrt.scope_rules.map((rule) => [
+            rule.category,
+            rule.vrt_version ?? "—",
+            rule.applies_to ?? "—",
+            rule.status,
+            rule.note ?? "—",
+          ]),
+        ),
     "",
     "### Exclusions",
     "",
@@ -273,6 +326,17 @@ export function renderMarkdown(model: DocumentModel): string {
     "",
     bulletLines(model.provenance.missing_sections.map(escapeMd)),
     "",
+    "### Collection issues",
+    "",
+    bulletLines(
+      model.provenance.collection_issues.map(
+        (issue) =>
+          `${escapeMd(issue.code)} — ${escapeMd(issue.target_id)} (displayed ${
+            issue.displayed_count ?? "unknown"
+          }, collected ${issue.collected_count})`,
+      ),
+    ),
+    "",
     "### Warnings",
     "",
     bulletLines(model.quality.warnings.map(escapeMd)),
@@ -290,7 +354,7 @@ export function renderMarkdown(model: DocumentModel): string {
     ],
     [
       "Authorization and Safe Harbor",
-      `- Status: ${model.engagement.safeHarbor.status}\n- Level: ${value(model.engagement.safeHarbor.level)}\n- Disclosure policy: ${value(model.engagement.disclosurePolicy)}\n\n${bulletLines(authStatements)}`,
+      `- Status: ${model.engagement.safeHarbor.status}\n- Level: ${value(model.engagement.safeHarbor.level)}\n- Disclosure policy: ${value(model.engagement.disclosurePolicy)}\n\n${scopeAuthorization}${bulletLines(authStatements)}`,
     ],
     [
       "Scope Inventory",
@@ -311,7 +375,7 @@ export function renderMarkdown(model: DocumentModel): string {
     ["Testing, Account, Resource, and Data Constraints", constraints],
     [
       "Focus Areas / Explicit Exclusions",
-      `### Focus areas\n\n${bulletLines(model.focusAreas)}\n\n### Explicit exclusions\n\n${bulletLines(model.nonFocusAreas)}`,
+      `### Focus areas\n\n${bulletLines(model.focusAreas)}\n\n### Explicit exclusions\n\n${exclusions}`,
     ],
     [
       "Credentials and Access",

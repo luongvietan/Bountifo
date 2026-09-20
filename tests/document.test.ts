@@ -142,6 +142,21 @@ function policy(overrides: Partial<PolicyData> = {}): PolicyData {
     dataRules: ["Do not exfiltrate data"],
     focusAreas: ["XSS"],
     nonFocusAreas: ["CSRF"],
+    exclusions: [
+      {
+        text: "CSRF",
+        submissionStatus: "excluded" as const,
+        testingStatus: "unspecified" as const,
+      },
+    ],
+    scopeAuthorization: {
+      listedTargets: {
+        status: "conditional" as const,
+        conditions: ["the targets listed as in scope"],
+      },
+      unlistedTargets: { status: "prohibited" as const },
+      quote: "Testing is only authorized on the targets listed as in scope.",
+    },
     reportingRequirements: ["Include a PoC"],
     vrt: {
       version: "2.0",
@@ -150,6 +165,15 @@ function policy(overrides: Partial<PolicyData> = {}): PolicyData {
       deviations: ["vrt deviation"],
       targetSpecific: ["vrt target rule"],
       notes: ["vrt note"],
+      scopeRules: [
+        {
+          category: "Application-Level Denial-of-Service (DoS)",
+          vrtVersion: "1.18",
+          appliesTo: "All targets",
+          status: "out_of_scope" as const,
+          note: null,
+        },
+      ],
     },
     ...overrides,
   };
@@ -329,6 +353,7 @@ describe("stripVolatile", () => {
     expect(stripped.provenance).toEqual({
       parser_version: PARSER_VERSION,
       missing_sections: model.provenance.missing_sections,
+      collection_issues: model.provenance.collection_issues,
       conflicts: model.provenance.conflicts,
     });
     // The input model is not mutated.
@@ -672,6 +697,38 @@ describe("assembleDocument — sections", () => {
 // assembleDocument — missing sections
 // ---------------------------------------------------------------------------
 
+describe("assembleDocument — VRT scope rules", () => {
+  it("carries the VRT scope table as policy, never as targets", () => {
+    const m = assembleDocument(baseArgs());
+    expect(m.vrt.scope_rules).toEqual([
+      {
+        category: "Application-Level Denial-of-Service (DoS)",
+        vrt_version: "1.18",
+        applies_to: "All targets",
+        status: "out_of_scope",
+        note: null,
+      },
+    ]);
+    expect(m.targets.some((t) => (t.name ?? "").includes("Denial"))).toBe(false);
+  });
+});
+
+describe("assembleDocument — policy projection", () => {
+  it("carries submission exclusions and scope authorization as typed facts", () => {
+    const m = assembleDocument(baseArgs());
+    expect(m.submissionExclusions).toEqual([
+      { text: "CSRF", submission_status: "excluded", testing_status: "unspecified", evidence_refs: [] },
+    ]);
+    expect(m.scopeAuthorization).toMatchObject({
+      listed_targets: {
+        status: "conditional",
+        conditions: ["the targets listed as in scope"],
+      },
+      unlisted_targets: { status: "prohibited" },
+    });
+  });
+});
+
 describe("assembleDocument — provenance.missing_sections", () => {
   it("records every required collector that produced no records", () => {
     const m = assembleDocument(
@@ -691,6 +748,62 @@ describe("assembleDocument — provenance.missing_sections", () => {
       "activity",
       "known_issues",
     ]);
+  });
+
+  it("reports a Known Issues count failure as a collection issue, not a missing section", () => {
+    // The section was collected; it failed validation. Naming it "missing"
+    // would overload that vocabulary, so it lands in collection_issues.
+    const m = assembleDocument(
+      baseArgs({
+        kiResults: [
+          {
+            result: kiResult({
+              displayedCount: 5,
+              collectedCount: 1,
+              countMatches: false,
+            }),
+            targetId: "api-t1",
+          },
+        ],
+      }),
+    );
+    expect(m.provenance.missing_sections).toEqual([]);
+    expect(m.provenance.collection_issues).toEqual([
+      {
+        code: "known_issues:incomplete_counts",
+        target_id: "api-t1",
+        displayed_count: 5,
+        collected_count: 1,
+      },
+    ]);
+  });
+
+  it("names a target whose dialog never opened as its own collection issue", () => {
+    const m = assembleDocument(
+      baseArgs({
+        kiResults: [
+          {
+            result: kiResult({
+              displayedCount: null,
+              warnings: ["ki_dialog_not_opened:target:example-com"],
+            }),
+            targetId: "api-t1",
+          },
+        ],
+      }),
+    );
+    expect(m.provenance.collection_issues).toEqual([
+      {
+        code: "known_issues:dialog_not_opened",
+        target_id: "api-t1",
+        displayed_count: null,
+        collected_count: 1,
+      },
+    ]);
+  });
+
+  it("records no collection issue when every count validated", () => {
+    expect(assembleDocument(baseArgs()).provenance.collection_issues).toEqual([]);
   });
 
   it("flags an empty activity collection while keeping populated sections", () => {

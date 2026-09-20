@@ -13,7 +13,13 @@ import {
   type KiDriver,
 } from "../lib/dom/knownIssues";
 import { isSessionExpired } from "../lib/dom/session";
+import {
+  ensureRendered as ensureBriefRendered,
+  windowTarget,
+} from "../lib/dom/render";
+import { keepMounted } from "../lib/ui/launcher";
 import type { ActiveJobDescriptor } from "../lib/messages";
+import type { JobDescriptor } from "../lib/job/descriptor";
 
 // ---------------------------------------------------------------------------
 // Content-script orchestrator (spec §7.4). main() captures the initial URL,
@@ -75,6 +81,11 @@ export interface OrchestratorDeps {
     unitId: string,
     counters: Record<string, number>,
   ) => void;
+  /**
+   * Brings the lazily-rendered brief into existence before anything is read.
+   * Runs once per page; a failure here never blocks collection.
+   */
+  ensureRendered?: () => Promise<void>;
 }
 
 export interface Orchestrator {
@@ -100,6 +111,14 @@ function asDomTarget(raw: unknown): DomTarget | null {
 export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   const openedElements = new Set<Element>();
   let kiDone = 0;
+  let rendered: Promise<void> | null = null;
+
+  /** Once per page, and never a reason to abandon a collection. */
+  const ensureRendered = async (): Promise<void> => {
+    if (deps.ensureRendered === undefined) return;
+    rendered ??= deps.ensureRendered().catch(() => undefined);
+    await rendered;
+  };
 
   // Everything the KI driver opens is tracked so restore_page can close it.
   const trackingDriver: KiDriver = {
@@ -173,6 +192,10 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     ) {
       return envelopeErr("session_expired", "session expired during collection");
     }
+
+    // The brief renders on scroll; read nothing until it exists. restore_page
+    // is exempt — cleanup must not re-render the page it is restoring.
+    if (unit.kind !== "restore_page") await ensureRendered();
 
     try {
       switch (unit.kind) {
@@ -273,6 +296,41 @@ async function readActiveJob(): Promise<ActiveJobDescriptor | null> {
   }
 }
 
+/**
+ * In-page launcher wiring (§7.4): the brief drives its own export, so the
+ * toolbar popup is optional. The background resolves the tab from the sender,
+ * so no tab id crosses this boundary.
+ */
+function startLauncher(): void {
+  const send = async (msg: unknown): Promise<Record<string, unknown>> =>
+    ((await browser.runtime.sendMessage(msg)) ?? {}) as Record<string, unknown>;
+  const launcher = keepMounted(document, {
+    startExport: async () => {
+      const res = await send({ op: "START_EXPORT_HERE" });
+      return {
+        ok: res.ok === true,
+        error: typeof res.error === "string" ? res.error : undefined,
+      };
+    },
+    cancelExport: async (jobId) => {
+      await send({ op: "CANCEL_EXPORT", jobId });
+    },
+    getState: async () => {
+      const res = await send({ op: "GET_JOB_STATE" });
+      return res.ok === true ? ((res.state ?? null) as JobDescriptor | null) : null;
+    },
+    openOptions: () => void browser.runtime.openOptionsPage(),
+    // The brief navigates client-side; the URL is read per paint, not once.
+    pageUrl: () => location.href,
+    isVisible: () => document.visibilityState === "visible",
+  });
+  // The observer handles re-renders; this beat refreshes job state and
+  // double-checks placement in case a render produced no observed mutation.
+  // The keeper decides how hard to poll: a covered window still shows a
+  // running export.
+  window.setInterval(() => void launcher.tick(), 2000);
+}
+
 export default defineContentScript({
   matches: ["https://bugcrowd.com/engagements/*"],
   runAt: "document_idle",
@@ -294,6 +352,9 @@ export default defineContentScript({
       collectKnownIssues,
       isSessionExpired,
       fetchPage: sameOriginFetchPage,
+      ensureRendered: async () => {
+        await ensureBriefRendered(windowTarget(window));
+      },
       emitProgress: (jobId, unitId, counters) => {
         void browser.runtime
           .sendMessage({ op: "UNIT_PROGRESS", jobId, unitId, counters })
@@ -320,6 +381,14 @@ export default defineContentScript({
       } catch {
         // No listener yet — the coordinator polls readiness too.
       }
+    }
+
+    // 4. The in-page launcher. Mounted last so a failure here can never stop
+    //    collection from being served.
+    try {
+      startLauncher();
+    } catch {
+      // The toolbar popup remains available.
     }
   },
 });

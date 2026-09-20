@@ -20,6 +20,7 @@ import type {
   Evidence,
   IdentityQuality,
   PermissionFact,
+  PermissionStatus,
   SafeHarborStatus,
   SourceRecord,
 } from "../types";
@@ -74,12 +75,16 @@ export interface DocumentModel {
     name: string;
     inScope: boolean;
     description: string | null;
+    /**
+     * API amounts are integers; a brief that publishes only a visible range
+     * ("$2000 – $3000") keeps that string rather than losing the reward.
+     */
     rewards: {
-      p1: number | null;
-      p2: number | null;
-      p3: number | null;
-      p4: number | null;
-      p5: number | null;
+      p1: number | string | null;
+      p2: number | string | null;
+      p3: number | string | null;
+      p4: number | string | null;
+      p5: number | string | null;
     };
   }[];
   outOfScope: {
@@ -92,10 +97,36 @@ export interface DocumentModel {
   dataRules: { text: string; evidence_refs: string[] }[];
   focusAreas: string[];
   nonFocusAreas: string[];
+  /**
+   * Excluded submission types on two axes (§11): `submission_status` is what
+   * the brief will accept, `testing_status` is what it permits. A report the
+   * program will not take is not, by itself, an activity it forbids.
+   */
+  submissionExclusions: {
+    text: string;
+    submission_status: "excluded";
+    testing_status: PermissionStatus;
+    evidence_refs: string[];
+  }[];
+  /** Exclusive scope authorization: listed targets vs everything else. */
+  scopeAuthorization: {
+    listed_targets: { status: PermissionStatus; conditions: string[] };
+    unlisted_targets: { status: PermissionStatus };
+    quote: string;
+    evidence_refs: string[];
+  } | null;
   reportingRequirements: string[];
   vrt: {
     version: string | null;
     baseline: string | null;
+    /** Vulnerability classes the program rules in or out (§4.4). */
+    scope_rules: {
+      category: string;
+      vrt_version: string | null;
+      applies_to: string | null;
+      status: "out_of_scope" | "in_scope" | "conditional";
+      note: string | null;
+    }[];
     exclusions: string[];
     deviations: string[];
     targetSpecific: string[];
@@ -130,6 +161,17 @@ export interface DocumentModel {
     parser_version: string;
     collected_at: string;
     missing_sections: string[];
+    /**
+     * Units that were collected but failed a validation (§13 count checks).
+     * Distinct from `missing_sections`: the section exists, its numbers do not
+     * reconcile, and `integrity.required_sections_complete` says so.
+     */
+    collection_issues: {
+      code: string;
+      target_id: string;
+      displayed_count: number | null;
+      collected_count: number;
+    }[];
     conflicts: { factKey: string; evidence_refs: string[] }[];
   };
 }
@@ -172,6 +214,14 @@ export interface AssembleArgs {
   evidence: Evidence[];
   integrity: IntegrityReport;
 }
+
+/**
+ * Known Issues warnings that describe a target the collection never verified.
+ * Each one becomes a named collection issue so `required_sections_complete:
+ * false` always has a visible, target-scoped reason.
+ */
+const KI_ISSUE_RE =
+  /^ki_(dialog_not_opened|dialog_not_ready|displayed_count_unavailable|pagination_stuck|page_cap_50)\b/;
 
 const cmpStr = (a: string, b: string): number =>
   a < b ? -1 : a > b ? 1 : 0;
@@ -291,6 +341,26 @@ export function stripVolatile(model: DocumentModel): object {
  *   a permission is already encoded upstream — both assertions went through
  *   buildPermissionFact (u10) — so `techniques` passes through verbatim.
  */
+/**
+ * Required sections that came back empty. A unit can report success and still
+ * return nothing, so this is computed from the collected data rather than from
+ * unit outcomes, and the integrity check consumes it (§18).
+ */
+export function missingSections(
+  args: Pick<
+    AssembleArgs,
+    "details" | "groups" | "targets" | "policy" | "activity" | "kiResults"
+  >,
+): string[] {
+  const out: string[] = [];
+  if (detailsEmpty(args.details)) out.push("details");
+  if (args.groups.length === 0 && args.targets.length === 0) out.push("scope");
+  if (policyEmpty(args.policy)) out.push("policy");
+  if (activityEmpty(args.activity)) out.push("activity");
+  if (args.kiResults.length === 0) out.push("known_issues");
+  return out;
+}
+
 export function assembleDocument(args: AssembleArgs): DocumentModel {
   const { api, details, policy, activity } = args;
 
@@ -304,6 +374,16 @@ export function assembleDocument(args: AssembleArgs): DocumentModel {
   }
   const refsForKey = (sourceKey: string): string[] =>
     evBySourceKey.get(sourceKey) ?? [];
+
+  /** Evidence ids for every record quoting this exact sentence. */
+  const refsForQuote = (quote: string): string[] => {
+    const ids = new Set<string>();
+    for (const r of args.records) {
+      if (r.quote !== quote) continue;
+      for (const id of refsForKey(r.sourceKey)) ids.add(id);
+    }
+    return [...ids].sort();
+  };
 
   /** Evidence ids for records whose structured payload is this exact text. */
   const refsForText = (text: string): string[] => {
@@ -441,9 +521,38 @@ export function assembleDocument(args: AssembleArgs): DocumentModel {
     text,
     evidence_refs: refsForText(text),
   }));
+  const submissionExclusions = (policy?.exclusions ?? []).map((item) => ({
+    text: item.text,
+    submission_status: item.submissionStatus,
+    testing_status: item.testingStatus,
+    // Quote-based: a line that also stated a technique rule was recorded as
+    // that technique, so both facts share the one evidence object.
+    evidence_refs: refsForQuote(item.text),
+  }));
+  const scopeAuthorization: DocumentModel["scopeAuthorization"] =
+    policy?.scopeAuthorization == null
+      ? null
+      : {
+          listed_targets: {
+            status: policy.scopeAuthorization.listedTargets.status,
+            conditions: [...policy.scopeAuthorization.listedTargets.conditions],
+          },
+          unlisted_targets: {
+            status: policy.scopeAuthorization.unlistedTargets.status,
+          },
+          quote: policy.scopeAuthorization.quote,
+          evidence_refs: refsForQuote(policy.scopeAuthorization.quote),
+        };
   const vrt: DocumentModel["vrt"] = {
     version: policy?.vrt.version ?? null,
     baseline: policy?.vrt.baseline ?? null,
+    scope_rules: (policy?.vrt.scopeRules ?? []).map((rule) => ({
+      category: rule.category,
+      vrt_version: rule.vrtVersion,
+      applies_to: rule.appliesTo,
+      status: rule.status,
+      note: rule.note,
+    })),
     exclusions: [...(policy?.vrt.exclusions ?? [])],
     deviations: [...(policy?.vrt.deviations ?? [])],
     targetSpecific: [...(policy?.vrt.targetSpecific ?? [])],
@@ -467,14 +576,29 @@ export function assembleDocument(args: AssembleArgs): DocumentModel {
   knownIssues.sort((a, b) => cmpStr(a.targetId, b.targetId));
 
   // --- provenance ------------------------------------------------------------
-  const missing_sections: string[] = [];
-  if (detailsEmpty(details)) missing_sections.push("details");
-  if (args.groups.length === 0 && args.targets.length === 0) {
-    missing_sections.push("scope");
-  }
-  if (policyEmpty(policy)) missing_sections.push("policy");
-  if (activityEmpty(activity)) missing_sections.push("activity");
-  if (args.kiResults.length === 0) missing_sections.push("known_issues");
+  const missing_sections = missingSections(args);
+
+  // A Known Issues table that was collected but did not reconcile is not a
+  // missing section; it is a validation failure, named here so
+  // `integrity.required_sections_complete: false` has a visible reason.
+  const collection_issues = args.kiResults
+    .flatMap(({ result, targetId }) => {
+      const codes = new Set<string>();
+      if (!result.countMatches) codes.add("known_issues:incomplete_counts");
+      for (const warning of result.warnings) {
+        const m = KI_ISSUE_RE.exec(warning);
+        if (m !== null) codes.add(`known_issues:${m[1]}`);
+      }
+      return [...codes].sort().map((code) => ({
+        code,
+        target_id: targetId,
+        displayed_count: result.displayedCount,
+        collected_count: result.collectedCount,
+      }));
+    })
+    .sort(
+      (a, b) => cmpStr(a.target_id, b.target_id) || cmpStr(a.code, b.code),
+    );
 
   const conflicts = Object.keys(args.techniques)
     .filter((key) => args.techniques[key]!.conflict.detected)
@@ -498,6 +622,8 @@ export function assembleDocument(args: AssembleArgs): DocumentModel {
     dataRules,
     focusAreas: [...(policy?.focusAreas ?? [])],
     nonFocusAreas: [...(policy?.nonFocusAreas ?? [])],
+    submissionExclusions,
+    scopeAuthorization,
     reportingRequirements: [...(policy?.reportingRequirements ?? [])],
     vrt,
     knownIssues,
@@ -520,6 +646,7 @@ export function assembleDocument(args: AssembleArgs): DocumentModel {
       parser_version: PARSER_VERSION,
       collected_at: args.collectedAt,
       missing_sections,
+      collection_issues,
       conflicts,
     },
   };

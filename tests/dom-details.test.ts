@@ -116,3 +116,27 @@ describe("collectDetails", () => {
     expect(res.records.every((r) => r.sourceKey === "dom:details:name")).toBe(true);
   });
 });
+
+describe("collectDetails current Bugcrowd header cards", () => {
+  const current = collectDetails(loadDoc("webdotcom-current.html"), PAGE_URL);
+
+  it("uses the engagement heading instead of the browser title", () => {
+    expect(current.data.name).toBe("Web.com Bug Bounty");
+  });
+
+  it("extracts DOM metadata and statistics without API enrichment", () => {
+    expect(current.data.engagementType).toBe("Bug Bounty");
+    expect(current.data.lifecycleStatus).toBe("In progress");
+    expect(current.data.testingPeriodLabel).toBe("Ongoing");
+    expect(current.data.lastBriefUpdate).toBe("2026-09-11T15:03:27Z");
+    expect(current.data.statistics["vulnerabilities-rewarded"]?.value).toBe("721");
+    expect(current.data.statistics["average-payout"]).toEqual({
+      value: "$2,000",
+      window: "last 3 months",
+    });
+  });
+
+  it("does not invent a Safe Harbor level from unrelated section text", () => {
+    expect(current.data.safeHarborLevel).toBeNull();
+  });
+});

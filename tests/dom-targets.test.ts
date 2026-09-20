@@ -82,8 +82,9 @@ describe("collectTargets wrapper sections", () => {
 
   it("collects a wrapper section's own direct tables as an implicit group", () => {
     // Previously the "Scope" wrapper was leaf-filtered out and its direct
-    // targets were silently lost.
-    const implicit = wrapped.groups.find((g) => g.name === "Scope");
+    // targets were silently lost. The bare "Scope" label is a wrapper badge,
+    // so the implicit group gets the deterministic generic name.
+    const implicit = wrapped.groups.find((g) => g.name === "default_in_scope");
     expect(implicit).toBeDefined();
     expect(implicit?.inScope).toBe(true);
     const direct = wrapped.targets.find(
@@ -191,5 +192,37 @@ describe("collectTargets records", () => {
       (r) => r.sourceLevel === "target_specific_rule",
     );
     expect(ruleRecord?.quote).toContain("VPN");
+  });
+});
+
+describe("collectTargets current Bugcrowd scope cards", () => {
+  const current = collectTargets(loadDoc("webdotcom-current.html"), PAGE_URL);
+
+  it("keeps nested in-scope and out-of-scope groups separate", () => {
+    expect(current.targets.filter((t) => t.inScope)).toHaveLength(4);
+    expect(current.targets.filter((t) => !t.inScope)).toHaveLength(6);
+    expect(current.targets.find((t) => t.name === "*.web.com")?.inScope).toBe(false);
+  });
+
+  it("parses the combined Name / Location column", () => {
+    const app = current.targets.find((t) => t.name === "app.web.com");
+    expect(app?.location).toBe("https://app.web.com");
+    expect(app?.displayedKnownIssuesCount).toBe(1);
+    const gator = current.targets.find(
+      (t) => t.location === "https://app.gator.com/",
+    );
+    expect(gator?.name).toBeNull();
+    expect(gator?.inScope).toBe(false);
+  });
+
+  it("preserves visible reward ranges from a definition list", () => {
+    const inScope = current.groups.find((g) => g.name === "default_in_scope");
+    expect(inScope?.rewards).toEqual({
+      p1: "$2000 – $3000",
+      p2: "$1000 – $1500",
+      p3: "$250 – $600",
+      p4: null,
+      p5: null,
+    });
   });
 });

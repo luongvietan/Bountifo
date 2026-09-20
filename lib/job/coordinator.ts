@@ -10,7 +10,7 @@ import {
 import { exportFileName, isSupportedEngagementUrl, parseEngagementUrl } from "../ids";
 import type { JobMessage } from "../messages";
 import { validateJobSender } from "../messages";
-import { assembleDocument, stripVolatile } from "../model/document";
+import { assembleDocument, missingSections, stripVolatile } from "../model/document";
 import {
   buildPermissionFact,
   buildSafeHarborFact,
@@ -360,6 +360,8 @@ export class JobCoordinator {
                 dataRules: [],
                 focusAreas: [],
                 nonFocusAreas: [],
+                exclusions: [],
+                scopeAuthorization: null,
                 reportingRequirements: [],
                 vrt: {
                   version: null,
@@ -511,7 +513,17 @@ export class JobCoordinator {
     const corpusHash = await evidenceCorpusHash(evidence);
     const evidenceHashValid = await validateEvidenceSet(records, evidence);
     const placeholder = `sha256:${"0".repeat(64)}`;
-    let integrity = computeIntegrity({ outcomes, kiResults, apiFailed: api === null, domCriticalFailure: null, facts, evidence, corpusHash, normalizedHash: placeholder, evidenceHashValid });
+    // Empty required sections are a collection gap even when every unit
+    // reported success, so they reach the integrity check too (§18).
+    const missing = missingSections({
+      details,
+      groups: normalized.groups,
+      targets: normalized.targets,
+      policy,
+      activity,
+      kiResults: kiResults.map((result: any) => ({ result, targetId: result.targetDomKey })),
+    } as never);
+    let integrity = computeIntegrity({ outcomes, kiResults, apiFailed: api === null, domCriticalFailure: null, facts, evidence, corpusHash, normalizedHash: placeholder, evidenceHashValid, missingSections: missing });
     const args = {
       jobId: descriptor.jobId,
       generatedAt: this.deps.now(),
@@ -535,7 +547,7 @@ export class JobCoordinator {
     const stripped = stripVolatile(draft) as any;
     stripped.collection.normalized_hash = "";
     const hash = await normalizedHash(stripped);
-    integrity = computeIntegrity({ outcomes, kiResults, apiFailed: api === null, domCriticalFailure: null, facts, evidence, corpusHash, normalizedHash: hash, evidenceHashValid });
+    integrity = computeIntegrity({ outcomes, kiResults, apiFailed: api === null, domCriticalFailure: null, facts, evidence, corpusHash, normalizedHash: hash, evidenceHashValid, missingSections: missing });
     const document = assembleDocument({ ...args, integrity });
     await commitUnit(db, descriptor.jobId, "u11_integrity_check", { blob: { kind: "document", value: document } }, { unitId: "u11_integrity_check", status: "ok", committedAt: this.deps.now() });
     await this.persist({ unresolvedConflicts: integrity.policy.unresolved_conflicts, warnings: integrity.quality.warnings.length });

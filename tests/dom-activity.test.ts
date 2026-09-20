@@ -111,3 +111,21 @@ describe("collectActivity", () => {
     expect(ann?.sourceLevel).toBe("announcement");
   });
 });
+
+describe("collectActivity current Bugcrowd feed cards", () => {
+  it("keeps each top-level card as one complete activity item", async () => {
+    const current = await collectActivity(
+      loadDoc("webdotcom-current.html"),
+      PAGE_URL,
+      async () => null,
+    );
+    expect(current.changelog).toHaveLength(2);
+    expect(current.changelog[0]?.body).toContain("New Target added!");
+    expect(current.changelog[0]?.body).toContain("app.web.com and its AI features");
+    expect(current.recentActivity).toHaveLength(2);
+    expect(current.recentActivity[0]?.body).toContain(
+      "Submission accepted on target: www.networksolutions.com",
+    );
+    expect(current.recentActivity[0]?.body).toContain("Priority P1");
+  });
+});

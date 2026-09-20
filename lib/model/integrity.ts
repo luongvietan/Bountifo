@@ -88,6 +88,13 @@ function outcomeFailedRequired(o: UnitOutcome | undefined): boolean {
  *   ok/warning AND every required count validation passed.
  * - Warnings never create additional collection-status values.
  */
+/** Sections a real engagement brief always has; empty means collection missed them. */
+const NEVER_EMPTY_SECTIONS = new Set(["details", "scope"]);
+
+/** Warnings that mean a Known Issues target was never actually verified. */
+const UNVERIFIED_KI_RE =
+  /^ki_(?:dialog_not_opened|dialog_not_ready|displayed_count_unavailable|pagination_stuck|page_cap_50|count_mismatch)\b/;
+
 export function computeIntegrity(args: {
   outcomes: UnitOutcome[];
   kiResults: KiResult[];
@@ -99,6 +106,13 @@ export function computeIntegrity(args: {
   normalizedHash: string;
   /** Caller-supplied recomputation result; format checks remain the fallback. */
   evidenceHashValid?: boolean;
+  /**
+   * Required sections that came back empty (§18). A unit can succeed and still
+   * return nothing - a brief that renders its scope lazily is collected before
+   * the targets exist - and an empty scope inventory reported as `complete`
+   * is the worst possible answer for a consumer deciding what it may test.
+   */
+  missingSections?: string[];
 }): IntegrityReport {
   const { outcomes, kiResults, apiFailed, domCriticalFailure } = args;
   const byId = new Map(outcomes.map((o) => [o.unitId, o]));
@@ -136,9 +150,32 @@ export function computeIntegrity(args: {
     // "warning" keeps the section complete — warnings coexist with complete.
   }
 
-  // §13: a count mismatch means the Known Issues section is not complete.
-  const knownIssuesCountsValid = kiResults.every((ki) => ki.countMatches);
+  // Activity and Known Issues are legitimately empty on some briefs - a new
+  // program has no announcements, and not every brief exposes known issues.
+  // A brief with no targets or no identity is a different thing entirely:
+  // the collection missed them, and calling that complete would tell a
+  // consumer it may test nothing, or anything.
+  const missingCritical = (args.missingSections ?? []).filter((section) =>
+    NEVER_EMPTY_SECTIONS.has(section),
+  );
+  for (const section of missingCritical) {
+    warnings.push(`missing_section:${section}`);
+  }
+
+  // §13: a target counts as verified only when it was opened, paginated and
+  // checked. A mismatch fails that, and so does never getting the dialog open
+  // or never seeing a displayed count — calling those "valid" would assert a
+  // check the collection never performed.
+  const knownIssuesCountsValid = kiResults.every(
+    (ki) =>
+      ki.countMatches &&
+      !ki.warnings.some((w) => UNVERIFIED_KI_RE.test(w)),
+  );
   if (!knownIssuesCountsValid) {
+    partial = true;
+    requiredSectionsComplete = false;
+  }
+  if (missingCritical.length > 0) {
     partial = true;
     requiredSectionsComplete = false;
   }
@@ -176,7 +213,8 @@ export function computeIntegrity(args: {
   // partial; otherwise complete.
   const domPartial =
     REQUIRED_UNIT_IDS.some((id) => outcomeFailedRequired(byId.get(id))) ||
-    !knownIssuesCountsValid;
+    !knownIssuesCountsValid ||
+    missingCritical.length > 0;
   const dom_status: CollectionStatus =
     domCriticalFailure !== null ? "failed" : domPartial ? "partial" : "complete";
 

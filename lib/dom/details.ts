@@ -6,12 +6,14 @@ import type {
   SourceRecord,
 } from "../types";
 import {
+  HEADING_SEL,
   dlPairs,
   extractStats,
   findSection,
+  findSectionScope,
   sectionHeading,
-  sectionItems,
   slugify,
+  textExcluding,
   textOf,
 } from "./domUtils";
 
@@ -65,8 +67,71 @@ const DETAIL_FIELD_RES: { field: ScalarField | "managedBounty"; re: RegExp }[] =
 
 const STATS_SECTION_RE =
   /statistics|metrics|performance|at a glance|key figures?/i;
+/**
+ * Text that anchors the brief's header region: the engagement name lives in a
+ * header carrying engagement metadata (type pill, status, testing period,
+ * scope rating), which distinguishes it from section headings anywhere else.
+ */
+const HEADER_ANCHOR_RE =
+  /bug\s+bounty|bounty|status|testing\s+(?:period|window)|scope\s+rating|managed|engagement|rewards?|researcher|vulnerability/i;
+/**
+ * Heading texts that label a brief *section*, never the engagement. Anchored
+ * full match so "Target Corp" stays a name while "Targets 4 out of 4" does
+ * not.
+ */
+const RESERVED_NAME_RE =
+  /^(?:safe\s*harbor|scope|targets?\s+\d+\s+out\s+of\s+\d+|targets|in[- ]?scope.*|out[- ]?(?:of[- ]?)?scope.*|program\s+rules?|testing\s+(?:guidelines?|requirements?|rules?|period|window)|submission\s+(?:guidelines?|requirements?)|report(?:ing)?\s+(?:guidelines?|requirements?|format(?:ting)?)|credentials?|access(?:\s*\/\s*credentials?|\s+requirements?)?|focus\s+areas?|areas?\s+of\s+(?:interest|focus)|non[- ]?focus.*|excluded\s+.*|disclosure.*|terms?\s+(?:and|&)\s+conditions?|terms\s+of\s+(?:service|use)|announcements?|what(?:'|’)s\s+new|recent\s+.*|activity.*|change\s*log|changelog|crowd\s+highlights?|things\s+to\s+know|on\s+this\s+page|hall\s+of\s+fam\w*|leaderboard|known\s+issues?|vulnerability\s+rating.*|\bvrt\b|vulnerability\s+types?|products?\s*(?:&|and)\s*features?|statistics|metrics|details?|overview|eligibility.*|api\s+testing|latest\s+.*|recently\s+.*)$/i;
+
+/** First heading inside `root` that isn't a reserved section label. */
+function firstNamedHeading(root: ParentNode): Element | null {
+  for (const h of root.querySelectorAll(HEADING_SEL)) {
+    const text = textOf(h);
+    if (text === "") continue;
+    RESERVED_NAME_RE.lastIndex = 0;
+    if (RESERVED_NAME_RE.test(text)) continue;
+    return h;
+  }
+  return null;
+}
 const SAFE_HARBOR_RE = /safe\s*harbor/i;
 const DISCLOSURE_RE = /disclosure|coordinated\s+disclosure/i;
+// The brief's header statistics list carries no heading of its own; its id is
+// stable markup, unlike the generated CSS classes §7.4 forbids.
+const STATS_ID_SEL = "[id='brief_stats']";
+/**
+ * Engagement types Bugcrowd publishes. The document title is "<type>: <name> -
+ * Bugcrowd", so the prefix names the type — but only a known type is read as
+ * one, so an arbitrary colon in a title cannot invent a value.
+ */
+const ENGAGEMENT_TYPE_RE =
+  /^(?:managed\s+)?(?:bug\s+bounty|vulnerability\s+disclosure(?:\s+program)?|vdp|pen(?:etration)?\s+test(?:ing)?|attack\s+surface\s+management|asm|flex\s+bounty|next\s+gen\s+pen\s+test)$/i;
+
+const LAST_UPDATE_RE =
+  /last\s+(?:updated|modified)|brief\s+(?:last\s+)?updated|updated\s+(?:on|at)/i;
+/**
+ * A Safe Harbor *level* is a graded value ("Full", "Partial", "None"), not the
+ * policy prose that follows it. Anything else in a Safe Harbor block is a
+ * statement and belongs to the policy collector (§4.3).
+ */
+const SAFE_HARBOR_LEVEL_RE = /^(?:full|partial|none|limited|standard)\b/i;
+
+/**
+ * Header metadata the brief renders as one list item per pair — label first,
+ * then the value: "Status In progress 13 Apr 2017". Nothing else in the header
+ * is read as a field.
+ */
+const HEADER_PAIR_RES: { field: ScalarField; re: RegExp }[] = [
+  { field: "lifecycleStatus", re: /^status\s+(.+)$/i },
+  { field: "testingPeriodLabel", re: /^testing\s+(?:period|window)\s+(.+)$/i },
+];
+/**
+ * Where a header value ends: the item continues with a timestamp or a
+ * "Started at …" clause, which is a separate field rather than part of the
+ * value.
+ */
+const HEADER_VALUE_TAIL_RE =
+  /\s+(?:(?:start|end|finish|clos)(?:s|ed|ing)?\s+at\b|\d{1,2}\s+[A-Za-z]{3,}\s+\d{4}\b|[A-Za-z]{3,}\s+\d{1,2},\s*\d{4}\b|\d{4}-\d{2}-\d{2}\b).*$/i;
+const STARTED_AT_RE = /\bstart(?:s|ed|ing)?\s+at\s+(.+)$/i;
 
 function record(
   sourceKey: string,
@@ -151,16 +216,49 @@ export function collectDetails(
     );
   };
 
-  // Name: the page's main heading.
-  const h1 = doc.querySelector(
-    "main h1,[role='main'] h1,[role='heading'][aria-level='1'],h1",
-  );
-  const h1Text = textOf(h1);
-  if (h1Text !== "") {
-    data.name = h1Text;
-    emit("name", "page_header", h1Text, h1Text, locatorFor(h1!));
+  // Name: the engagement's own heading. It lives in the brief's header
+  // region — the block anchored by engagement metadata (type pill, status,
+  // testing period, scope rating) — and is not always an h1. A heading
+  // inside the brief body names a section ("Safe Harbor"), never the
+  // engagement; the browser title is the last resort because it carries
+  // site chrome.
+  const pageHeader = doc.querySelector("main header,[role='main'] header");
+  const anchoredHeader =
+    pageHeader !== null && HEADER_ANCHOR_RE.test(textOf(pageHeader))
+      ? pageHeader
+      : null;
+  let titleHeading =
+    anchoredHeader !== null ? firstNamedHeading(anchoredHeader) : null;
+  if (titleHeading === null) {
+    for (const h of doc.querySelectorAll(
+      "main h1,[role='main'] h1,[role='heading'][aria-level='1'],h1",
+    )) {
+      const text = textOf(h);
+      RESERVED_NAME_RE.lastIndex = 0;
+      if (text === "" || RESERVED_NAME_RE.test(text)) continue;
+      titleHeading = h;
+      break;
+    }
+  }
+  const headingText = textOf(titleHeading);
+  if (headingText !== "") {
+    data.name = headingText;
+    emit(
+      "name",
+      "page_header",
+      headingText,
+      headingText,
+      locatorFor(titleHeading!),
+    );
   } else if (doc.title.trim() !== "") {
-    const name = normalizeText(doc.title.split(/[|–—]/)[0] ?? "");
+    const name = normalizeText(
+      doc.title
+        .replace(/\s*[-–—|]\s*bugcrowd\s*$/i, "")
+        .replace(
+          /^(?:bug\s*bounty|bounty|program|engagement|vulnerability\s+disclosure(?:\s+program)?|vdp)\s*[:：]\s*/i,
+          "",
+        ),
+    );
     data.name = name;
     emit("name", "page_header", doc.title, name, {}, "partial");
   }
@@ -199,28 +297,116 @@ export function collectDetails(
     emit(def.field, "page_header", value, value, locatorFor(dd));
   }
 
-  // Safe Harbor level may live in its own section rather than the dl.
+  // Header region: the type pill, then label-prefixed metadata items.
+  const headerRegion = titleHeading?.closest("header") ?? pageHeader ?? null;
+  if (headerRegion !== null) {
+    const headerLocator: SourceLocator =
+      data.name === null ? {} : { section: data.name };
+    // The document title repeats the engagement type ("<type>: <name> - …");
+    // a header item is read as the type only when the two agree.
+    const titleType = normalizeText(doc.title.split(":")[0] ?? "");
+    if (
+      data.engagementType === null &&
+      titleType !== "" &&
+      titleType !== data.name
+    ) {
+      for (const li of headerRegion.querySelectorAll("li")) {
+        const text = textOf(li);
+        if (text.toLowerCase() !== titleType.toLowerCase()) continue;
+        data.engagementType = text;
+        emit("engagementType", "page_header", text, text, headerLocator);
+        break;
+      }
+    }
+    for (const li of headerRegion.querySelectorAll("li")) {
+      const text = textOf(li);
+      for (const pair of HEADER_PAIR_RES) {
+        pair.re.lastIndex = 0;
+        const m = pair.re.exec(text);
+        if (m === null) continue;
+        const rest = m[1] ?? "";
+        const value = normalizeText(rest.replace(HEADER_VALUE_TAIL_RE, ""));
+        if (value === "") continue;
+        if (data[pair.field] === null) {
+          data[pair.field] = value;
+          emit(pair.field, "page_header", text, value, headerLocator);
+        }
+        // What follows the value is a date of its own: the day testing
+        // started, or the moment the status last changed.
+        const tail = normalizeText(rest.slice(value.length));
+        const started = STARTED_AT_RE.exec(tail);
+        if (started !== null) {
+          const start = normalizeText(started[1] ?? "");
+          if (start !== "" && data.testingStart === null) {
+            data.testingStart = start;
+            emit("testingStart", "page_header", text, start, headerLocator);
+          }
+        } else if (
+          tail !== "" &&
+          pair.field === "lifecycleStatus" &&
+          data.lastStatusTransition === null
+        ) {
+          data.lastStatusTransition = tail;
+          emit("lastStatusTransition", "page_header", text, tail, headerLocator);
+        }
+        break;
+      }
+    }
+  }
+
+  // A brief with no header block still names its type in the document title;
+  // the vocabulary check keeps that from turning any prefix into a type.
+  if (data.engagementType === null) {
+    const titleType = normalizeText(doc.title.split(":")[0] ?? "");
+    ENGAGEMENT_TYPE_RE.lastIndex = 0;
+    if (titleType !== "" && ENGAGEMENT_TYPE_RE.test(titleType)) {
+      data.engagementType = titleType;
+      emit("engagementType", "page_header", doc.title, titleType, {}, "partial");
+    }
+  }
+
+  // "Last Updated: <time datetime=…>" sits outside any labeled list.
+  if (data.lastBriefUpdate === null) {
+    for (const time of doc.querySelectorAll("time[datetime]")) {
+      const holder = time.parentElement;
+      if (holder === null) continue;
+      LAST_UPDATE_RE.lastIndex = 0;
+      if (!LAST_UPDATE_RE.test(textExcluding(holder, "time"))) continue;
+      const stamp = (time.getAttribute("datetime") ?? "").trim();
+      if (stamp === "") continue;
+      data.lastBriefUpdate = stamp;
+      emit(
+        "lastBriefUpdate",
+        "page_header",
+        textOf(holder),
+        stamp,
+        locatorFor(holder),
+      );
+      break;
+    }
+  }
+
+  // Safe Harbor level may live in its own section rather than the dl — but the
+  // block is mostly policy prose, so only a graded level is read as one.
   if (data.safeHarborLevel === null) {
-    const section = findSection(doc, SAFE_HARBOR_RE);
-    const first = section !== null ? sectionItems(section)[0] : undefined;
-    if (first !== undefined) {
+    const scope = findSectionScope(doc, SAFE_HARBOR_RE);
+    const first = scope?.items[0];
+    if (first !== undefined && SAFE_HARBOR_LEVEL_RE.test(first.text)) {
       data.safeHarborLevel = first.text;
       emit(
         "safeHarborLevel",
         "explicit_program_rule",
         first.text,
         first.text,
-        { section: sectionHeading(section!) ?? undefined },
+        { section: scope?.heading ?? undefined },
       );
     }
   }
 
   // Coordinated disclosure / collaboration policy text.
-  const disclosure = findSection(doc, DISCLOSURE_RE);
+  const disclosure = findSectionScope(doc, DISCLOSURE_RE);
   if (disclosure !== null) {
-    const text = sectionItems(disclosure)
-      .map((i) => i.text)
-      .join("\n");
+    const text = disclosure.items.map((i) => i.text).join("\n");
     if (text !== "") {
       data.disclosurePolicy = text;
       emit(
@@ -228,16 +414,17 @@ export function collectDetails(
         "explicit_program_rule",
         text,
         text,
-        { section: sectionHeading(disclosure) ?? undefined },
+        { section: disclosure.heading ?? undefined },
       );
     }
   }
 
   // Header statistics with their attached time windows.
-  const statsSection = findSection(doc, STATS_SECTION_RE);
+  const statsSection =
+    findSection(doc, STATS_SECTION_RE) ?? doc.querySelector(STATS_ID_SEL);
   if (statsSection !== null) {
     const locator: SourceLocator = {
-      section: sectionHeading(statsSection) ?? undefined,
+      section: sectionHeading(statsSection) ?? data.name ?? undefined,
     };
     for (const stat of extractStats(statsSection)) {
       const slug = slugify(stat.label);

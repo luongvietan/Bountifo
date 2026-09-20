@@ -139,6 +139,14 @@ describe("parsePopupMessage", () => {
 
   it("rejects unknown ops and malformed payloads", () => {
     expect(parsePopupMessage({ op: "EXPORT" })).toBeNull();
+    // The in-page launcher names no tab: the background uses sender.tab.id,
+    // so a content script cannot aim an export at another tab.
+    expect(parsePopupMessage({ op: "START_EXPORT_HERE" })).toEqual({
+      op: "START_EXPORT_HERE",
+    });
+    expect(
+      parsePopupMessage({ op: "START_EXPORT_HERE", tabId: 3 }),
+    ).toBeNull();
     expect(parsePopupMessage({ op: "START_EXPORT", tabId: 1.5 })).toBeNull();
     expect(parsePopupMessage({ op: "START_EXPORT", tabId: "3" })).toBeNull();
     expect(parsePopupMessage({ op: "START_EXPORT" })).toBeNull();

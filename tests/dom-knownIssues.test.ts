@@ -159,6 +159,24 @@ describe("collectKnownIssues (§13)", () => {
     expect(driver.open).not.toHaveBeenCalled();
   });
 
+  it("skips cleanly when the brief exposes no Known Issues at all", async () => {
+    // Some briefs render targets as plain list items with no count badge and
+    // no control. Nothing was hidden from us, so there is nothing to warn
+    // about - treating it as a failed dialog made every target a fake gap.
+    const driver = spyDriver();
+    const res = await collectKnownIssues(
+      driver,
+      document,
+      makeTarget({ displayedKnownIssuesCount: null, kiControlLabel: null }),
+      PAGE_URL,
+    );
+    expect(driver.open).not.toHaveBeenCalled();
+    expect(res.skipped).toBe(true);
+    expect(res.collectedCount).toBe(0);
+    expect(res.countMatches).toBe(true);
+    expect(res.warnings).toEqual([]);
+  });
+
   it("does not skip when the count is merely absent (null)", async () => {
     const driver = spyDriver();
     const res = await collectKnownIssues(
@@ -344,5 +362,43 @@ describe("collectKnownIssues (§13)", () => {
     expect(res.collectedCount).toBe(50);
     expect(res.warnings.join(" ")).toMatch(/50|cap|limit|truncat/i);
     expect(driver.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("collectKnownIssues aggregate category tables", () => {
+  it("validates displayed issues against the sum of the Unique column", async () => {
+    const rows = [
+      ["Cross-Site Scripting (XSS)", "80", "215"],
+      ["Unvalidated Redirects and Forwards", "11", "15"],
+      ["Server Security Misconfiguration", "10", "15"],
+      ["Server-Side Injection", "8", "25"],
+      ["Cross-Site Request Forgery (CSRF)", "8", "10"],
+      ["Broken Authentication and Session Management", "7", "22"],
+      ["Other", "7", "12"],
+      ["Broken Access Control (BAC)", "5", "6"],
+      ["Sensitive Data Exposure", "0", "6"],
+      ["Application-Level Denial-of-Service (DoS)", "0", "1"],
+    ];
+    const dialog = document.createElement("div");
+    const driver: KiDriver = {
+      open: async () => dialog,
+      waitReady: async () => true,
+      currentPage: () => ({
+        columns: ["VRT Category", "Unique", "Total"],
+        rows,
+      }),
+      advance: async () => "end",
+      close: async () => undefined,
+    };
+    const result = await collectKnownIssues(
+      driver,
+      document,
+      makeTarget({ displayedKnownIssuesCount: 136 }),
+      PAGE_URL,
+    );
+    expect(result.rows).toHaveLength(10);
+    expect(result.collectedCount).toBe(136);
+    expect(result.countMatches).toBe(true);
+    expect(result.warnings).toEqual([]);
   });
 });

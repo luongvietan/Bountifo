@@ -185,6 +185,48 @@ describe("computeIntegrity — status (spec §18)", () => {
     expect(r.quality.warnings).toContain("ki_count_mismatch:displayed=3,collected=1");
   });
 
+  it("refuses to call a collection complete when a required section is empty", () => {
+    // A brief whose scope inventory came back empty is not a program without
+    // targets - it is a collection that missed them. Reporting "complete"
+    // there is the most dangerous reading an agent can be handed.
+    const r = computeIntegrity(baseArgs({ missingSections: ["scope"] }));
+    expect(r.collection.status).toBe("partial");
+    expect(r.collection.dom_status).toBe("partial");
+    expect(r.integrity.required_sections_complete).toBe(false);
+    expect(r.quality.warnings).toContain("missing_section:scope");
+  });
+
+  it("stays complete when no required section is missing", () => {
+    const r = computeIntegrity(baseArgs({ missingSections: [] }));
+    expect(r.collection.status).toBe("complete");
+    expect(r.integrity.required_sections_complete).toBe(true);
+  });
+
+  it("refuses to call counts valid when a target was never verified", () => {
+    // A dialog that never opened, or a displayed count that was unavailable,
+    // means that target was not checked (§13) — "valid" would be a claim the
+    // collection cannot support.
+    for (const warning of [
+      "ki_dialog_not_opened:target:api",
+      "ki_displayed_count_unavailable:target:api",
+      "ki_pagination_stuck:target:api",
+    ]) {
+      const report = computeIntegrity(
+        baseArgs({ kiResults: [ki({ countMatches: true, warnings: [warning] })] }),
+      );
+      expect(report.integrity.known_issues_counts_valid).toBe(false);
+      expect(report.collection.status).toBe("partial");
+      expect(report.quality.warnings).toContain(warning);
+    }
+  });
+
+  it("keeps counts valid when the only warning is informational", () => {
+    const report = computeIntegrity(
+      baseArgs({ kiResults: [ki({ countMatches: true, warnings: [] })] }),
+    );
+    expect(report.integrity.known_issues_counts_valid).toBe(true);
+  });
+
   it("synthesizes a mismatch warning when countMatches false but warnings empty", () => {
     const bad = ki({ countMatches: false, collectedCount: 0, warnings: [] });
     const r = computeIntegrity(baseArgs({ kiResults: [bad] }));
@@ -194,15 +236,20 @@ describe("computeIntegrity — status (spec §18)", () => {
     );
   });
 
-  it("KI warnings without a count mismatch → warning only, stays complete", () => {
+  it("an unavailable displayed count leaves the target unverified → partial", () => {
+    // §21 requires every non-zero Known Issues target to be attempted *and
+    // validated*. Without a displayed count there is nothing to validate
+    // against, so the collection cannot call itself complete.
     const warn = ki({
       displayedCount: null,
-      warnings: ["ki_displayed_count_unavailable"],
+      warnings: ["ki_displayed_count_unavailable:target:acme"],
     });
     const r = computeIntegrity(baseArgs({ kiResults: [warn] }));
-    expect(r.collection.status).toBe("complete");
-    expect(r.integrity.known_issues_counts_valid).toBe(true);
-    expect(r.quality.warnings).toContain("ki_displayed_count_unavailable");
+    expect(r.collection.status).toBe("partial");
+    expect(r.integrity.known_issues_counts_valid).toBe(false);
+    expect(r.quality.warnings).toContain(
+      "ki_displayed_count_unavailable:target:acme",
+    );
   });
 
   it("missing required outcome → partial", () => {

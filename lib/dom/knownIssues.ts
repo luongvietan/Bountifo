@@ -141,6 +141,32 @@ function recognizedFieldMap(columns: string[]): Map<number, string> {
   return map;
 }
 
+/**
+ * Issues represented by a page of rows. A Known Issues table is usually one row
+ * per issue, but the brief also serves an aggregate view — one row per VRT
+ * category with a "Unique" count — where the target's displayed badge counts
+ * unique issues, not categories. Summing that column is then the only honest
+ * basis for the §13 count comparison. Null when the table is not an aggregate
+ * or any cell in the column is not a whole number.
+ */
+function aggregateUniqueCount(
+  fieldMap: Map<number, string>,
+  rows: string[][],
+): number | null {
+  let index: number | null = null;
+  for (const [i, key] of fieldMap) {
+    if (key === "unique_count") index = i;
+  }
+  if (index === null || rows.length === 0) return null;
+  let total = 0;
+  for (const cells of rows) {
+    const cell = (cells[index] ?? "").replace(/[\s,]/g, "");
+    if (!/^\d+$/.test(cell)) return null;
+    total += Number(cell);
+  }
+  return total;
+}
+
 function recognizedFor(
   fieldMap: Map<number, string>,
   cells: string[],
@@ -164,6 +190,8 @@ export async function collectKnownIssues(
   target: DomTarget,
   pageUrl: string,
 ): Promise<KiResult> {
+  // Every warning names the target it belongs to: a bare
+  // "ki_dialog_not_opened" in a 19-target export says nothing actionable.
   const warnings: string[] = [];
   const records: SourceRecord[] = [];
   const displayedCount =
@@ -175,22 +203,30 @@ export async function collectKnownIssues(
   const allRows: string[][] = [];
   const rowPages: number[] = [];
 
-  if (displayedCount === 0) {
+  // Nothing exposed, nothing to collect: a brief that renders its targets as
+  // plain list items carries neither a count badge nor a control. That is an
+  // absent feature, not a target we failed to open, so it raises no warning
+  // and leaves the count validation intact (spec §13 skips only what the page
+  // itself reports as empty or does not offer).
+  const kiNotExposed =
+    displayedCount === null &&
+    (target.kiControlLabel === null || target.kiControlLabel === undefined);
+  if (displayedCount === 0 || kiNotExposed) {
     skipped = true;
   } else {
     let dialog: Element | null = null;
     try {
       dialog = await driver.open(doc, target);
       if (dialog === null) {
-        warnings.push("ki_dialog_not_opened");
+        warnings.push(`ki_dialog_not_opened:${target.domKey}`);
       } else {
         const ready = await driver.waitReady(dialog, WAIT_READY_TIMEOUT_MS);
-        if (!ready) warnings.push("ki_dialog_not_ready");
+        if (!ready) warnings.push(`ki_dialog_not_ready:${target.domKey}`);
         const seenSignatures = new Set<string>();
         let pages = 0;
         for (;;) {
           if (pages >= MAX_KI_PAGES) {
-            warnings.push("ki_page_cap_50");
+            warnings.push(`ki_page_cap_50:${target.domKey}`);
             break;
           }
           const page = driver.currentPage(dialog);
@@ -208,7 +244,7 @@ export async function collectKnownIssues(
           const step = await driver.advance(dialog);
           if (step === "end") break;
           if (step === "stuck") {
-            warnings.push("ki_pagination_stuck");
+            warnings.push(`ki_pagination_stuck:${target.domKey}`);
             break;
           }
         }
@@ -218,7 +254,7 @@ export async function collectKnownIssues(
         try {
           await driver.close(dialog);
         } catch {
-          warnings.push("ki_close_failed");
+          warnings.push(`ki_close_failed:${target.domKey}`);
         }
       }
     }
@@ -255,17 +291,21 @@ export async function collectKnownIssues(
     );
   });
 
-  const collectedCount = deduped.length;
+  const collectedCount =
+    aggregateUniqueCount(fieldMap, deduped) ?? deduped.length;
   let countMatches: boolean;
   if (displayedCount === null) {
-    // Count comparison impossible — treat as matched, but record the gap.
+    // Count comparison impossible. When the page offered a control we still
+    // record the gap; when it offered nothing there is no gap to record.
     countMatches = true;
-    warnings.push("ki_displayed_count_unavailable");
+    if (!kiNotExposed) {
+      warnings.push(`ki_displayed_count_unavailable:${target.domKey}`);
+    }
   } else {
     countMatches = collectedCount === displayedCount;
     if (!countMatches) {
       warnings.push(
-        `ki_count_mismatch:displayed=${displayedCount},collected=${collectedCount}`,
+        `ki_count_mismatch:${target.domKey}:displayed=${displayedCount},collected=${collectedCount}`,
       );
     }
   }

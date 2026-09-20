@@ -37,6 +37,9 @@ export const ApiRequestMsg = z
 
 export const PopupMsg = z.discriminatedUnion("op", [
   z.object({ op: z.literal("START_EXPORT"), tabId: z.number().int() }).strict(),
+  // The in-page launcher names no tab: the background reads sender.tab.id, so
+  // a content script can only ever start an export for the page it runs in.
+  z.object({ op: z.literal("START_EXPORT_HERE") }).strict(),
   z.object({ op: z.literal("CANCEL_EXPORT"), jobId: z.string() }).strict(),
   z.object({ op: z.literal("GET_JOB_STATE") }).strict(),
   z.object({ op: z.literal("SAVE_TOKEN"), token: z.string() }).strict(),

@@ -10,10 +10,13 @@ import kiMultiHtml from "../fixtures/dom/ki-multi.html?raw";
 import kiOneHtml from "../fixtures/dom/ki-one.html?raw";
 import kiZeroHtml from "../fixtures/dom/ki-zero.html?raw";
 import policiesHtml from "../fixtures/dom/policies.html?raw";
+import aivenCurrentHtml from "../fixtures/dom/aiven-current.html?raw";
+import pinterestCurrentHtml from "../fixtures/dom/pinterest-current.html?raw";
 import sessionExpiredHtml from "../fixtures/dom/session-expired.html?raw";
 import targetsHtml from "../fixtures/dom/targets.html?raw";
 import targetsNestedCandidateHtml from "../fixtures/dom/targets-nested-candidate.html?raw";
 import targetsWrapperHtml from "../fixtures/dom/targets-wrapper.html?raw";
+import webdotcomCurrentHtml from "../fixtures/dom/webdotcom-current.html?raw";
 
 export const PAGE_URL = "https://bugcrowd.com/engagements/acme-bb";
 
@@ -30,6 +33,9 @@ const FIXTURES: Record<string, string> = {
   "targets.html": targetsHtml,
   "targets-nested-candidate.html": targetsNestedCandidateHtml,
   "targets-wrapper.html": targetsWrapperHtml,
+  "webdotcom-current.html": webdotcomCurrentHtml,
+  "aiven-current.html": aivenCurrentHtml,
+  "pinterest-current.html": pinterestCurrentHtml,
 };
 
 /** Loads a sanitized DOM fixture into a full jsdom Document. */

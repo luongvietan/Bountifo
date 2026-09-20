@@ -121,11 +121,43 @@ function model(): DocumentModel {
       },
     ],
     focusAreas: ["XSS"],
-    nonFocusAreas: ["CSRF"],
+    nonFocusAreas: ["CSRF", "DoS is not permitted"],
+    submissionExclusions: [
+      {
+        text: "CSRF",
+        submission_status: "excluded" as const,
+        testing_status: "unspecified" as const,
+        evidence_refs: ["ev_csrf"],
+      },
+      {
+        text: "DoS is not permitted",
+        submission_status: "excluded" as const,
+        testing_status: "prohibited" as const,
+        evidence_refs: [],
+      },
+    ],
+    scopeAuthorization: {
+      listed_targets: {
+        status: "conditional" as const,
+        conditions: ["the targets listed as in scope"],
+      },
+      unlisted_targets: { status: "prohibited" as const },
+      quote: "Testing is only authorized on the targets listed as in scope.",
+      evidence_refs: ["ev_scope_auth"],
+    },
     reportingRequirements: ["Include a reproducible PoC"],
     vrt: {
       version: "2.0",
       baseline: "P3",
+      scope_rules: [
+        {
+          category: "Application-Level Denial-of-Service (DoS)",
+          vrt_version: "1.18",
+          applies_to: "All targets",
+          status: "out_of_scope" as const,
+          note: null,
+        },
+      ],
       exclusions: ["Self-XSS"],
       deviations: [],
       targetSpecific: ["API target uses P2"],
@@ -198,6 +230,14 @@ function model(): DocumentModel {
       parser_version: "2.0.0",
       collected_at: "2026-09-20T01:59:00+07:00",
       missing_sections: ["activity"],
+      collection_issues: [
+        {
+          code: "known_issues:incomplete_counts",
+          target_id: "target_1",
+          displayed_count: 2,
+          collected_count: 1,
+        },
+      ],
       conflicts: [],
     },
   };
@@ -251,9 +291,60 @@ describe("renderAgentFacts", () => {
     expect(parsed.safe_harbor.status).toBe("present");
     expect(parsed.collection.status).toBe("partial");
   });
+
+  it("separates submission eligibility from testing permission", () => {
+    const block = renderAgentFacts(model());
+    const parsed = parseYaml(block.replace(/^```yaml\n/, "").replace(/\n```$/, ""));
+    expect(parsed.submission_exclusions).toEqual([
+      { text: "CSRF", submission_status: "excluded", testing_status: "unspecified", evidence_refs: ["ev_csrf"] },
+      { text: "DoS is not permitted", submission_status: "excluded", testing_status: "prohibited", evidence_refs: [] },
+    ]);
+    expect(parsed.authorized_scope.listed_targets.status).toBe("conditional");
+    expect(parsed.authorized_scope.unlisted_targets.status).toBe("prohibited");
+  });
+
+  it("reports validation failures separately from missing sections", () => {
+    const block = renderAgentFacts(model());
+    const parsed = parseYaml(block.replace(/^```yaml\n/, "").replace(/\n```$/, ""));
+    expect(parsed.collection_issues).toEqual([
+      {
+        code: "known_issues:incomplete_counts",
+        target_id: "target_1",
+        displayed_count: 2,
+        collected_count: 1,
+      },
+    ]);
+  });
 });
 
 describe("renderMarkdown", () => {
+  it("shows both exclusion axes and the scope authorization", () => {
+    const rendered = renderMarkdown(model());
+    expect(rendered).toContain(
+      "| CSRF | excluded | unspecified |",
+    );
+    expect(rendered).toContain("| DoS is not permitted | excluded | prohibited |");
+    expect(rendered).toContain("Listed targets: conditional");
+    expect(rendered).toContain("Unlisted targets: prohibited");
+  });
+
+  it("renders VRT scope rules as a table and exposes them to agents", () => {
+    const rendered = renderMarkdown(model());
+    expect(rendered).toContain("### Scope rules");
+    expect(rendered).toContain("| All targets | out\_of\_scope |");
+    const block = renderAgentFacts(model());
+    const parsed = parseYaml(block.replace(/^```yaml\n/, "").replace(/\n```$/, ""));
+    expect(parsed.vrt_scope_rules[0].status).toBe("out_of_scope");
+  });
+
+  it("lists collection issues under provenance", () => {
+    const rendered = renderMarkdown(model());
+    expect(rendered).toContain("### Collection issues");
+    expect(rendered).toContain(
+      `${escapeMd("known_issues:incomplete_counts")} — ${escapeMd("target_1")} (displayed 2, collected 1)`,
+    );
+  });
+
   it("renders the full dossier in spec order and deterministically", () => {
     const rendered = renderMarkdown(model());
     const headings = [

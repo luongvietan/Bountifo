@@ -59,6 +59,7 @@ function makeDeps(over: Partial<OrchestratorDeps> = {}): OrchestratorDeps {
     isSessionExpired: vi.fn(() => false),
     fetchPage: vi.fn(async () => null),
     emitProgress: vi.fn(),
+    ensureRendered: vi.fn(async () => undefined),
     ...over,
   };
 }
@@ -100,6 +101,46 @@ describe("RUN_UNIT dispatch", () => {
       ...(kind === "collect_activity" ? [deps.fetchPage] : []),
     );
     expect(res.result).toMatchObject({ data: expect.any(String) });
+  });
+
+  it("renders the lazy brief once, before the first collection", async () => {
+    // The brief materialises its sections on scroll; collecting first yields
+    // an empty scope inventory for a program that has targets.
+    const deps = makeDeps();
+    const orch = createOrchestrator(deps);
+    const order: string[] = [];
+    vi.mocked(deps.ensureRendered!).mockImplementation(async () => {
+      order.push("render");
+    });
+    vi.mocked(deps.collectTargets).mockImplementation(() => {
+      order.push("collect");
+      return { records: [], data: "targets" };
+    });
+    await orch.handleMessage(runUnit({ kind: "collect_targets" }));
+    await orch.handleMessage(runUnit({ kind: "collect_policy" }));
+    expect(order).toEqual(["render", "collect"]);
+    expect(deps.ensureRendered).toHaveBeenCalledTimes(1);
+  });
+
+  it("collects anyway when the brief cannot be scrolled", async () => {
+    const deps = makeDeps({
+      ensureRendered: vi.fn(async () => {
+        throw new Error("scroll blocked");
+      }),
+    });
+    const orch = createOrchestrator(deps);
+    const res = (await orch.handleMessage(
+      runUnit({ kind: "collect_targets" }),
+    )) as { ok: boolean };
+    expect(res.ok).toBe(true);
+    expect(deps.collectTargets).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not scroll the page for restore_page", async () => {
+    const deps = makeDeps();
+    const orch = createOrchestrator(deps);
+    await orch.handleMessage(runUnit({ kind: "restore_page" }));
+    expect(deps.ensureRendered).not.toHaveBeenCalled();
   });
 
   it("collect_ki passes the tracking driver, document, target, and initial URL", async () => {

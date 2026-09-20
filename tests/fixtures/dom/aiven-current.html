@@ -1,0 +1,130 @@
+<!doctype html>
+<html>
+  <head><title>Bug Bounty: Aiven Managed Bug Bounty - Bugcrowd</title></head>
+  <body>
+    <main id="researcher-engagement-brief-root">
+      <header>
+        <ul><li>Bug Bounty</li></ul>
+        <h2>Aiven Managed Bug Bounty</h2>
+        <img src="https://bugcrowd.com/assets/aiven.png" alt="Aiven">
+        <ul>
+          <li>Scope rating 3 out of 4</li>
+          <li>Testing period Ongoing Started at Mar 02, 2021</li>
+          <li>Status In progress 02 Mar 2021 19:00:00 GMT+0</li>
+        </ul>
+      </header>
+
+      <section>
+        <h3 id="targets">Targets 3 out of 4</h3>
+        <p>Bugcrowd calculates scope ratings based on the depth and breadth of in-scope targets.</p>
+        <ul>
+          <li role="listitem">
+            <div><h2>Database Services Tier 1</h2><span>In scope</span></div>
+            <figure role="group">
+              <figcaption>Payment reward chart</figcaption>
+              <dl>
+                <div><dt>P1</dt><dd>$16500 – $23100</dd></div>
+                <div><dt>P2</dt><dd>$5280 – $13200</dd></div>
+                <div><dt>P3</dt><dd>$1650 – $4620</dd></div>
+                <div><dt>P4</dt><dd>$660 – $990</dd></div>
+              </dl>
+            </figure>
+            <div>
+              <h2>Aiven for Clickhouse</h2>
+              <p>See https://aiven.io/clickhouse for details about the service.</p>
+              <table>
+                <thead><tr><th>Name / Location</th><th>Tags</th><th>Known issues</th></tr></thead>
+                <tbody>
+                  <tr><td><a href="https://aiven.io/clickhouse">Aiven for Clickhouse</a><span>https://aiven.io/clickhouse</span></td><td><ul><li>Cloud</li></ul></td><td><span aria-label="26 known issues">26</span><button>See Known Issues for Aiven for Clickhouse</button></td></tr>
+                  <tr><td>Aiven for Valkey</td><td><ul><li>Redis</li></ul></td><td><span aria-label="4 known issues">4</span><button>See Known Issues for Aiven for Valkey</button></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </li>
+          <li role="listitem">
+            <div><h2>In Scope (Website Console)</h2><span>In scope</span></div>
+            <figure role="group">
+              <figcaption>Payment reward chart</figcaption>
+              <dl>
+                <div><dt>P1</dt><dd>$4100 – $4500</dd></div>
+                <div><dt>P2</dt><dd>$1500 – $1750</dd></div>
+              </dl>
+            </figure>
+            <div>
+              <table>
+                <thead><tr><th>Name / Location</th><th>Tags</th><th>Known issues</th></tr></thead>
+                <tbody>
+                  <tr><td><a href="https://aiven.io/">aiven.io</a><span>https://aiven.io/</span></td><td><ul><li>Website Testing</li></ul></td><td><span aria-label="3 known issues">3</span><button>See Known Issues for aiven.io</button></td></tr>
+                  <tr><td><a href="https://console.aiven.io/login">console.aiven.io</a><span>https://console.aiven.io/login</span></td><td><ul><li>Website Testing</li></ul></td><td><span aria-label="32 known issues">32</span><button>See Known Issues for console.aiven.io</button></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </li>
+          <li role="listitem">
+            <div><h2>Out of Scope</h2><span>Out of scope</span></div>
+            <p>In general, services hosted for Aiven by third parties are out of scope.</p>
+            <table>
+              <thead><tr><th>Name / Location</th><th>Tags</th><th>Known issues</th></tr></thead>
+              <tbody>
+                <tr><td>aquarium.aiven.io</td><td></td><td><span aria-label="0 known issues">0</span><button>See Known Issues for aquarium.aiven.io</button></td></tr>
+                <tr><td>Customer services you did not create</td><td></td><td><span aria-label="0 known issues">0</span><button>See Known Issues for Customer services you did not create</button></td></tr>
+              </tbody>
+            </table>
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>VRT scope exclusions</h2>
+        <div>
+          <div>
+            <table>
+              <thead><tr><th>VRT categories / variants</th><th>Targets / groups</th><th>Scope</th><th>Notes</th></tr></thead>
+              <tbody>
+                <tr><td>Application-Level Denial-of-Service (DoS) ( 1.18 )</td><td>All targets</td><td>Out-of-Scope</td><td>-</td></tr>
+                <tr><td>Physical Security Issues ( 1.18 )</td><td>All targets</td><td>Out-of-Scope</td><td>-</td></tr>
+                <tr><td>Broken Access Control (BAC) ( 1.19.1 )</td><td>Targets: aiven.io console.aiven.io api.aiven.io Target groups: In Scope (Website Console)</td><td>Conditional</td><td>Where the operations allowed in the web interface and the API differ, it is the API that is considered authoritative.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <p>Testing is only authorized on the targets listed as in scope. Any domain/property of Aiven not listed in the targets section is out of scope. This includes any/all subdomains not listed above.</p>
+
+        <h2>Aiven's Permission Model</h2>
+        <ul>
+          <li>Permissions that are granted in the API are intentionally granted, whether or not they are "greyed out" or accessible in the console.</li>
+        </ul>
+
+        <h2>Program Rules</h2>
+        <ul>
+          <li>Only use your @bugcrowdninja email addresses for registering testing accounts.</li>
+          <li>Social engineering (e.g. phishing, vishing, smishing) is prohibited.</li>
+          <li>You are testing on production. For example, do not target other users' data (instead, please use one of your other sets of credentials), delete/remove/edit parts of the site, engage any sort of DoS or DDoS attack, and/or compromise any target's ability to function for other users.</li>
+        </ul>
+
+        <h2>Exploit Chain Testing</h2>
+        <ul>
+          <li>Cross-account access . We are interested in avenues to make authenticated access to other accounts' services where the other account has not allowed this access - please use only other accounts that you own, not random customers.</li>
+        </ul>
+
+        <h2>Out of Scope</h2>
+        <ul>
+          <li>Only services you create by yourself - for example, PostgreSQL, Kafka and Grafana - are in-scope. Other services in aivencloud.com domain not created by you are explicitly out of scope, as those are our customers' services.</li>
+          <li>Functionality provided through third parties is out of scope. This includes Calendly, Qualified, Salesforce, and similar.</li>
+          <li>Rate limiting issues</li>
+          <li>Unreported or very recently reported issues (0day), or issues for which no patch is available, against software not published by Aiven.</li>
+        </ul>
+
+        <h2>Safe Harbor</h2>
+        <p>When conducting vulnerability research according to this policy, we consider this research to be:</p>
+        <ul>
+          <li>Authorized in accordance with the Computer Fraud and Abuse Act (CFAA).</li>
+          <li>Lawful, helpful to the overall security of the Internet, and conducted in good faith.</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>

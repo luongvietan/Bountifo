@@ -129,6 +129,13 @@ export function routeMessage(
     switch (popup.op) {
       case "START_EXPORT":
         return coordinator.start(popup.tabId);
+      case "START_EXPORT_HERE": {
+        // Only a tab may ask for this, and only for itself; the coordinator
+        // still validates that the tab is on a supported engagement URL.
+        const tabId = sender.tab?.id;
+        if (tabId === undefined) return { ok: false, error: "forbidden" };
+        return coordinator.start(tabId);
+      }
       case "CANCEL_EXPORT":
         if (coordinator.state !== null && coordinator.state.jobId !== popup.jobId) {
           return { ok: false, error: "unknown_job" };

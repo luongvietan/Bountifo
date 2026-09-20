@@ -1,0 +1,147 @@
+<!doctype html>
+<html>
+  <head><title>Bug Bounty: Web.com Bug Bounty - Bugcrowd</title></head>
+  <body>
+    <main id="researcher-engagement-brief-root">
+      <header>
+        <ul><li>Bug Bounty</li></ul>
+        <h2>Web.com Bug Bounty</h2>
+        <img src="https://bugcrowd.com/assets/engagement-logo.png" alt="Web.com">
+        <ul><li>Technology • Safe harbor</li></ul>
+        <ul>
+          <li>Scope rating 1 out of 4</li>
+          <li>Testing period Ongoing Started at Apr 13, 2017</li>
+          <li>Status In progress 13 Apr 2017 19:00:00 GMT+0</li>
+        </ul>
+      </header>
+
+      <p>Last Updated: <time datetime="2026-09-11T15:03:27Z">11 Sep 2026 15:03:27 GMT+0</time></p>
+      <ul id="brief_stats">
+        <li><span>Vulnerabilities rewarded</span> <span>721</span></li>
+        <li><span>Validation within 12 days</span> <span>75% of submissions are accepted or rejected within 12 days</span> <small>in last 3 months</small></li>
+        <li><span>Average payout</span> <span>$2,000</span> <small>last 3 months</small></li>
+      </ul>
+
+      <section>
+        <h2>Report Formatting</h2>
+        <p>Include ordered reproduction steps and a fully working proof of concept.</p>
+      </section>
+
+      <section>
+        <h3 id="targets">Targets 1 out of 4</h3>
+        <p>Bugcrowd calculates scope ratings based on the depth and breadth of in-scope targets.</p>
+        <ul>
+          <li>
+            <div><h2>In Scope</h2><span>In scope</span></div>
+            <div>
+              <span>Payment reward chart</span>
+              <dl>
+                <div><dt></dt><dd>$5000</dd></div>
+                <div><dt>P1</dt><dd>$2000 – $3000</dd></div>
+                <div><dt>P2</dt><dd>$1000 – $1500</dd></div>
+                <div><dt>P3</dt><dd>$250 – $600</dd></div>
+              </dl>
+            </div>
+            <div>
+              <h2>OneWeb Platform</h2>
+              <p>Web.com Group leverages its OneWeb platform across many web properties.</p>
+              <h2>Focus Areas</h2>
+              <ul>
+                <li>app.web.com (accessible via the website builder feature)</li>
+                <li>AI Features within</li>
+                <li>Test the website, servers and APIs related to the storefronts and account managers.</li>
+              </ul>
+              <h2>Note on User Authenticated Subdomains</h2>
+              <ul><li>Authenticated subdomain flows to the listed targets are also in-scope.</li></ul>
+              <table>
+                <thead><tr><th>Name / Location</th><th>Tags</th><th>Known issues</th></tr></thead>
+                <tbody>
+                  <tr><td><a href="https://app.web.com">app.web.com</a><span>https://app.web.com</span></td><td><ul><li>Website Testing</li></ul></td><td><span aria-label="1 known issue">1</span><button>See Known Issues for app.web.com</button></td></tr>
+                  <tr><td><a href="https://www.networksolutions.com">www.networksolutions.com</a><span>https://www.networksolutions.com</span></td><td><ul><li>Cloudflare CDN</li><li>jQuery</li><li>Website Testing</li></ul></td><td><span aria-label="136 known issues">136</span><button>See Known Issues for www.networksolutions.com</button></td></tr>
+                  <tr><td><a href="https://www.bluehost.com/">https://www.bluehost.com/</a><span>https://www.bluehost.com/</span></td><td><ul><li>Website Testing</li></ul></td><td><span aria-label="16 known issues">16</span><button>See Known Issues for https://www.bluehost.com/</button></td></tr>
+                  <tr><td><a href="https://www.hostgator.com/">https://www.hostgator.com/</a><span>https://www.hostgator.com/</span></td><td><ul><li>Website Testing</li></ul></td><td><span aria-label="8 known issues">8</span><button>See Known Issues for https://www.hostgator.com/</button></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </li>
+          <li>
+            <div><h2>Out of Scope Targets</h2><span>Out of scope</span></div>
+            <p>Any asset not explicitly listed in scope above falls outside this program.</p>
+            <table>
+              <thead><tr><th>Name / Location</th><th>Tags</th><th>Known issues</th></tr></thead>
+              <tbody>
+                <tr><td><a href="https://*.web.com">*.web.com</a><span>https://*.web.com</span></td><td><ul><li>Bootstrap</li><li>Moment.js</li><li>Select2</li></ul></td><td><span aria-label="0 known issues">0</span><button>See Known Issues for *.web.com</button></td></tr>
+                <tr><td><a href="https://*.register.com">*.register.com</a><span>https://*.register.com</span></td><td><ul><li>Cloudflare CDN</li><li>jQuery</li></ul></td><td><span aria-label="0 known issues">0</span><button>See Known Issues for *.register.com</button></td></tr>
+                <tr><td><a href="https://*.networksolutions.com">*.networksolutions.com</a><span>https://*.networksolutions.com</span></td><td><ul><li>Cloudflare CDN</li><li>jQuery</li></ul></td><td><span aria-label="0 known issues">0</span><button>See Known Issues for *.networksolutions.com</button></td></tr>
+                <tr><td>https://app.gator.com/</td><td></td><td><span aria-label="0 known issues">0</span><button>See Known Issues for https://app.gator.com/</button></td></tr>
+                <tr><td>*.bluehost.com</td><td><ul><li>nginx</li><li>jQuery</li></ul></td><td><span aria-label="0 known issues">0</span><button>See Known Issues for *.bluehost.com</button></td></tr>
+                <tr><td><a href="https://*.hostgator.com">*.hostgator.com</a><span>https://*.hostgator.com</span></td><td><ul><li>Bootstrap</li><li>ReactJS</li><li>jQuery</li></ul></td><td><span aria-label="0 known issues">0</span><button>See Known Issues for *.hostgator.com</button></td></tr>
+              </tbody>
+            </table>
+          </li>
+        </ul>
+
+        <p><em>Testing is only authorized on the targets listed as in scope. All other assets are out of scope.</em></p>
+        <h2>Access/Credentials</h2>
+        <p>These websites are public facing. Keep scanning during regular business hours to a minimum.</p>
+        <p>You may use your @bugcrowdninja.com email address.</p>
+        <h2>Testing Headers</h2>
+        <p>Required X-Request-Purpose: Research</p>
+        <h2>Program Rules</h2>
+        <ul>
+          <li>Researchers must provide a fully working non-malicious proof of concept.</li>
+          <li>Interacting with real customers or real customer accounts is forbidden.</li>
+        </ul>
+        <h2>Excluded Submission Types</h2>
+        <ul>
+          <li>DDoS and Application DoS are not permitted.</li>
+          <li>Self-XSS reports will not be accepted.</li>
+          <li>Clickjacking</li>
+          <li>Open redirect vulnerabilities</li>
+          <li>Recently disclosed &lt;30 days zero-day vulnerabilities</li>
+          <li>Do not submit automated scanner output.</li>
+        </ul>
+        <h2>Safe Harbor</h2>
+        <p>When conducting vulnerability research according to this policy, we consider this research to be:</p>
+        <ul>
+          <li>Authorized in accordance with the Computer Fraud and Abuse Act.</li>
+          <li>Exempt from the Digital Millennium Copyright Act.</li>
+          <li>Lawful, helpful, and conducted in good faith.</li>
+        </ul>
+        <p>If you are uncertain whether research is consistent with this policy, contact Bugcrowd Support.</p>
+
+        <h3 id="whats_new">What’s new</h3>
+        <a href="/engagements/webdotcom/announcements">View all announcements</a>
+        <ul>
+          <li>
+            <p>WaynesWorld announced New Target added!</p>
+            <time datetime="2026-09-11T14:53:16Z">9 days ago</time>
+            <p>We are directing testing attention to app.web.com and its AI features.</p>
+          </li>
+          <li>
+            <p>annfrance announced Scope Updates</p>
+            <time datetime="2024-03-27T21:17:27Z">over 2 years ago</time>
+            <p>Bluehost and Hostgator were added to scope.</p>
+          </li>
+        </ul>
+
+        <div id="recent-activities">
+          <h3 id="recent_activity">Recent activity</h3>
+          <a href="/engagements/webdotcom/crowdstream">View all CrowdStream activity</a>
+          <ul>
+            <li>
+              <p>Submission accepted on target: www.networksolutions.com</p>
+              <ul><li>By Private user</li><li>Engagement Web.com Bug Bounty</li><li>Priority P1</li></ul>
+              <p>Accepted on 27 Jul 2026</p>
+            </li>
+            <li>
+              <p>Submission accepted on target: https://www.hostgator.com/</p>
+              <ul><li>By Ynoof</li><li>Engagement Web.com Bug Bounty</li><li>Priority P3</li></ul>
+              <p>Accepted on 25 May 2026</p>
+            </li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

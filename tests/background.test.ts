@@ -35,6 +35,7 @@ let routeMessage: (
   sender: { id?: string; tab?: { id?: number; url?: string } },
 ) => RouterResponse | Promise<RouterResponse>;
 let fetchMock: ReturnType<typeof vi.fn>;
+let coordinator: { start: (tabId: number) => Promise<unknown> };
 
 const extensionPageSender = { id: fakeBrowser.runtime.id };
 const contentScriptSender = {
@@ -51,7 +52,7 @@ beforeEach(async () => {
   await fakeBrowser.storage.local.set({ apiCredential: CREDENTIAL });
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
-  ({ routeMessage } = await import("../entrypoints/background"));
+  ({ routeMessage, coordinator } = await import("../entrypoints/background"));
 });
 
 afterEach(() => {
@@ -74,6 +75,24 @@ describe("routeMessage API op sender restriction", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     },
   );
+
+  it("starts an in-page export for the sender's own tab only", async () => {
+    const start = vi
+      .spyOn(coordinator, "start")
+      .mockResolvedValue({ ok: true, jobId: "job_ab12cd34" } as never);
+    const res = await routeMessage({ op: "START_EXPORT_HERE" }, contentScriptSender);
+    expect(start).toHaveBeenCalledWith(contentScriptSender.tab!.id);
+    expect(res).toEqual({ ok: true, jobId: "job_ab12cd34" });
+    start.mockRestore();
+  });
+
+  it("rejects an in-page export from a sender with no tab", async () => {
+    const start = vi.spyOn(coordinator, "start");
+    const res = await routeMessage({ op: "START_EXPORT_HERE" }, {});
+    expect(res).toEqual({ ok: false, error: "forbidden" });
+    expect(start).not.toHaveBeenCalled();
+    start.mockRestore();
+  });
 
   it("accepts the same ops from an extension page (no sender.tab)", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ data: [] }));

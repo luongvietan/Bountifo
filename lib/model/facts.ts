@@ -128,6 +128,20 @@ export function buildPermissionFact(
       id: `condition_${String(i + 1).padStart(3, "0")}`,
       text,
     }));
+    // Invariant: conditional ⇒ conditions.length > 0. A conditional fact
+    // with no extracted condition is unsafe — `all([])` vacuously passes in
+    // most downstream guards — so it downgrades to unspecified; its evidence
+    // is retained and the partial extraction status marks it for review.
+    if (assertedStatuses[0] === "conditional" && conditions.length === 0) {
+      return {
+        status: "unspecified",
+        conditions: [],
+        applies_to: mergeApplicability(asserted.map((a) => a.applies_to)),
+        evidence_refs: evidenceRefs,
+        conflict: noConflict(),
+        extraction: { status: "partial" },
+      };
+    }
     return {
       status: assertedStatuses[0]!,
       conditions,

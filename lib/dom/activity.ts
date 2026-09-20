@@ -7,11 +7,12 @@ import type {
 import {
   HEADING_SEL,
   SECTION_SEL,
+  type SectionScope,
   extractStats,
   findSection,
+  findSectionScope,
   resolveUrl,
   sectionHeading,
-  sectionItems,
   slugify,
   textOf,
   uniqueSlug,
@@ -70,8 +71,45 @@ function record(
   };
 }
 
+/** Direct children of `el` matching a selector. */
+function childrenMatching(el: Element, selector: string): Element[] {
+  return [...el.children].filter((child) => child.matches(selector));
+}
+
+/**
+ * Item elements of a feed whose scope is a heading range: each card is one
+ * top-level entry — an article, else a list's own list item, else a table row.
+ * Nested lists inside a card (its metadata) stay part of that card.
+ */
+function boundedItemElements(members: Element[]): Element[] {
+  const collect = (
+    pick: (member: Element) => Element[],
+  ): Element[] => members.flatMap(pick);
+
+  const articles = collect((m) =>
+    m.matches("article") ? [m] : [...m.querySelectorAll("article")],
+  );
+  if (articles.length > 0) return articles;
+  const lis = collect((m) => {
+    const lists = m.matches("ul,ol")
+      ? [m]
+      : [...m.querySelectorAll("ul,ol")].filter(
+          (list) => list.closest("li") === null,
+        );
+    return lists.flatMap((list) => childrenMatching(list, "li"));
+  });
+  if (lis.length > 0) return lis;
+  const trs = collect((m) =>
+    m.matches("tr") ? [m] : [...m.querySelectorAll("tbody tr")],
+  );
+  if (trs.length > 0) return trs;
+  return members;
+}
+
 /** Item elements of a feed section: articles, else list items, else rows. */
-function itemElements(section: Element): Element[] {
+function itemElements(scope: SectionScope): Element[] {
+  if (scope.bounded) return boundedItemElements(scope.members);
+  const section = scope.el;
   // Ownership starts at the parent — an article/tr itself matches SECTION_SEL.
   const owned = (el: Element) =>
     (el.parentElement?.closest(SECTION_SEL) ?? null) === section;
@@ -83,7 +121,7 @@ function itemElements(section: Element): Element[] {
   if (lis.length > 0) return lis;
   const trs = [...section.querySelectorAll("tbody tr")].filter(owned);
   if (trs.length > 0) return trs;
-  return sectionItems(section).map((i) => i.el);
+  return scope.items.map((i) => i.el);
 }
 
 function itemTimestamp(el: Element): string | null {
@@ -123,9 +161,12 @@ function toItem(
   };
 }
 
-/** First pagination control inside a section (rel=next or next-ish label). */
-function nextPageUrl(section: Element, base: string): string | null {
-  const anchors = [...section.querySelectorAll("a[href]")];
+/** First pagination control inside a scope (rel=next or next-ish label). */
+function nextPageUrl(scope: SectionScope, base: string): string | null {
+  const anchors = scope.members.flatMap((member) => [
+    ...(member.matches("a[href]") ? [member] : []),
+    ...member.querySelectorAll("a[href]"),
+  ]);
   const isNext = (a: Element): boolean => {
     const rel = (a.getAttribute("rel") ?? "").toLowerCase().split(/\s+/);
     if (rel.includes("next")) return true;
@@ -182,10 +223,10 @@ async function collectBucket(
   let url = startUrl;
 
   for (let depth = 0; ; depth++) {
-    const section = findSection(doc, bucket.re);
-    if (section === null) break;
-    sectionName = sectionName ?? sectionHeading(section);
-    for (const el of itemElements(section)) {
+    const scope = findSectionScope(doc, bucket.re);
+    if (scope === null) break;
+    sectionName = sectionName ?? scope.heading;
+    for (const el of itemElements(scope)) {
       const item = toItem(el, bucket.kind, url);
       if (item.body === "") continue;
       const sig = `${item.kind}|${item.title}|${item.timestamp}|${item.body}`;
@@ -196,7 +237,7 @@ async function collectBucket(
       pageDepths.push(depth);
     }
     if (!bucket.paginate) break;
-    const next = nextPageUrl(section, url);
+    const next = nextPageUrl(scope, url);
     if (next === null || seenPages.has(next)) break;
     seenPages.add(next);
     const nextDoc = await safeFetch(fetchPage, next);
