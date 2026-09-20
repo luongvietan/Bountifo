@@ -6,7 +6,12 @@ import { exportFileName, isSupportedEngagementUrl, parseEngagementUrl } from "..
 import type { JobMessage } from "../messages";
 import { validateJobSender } from "../messages";
 import { assembleDocument, stripVolatile } from "../model/document";
-import { buildPermissionFact, buildSafeHarborFact, mapTechnique } from "../model/facts";
+import {
+  buildPermissionFact,
+  buildSafeHarborFact,
+  mapTechnique,
+  type AssertionInput,
+} from "../model/facts";
 import { computeIntegrity, type UnitOutcome } from "../model/integrity";
 import { assignTargetIdentities } from "../model/targetIds";
 import { renderMarkdown } from "../render/markdown";
@@ -113,6 +118,19 @@ function ruleStatus(text: string): "allowed" | "prohibited" | "conditional" | "u
   if (/\b(?:only|unless|provided\s+that|with\s+(?:prior\s+)?permission)\b/i.test(text)) return "conditional";
   if (/\b(?:allowed|permitted|may)\b/i.test(text)) return "allowed";
   return "unspecified";
+}
+
+function ruleTechniqueKey(text: string, fallbackIndex: number): string {
+  const known: [RegExp, string][] = [
+    [/automat/i, "automation"],
+    [/\bscann?(?:ing|er|ers|ed|s)?\b/i, "scanning"],
+    [/brute[\s-]?force|credential\s*stuff/i, "brute force"],
+    [/denial[\s-]?of[\s-]?service|\bd?dos\b/i, "denial of service"],
+    [/social[\s-]?engineer|phishing|vishing|smishing/i, "social engineering"],
+    [/physical(?:ly)?[\s-]?(?:test|access|attack)/i, "physical testing"],
+  ];
+  return known.find(([pattern]) => pattern.test(text))?.[1] ??
+    `target_rule_${String(fallbackIndex + 1).padStart(3, "0")}`;
 }
 
 export class JobCoordinator {
@@ -404,10 +422,18 @@ export class JobCoordinator {
       api?.uuid ?? descriptor.initialUrl,
     );
     const evidence = await getAllEvidence(db, descriptor.jobId);
-    const techniques: Record<string, PermissionFact> = {};
+    const assertionsByTechnique = new Map<string, AssertionInput[]>();
+    const addAssertion = (key: string, assertion: AssertionInput) => {
+      const existing = assertionsByTechnique.get(key);
+      if (existing === undefined) assertionsByTechnique.set(key, [assertion]);
+      else existing.push(assertion);
+    };
     for (const technique of policy.techniques ?? []) {
       const matching = evidence.filter((item) => normalizeText(item.quote) === normalizeText(technique.quote));
-      techniques[technique.name] = buildPermissionFact([mapTechnique(technique, matching, { type: "engagement" })]);
+      addAssertion(
+        technique.name,
+        mapTechnique(technique, matching, { type: "engagement" }),
+      );
     }
     const targetIdByDomKey = new Map(
       pairs.map(({ dom }: any, index: number) => [dom.domKey, identities[index]!.id]),
@@ -429,15 +455,19 @@ export class JobCoordinator {
             ? { type: "target_group_ids" as const, ids: [...new Set(groupIds)].sort() }
             : { type: "engagement" as const };
       const matching = evidence.filter((item) => normalizeText(item.quote) === normalizeText(rule.text));
-      techniques[`target_rule_${String(index + 1).padStart(3, "0")}`] = buildPermissionFact([
-        {
-          status: ruleStatus(rule.text),
-          conditions: [],
-          applies_to,
-          evidence: matching,
-        },
-      ]);
+      addAssertion(ruleTechniqueKey(rule.text, index), {
+        status: ruleStatus(rule.text),
+        conditions: [],
+        applies_to,
+        evidence: matching,
+      });
     }
+    const techniques: Record<string, PermissionFact> = Object.fromEntries(
+      [...assertionsByTechnique.entries()].map(([key, assertions]) => [
+        key,
+        buildPermissionFact(assertions),
+      ]),
+    );
     const safeEvidence = evidence.filter((item) => (policy.safeHarborStatements ?? []).some((text: string) => normalizeText(text) === normalizeText(item.quote)));
     const safeHarbor = buildSafeHarborFact({ present: safeEvidence });
     const normalized = {
