@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { browser } from "wxt/browser";
 import { BUGCROWD_SITE } from "./constants";
+import { RADAR_PROFILE_IDS } from "./radar/types";
 
 // ---------------------------------------------------------------------------
 // Message protocol (spec §7.3, §19): the service worker exposes named
@@ -73,9 +74,41 @@ export const JobMsg = z.discriminatedUnion("op", [
     .strict(),
 ]);
 
+// ---------------------------------------------------------------------------
+// Radar scan operations (Task 16) — trusted extension pages only; the router
+// rejects any sender with sender.tab set. Same rules as ApiRequestMsg:
+// strict objects, named ops only, no url/headers/method/API-operation field.
+// ---------------------------------------------------------------------------
+
+const radarProfileSchema = z.enum(RADAR_PROFILE_IDS);
+const radarUuidSchema = z.string().regex(/^[0-9a-fA-F-]{36}$/);
+
+export const RadarMsg = z.discriminatedUnion("op", [
+  z.object({ op: z.literal("RADAR_START_SCAN") }).strict(),
+  // Fieldless: cancels whichever run is active.
+  z.object({ op: z.literal("RADAR_CANCEL_SCAN") }).strict(),
+  z.object({ op: z.literal("RADAR_GET_STATE") }).strict(),
+  z
+    .object({
+      op: z.literal("RADAR_GET_RESULTS"),
+      profile: radarProfileSchema,
+      limit: z.number().int().min(1).max(200).default(50),
+      minConfidence: z.number().min(0).max(1).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal("RADAR_GET_PROGRAM"),
+      uuid: radarUuidSchema,
+      profile: radarProfileSchema.optional(), // router defaults to best_ev
+    })
+    .strict(),
+]);
+
 export type ApiRequest = z.infer<typeof ApiRequestMsg>;
 export type PopupMessage = z.infer<typeof PopupMsg>;
 export type JobMessage = z.infer<typeof JobMsg>;
+export type RadarMessage = z.infer<typeof RadarMsg>;
 
 /** Returns the parsed ApiRequest, or null when the message fails validation. */
 export function parseApiRequest(msg: unknown): ApiRequest | null {
@@ -92,6 +125,12 @@ export function parsePopupMessage(msg: unknown): PopupMessage | null {
 /** Returns the parsed JobMessage, or null when the message fails validation. */
 export function parseJobMessage(msg: unknown): JobMessage | null {
   const result = JobMsg.safeParse(msg);
+  return result.success ? result.data : null;
+}
+
+/** Returns the parsed RadarMessage, or null when the message fails validation. */
+export function parseRadarMessage(msg: unknown): RadarMessage | null {
+  const result = RadarMsg.safeParse(msg);
   return result.success ? result.data : null;
 }
 

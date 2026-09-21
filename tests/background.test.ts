@@ -36,6 +36,20 @@ let routeMessage: (
 ) => RouterResponse | Promise<RouterResponse>;
 let fetchMock: ReturnType<typeof vi.fn>;
 let coordinator: { start: (tabId: number) => Promise<unknown> };
+let radar: {
+  start: () => Promise<unknown>;
+  cancel: () => Promise<unknown>;
+  getState: () => Promise<unknown>;
+  getResults: (
+    profile: import("../lib/radar/types").RadarProfileId,
+    limit?: number,
+    minConfidence?: number,
+  ) => Promise<unknown>;
+  getProgram: (
+    uuid: string,
+    profile?: import("../lib/radar/types").RadarProfileId,
+  ) => Promise<unknown>;
+};
 
 const extensionPageSender = { id: fakeBrowser.runtime.id };
 const contentScriptSender = {
@@ -52,7 +66,9 @@ beforeEach(async () => {
   await fakeBrowser.storage.local.set({ apiCredential: CREDENTIAL });
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
-  ({ routeMessage, coordinator } = await import("../entrypoints/background"));
+  ({ routeMessage, coordinator, radar } = await import(
+    "../entrypoints/background"
+  ));
 });
 
 afterEach(() => {
@@ -213,5 +229,136 @@ describe("routeMessage GET_ENGAGEMENT", () => {
     expect(res.ok).toBe(false);
     expect(res.error).toMatchObject({ kind: "forbidden" });
     expect(JSON.stringify(res)).not.toContain(CREDENTIAL);
+  });
+});
+
+describe("routeMessage radar ops", () => {
+  const radarMsgs = [
+    { op: "RADAR_START_SCAN" },
+    { op: "RADAR_CANCEL_SCAN" },
+    { op: "RADAR_GET_STATE" },
+    { op: "RADAR_GET_RESULTS", profile: "best_ev", limit: 10 },
+    { op: "RADAR_GET_PROGRAM", uuid: ENGAGEMENT_UUID },
+  ];
+
+  it.each(radarMsgs)(
+    "rejects $op when sender.tab is present (content script)",
+    async (msg) => {
+      const res = await routeMessage(msg, contentScriptSender);
+      expect(res).toEqual({ ok: false, error: "forbidden" });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("RADAR_START_SCAN from an extension page starts the scan and returns the run", async () => {
+    const fakeRun = {
+      run_id: "radar_ab12cd34",
+      phase: "catalog",
+      discovered: 0,
+      enriched: 0,
+      scored: 0,
+      pending_uuids: [],
+      completed_uuids: [],
+      warnings: 0,
+      started_at: "2026-09-21T00:00:00.000Z",
+      updated_at: "2026-09-21T00:00:00.000Z",
+    };
+    const start = vi
+      .spyOn(radar, "start")
+      .mockResolvedValue(fakeRun as never);
+    const res = await routeMessage(
+      { op: "RADAR_START_SCAN" },
+      extensionPageSender,
+    );
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(res).toEqual({ ok: true, run: fakeRun });
+    start.mockRestore();
+  });
+
+  it("RADAR_CANCEL_SCAN cancels the active run", async () => {
+    const fakeRun = { run_id: "radar_ab12cd34", phase: "cancelled" };
+    const cancel = vi
+      .spyOn(radar, "cancel")
+      .mockResolvedValue(fakeRun as never);
+    const res = await routeMessage(
+      { op: "RADAR_CANCEL_SCAN" },
+      extensionPageSender,
+    );
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(res).toEqual({ ok: true, run: fakeRun });
+    cancel.mockRestore();
+  });
+
+  it("RADAR_GET_STATE returns the current run", async () => {
+    const getState = vi.spyOn(radar, "getState").mockResolvedValue(null);
+    const res = await routeMessage(
+      { op: "RADAR_GET_STATE" },
+      extensionPageSender,
+    );
+    expect(getState).toHaveBeenCalledTimes(1);
+    expect(res).toEqual({ ok: true, run: null });
+    getState.mockRestore();
+  });
+
+  it("RADAR_GET_RESULTS forwards profile/limit/minConfidence", async () => {
+    const getResults = vi
+      .spyOn(radar, "getResults")
+      .mockResolvedValue([] as never);
+    const res = await routeMessage(
+      {
+        op: "RADAR_GET_RESULTS",
+        profile: "low_competition",
+        limit: 25,
+        minConfidence: 0.7,
+      },
+      extensionPageSender,
+    );
+    expect(getResults).toHaveBeenCalledWith("low_competition", 25, 0.7);
+    expect(res).toEqual({ ok: true, rows: [] });
+    getResults.mockRestore();
+  });
+
+  it("RADAR_GET_RESULTS applies the schema default limit", async () => {
+    const getResults = vi
+      .spyOn(radar, "getResults")
+      .mockResolvedValue([] as never);
+    await routeMessage(
+      { op: "RADAR_GET_RESULTS", profile: "best_ev" },
+      extensionPageSender,
+    );
+    expect(getResults).toHaveBeenCalledWith("best_ev", 50, undefined);
+    getResults.mockRestore();
+  });
+
+  it("RADAR_GET_PROGRAM defaults the profile to best_ev", async () => {
+    const getProgram = vi
+      .spyOn(radar, "getProgram")
+      .mockResolvedValue(null as never);
+    const res = await routeMessage(
+      { op: "RADAR_GET_PROGRAM", uuid: ENGAGEMENT_UUID },
+      extensionPageSender,
+    );
+    expect(getProgram).toHaveBeenCalledWith(ENGAGEMENT_UUID, "best_ev");
+    expect(res).toEqual({ ok: true, program: null });
+    getProgram.mockRestore();
+  });
+
+  it("maps a coordinator ApiError to sanitized {kind,message}", async () => {
+    // Dynamic import so the class identity matches the fresh modules the
+    // router imported after vi.resetModules().
+    const { ApiError } = await import("../lib/api/errors");
+    const getResults = vi
+      .spyOn(radar, "getResults")
+      .mockRejectedValue(new ApiError("no_token", "no credential") as never);
+    const res = await routeMessage(
+      { op: "RADAR_GET_RESULTS", profile: "best_ev", limit: 10 },
+      extensionPageSender,
+    );
+    expect(res).toEqual({
+      ok: false,
+      error: { kind: "no_token", message: "no credential" },
+    });
+    expect(JSON.stringify(res)).not.toContain(CREDENTIAL);
+    getResults.mockRestore();
   });
 });

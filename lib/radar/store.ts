@@ -1,5 +1,6 @@
 import { openDB, type IDBPDatabase } from "idb";
 import type {
+  ProgramFeatureVector,
   ProgramScore,
   RadarCatalogItem,
   RadarProgramSnapshot,
@@ -40,6 +41,13 @@ export interface ScoreRow {
   source_hash: string;
   stored_at: string;
   score: ProgramScore;
+  /**
+   * The full feature vector the score was computed from. Embedded on the row
+   * so the results table can render per-signal columns for any profile
+   * without a separate vectors store. Absent on rows written before the
+   * coordinator landed.
+   */
+  vector?: ProgramFeatureVector;
 }
 
 /**
@@ -98,6 +106,15 @@ export async function getCatalog(db: RadarDb): Promise<RadarCatalogItem[]> {
   return (await db.getAll("catalog")) as RadarCatalogItem[];
 }
 
+/** Single catalog row by uuid, or null. */
+export async function getCatalogItem(
+  db: RadarDb,
+  uuid: string,
+): Promise<RadarCatalogItem | null> {
+  return ((await db.get("catalog", uuid)) as RadarCatalogItem | undefined) ??
+    null;
+}
+
 /**
  * Stores one snapshot under [uuid, source_hash] — a repeated key overwrites,
  * so re-hydrating unchanged metadata never duplicates rows. `storedAt` is
@@ -140,11 +157,14 @@ export async function getLatestSnapshot(
 /**
  * Stores one score under [uuid, profile, scoring_version, source_hash]; the
  * wrapper lifts ProgramScore's `engagement_uuid` into the `uuid` key field.
+ * `vector` embeds the feature vector the score was computed from so result
+ * queries can render per-signal columns without a vectors store.
  */
 export async function putScore(
   db: RadarDb,
   score: ProgramScore,
   storedAt: string = new Date().toISOString(),
+  vector?: ProgramFeatureVector,
 ): Promise<void> {
   const row: ScoreRow = {
     uuid: score.engagement_uuid,
@@ -153,8 +173,21 @@ export async function putScore(
     source_hash: score.source_hash,
     stored_at: storedAt,
     score,
+    ...(vector === undefined ? {} : { vector }),
   };
   await db.put("scores", row);
+}
+
+/** All stored score ROWS for one engagement under one profile (any version). */
+export async function getScoreRows(
+  db: RadarDb,
+  uuid: string,
+  profile: string,
+): Promise<ScoreRow[]> {
+  return (await db.getAllFromIndex("scores", "byUuidProfile", [
+    uuid,
+    profile,
+  ])) as ScoreRow[];
 }
 
 /** All stored scores for one engagement under one profile (any version). */
@@ -163,23 +196,39 @@ export async function getScores(
   uuid: string,
   profile: string,
 ): Promise<ProgramScore[]> {
-  const rows = (await db.getAllFromIndex("scores", "byUuidProfile", [
-    uuid,
-    profile,
-  ])) as ScoreRow[];
-  return rows.map((row) => row.score);
+  return (await getScoreRows(db, uuid, profile)).map((row) => row.score);
 }
 
 /**
- * The results-table query: the latest score per engagement uuid for
- * `profile` at `scoringVersion`. Row count is small (one score per scored
- * source per program), so a filtered scan keeps this simple.
+ * The newest score row for one engagement under `profile` at
+ * `scoringVersion`, or null when none exists.
  */
-export async function getLatestScoresForProfile(
+export async function getLatestScoreRow(
+  db: RadarDb,
+  uuid: string,
+  profile: string,
+  scoringVersion: string,
+): Promise<ScoreRow | null> {
+  const rows = await getScoreRows(db, uuid, profile);
+  let latest: ScoreRow | null = null;
+  for (const row of rows) {
+    if (row.scoring_version !== scoringVersion) continue;
+    if (latest === null || compareBookkeeping(row, latest) > 0) latest = row;
+  }
+  return latest;
+}
+
+/**
+ * The results-table query as score ROWS (vector included): the latest row
+ * per engagement uuid for `profile` at `scoringVersion`. Row count is small
+ * (one score per scored source per program), so a filtered scan keeps this
+ * simple.
+ */
+export async function getLatestScoreRowsForProfile(
   db: RadarDb,
   profile: string,
   scoringVersion: string,
-): Promise<ProgramScore[]> {
+): Promise<ScoreRow[]> {
   const rows = (await db.getAll("scores")) as ScoreRow[];
   const latest = new Map<string, ScoreRow>();
   for (const row of rows) {
@@ -191,7 +240,21 @@ export async function getLatestScoresForProfile(
       latest.set(row.uuid, row);
     }
   }
-  return [...latest.values()].map((row) => row.score);
+  return [...latest.values()];
+}
+
+/**
+ * The results-table query: the latest score per engagement uuid for
+ * `profile` at `scoringVersion`.
+ */
+export async function getLatestScoresForProfile(
+  db: RadarDb,
+  profile: string,
+  scoringVersion: string,
+): Promise<ProgramScore[]> {
+  return (await getLatestScoreRowsForProfile(db, profile, scoringVersion)).map(
+    (row) => row.score,
+  );
 }
 
 /** Latest-write ordering: stored_at first, then key fields for stability. */
