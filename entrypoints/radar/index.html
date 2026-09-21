@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bugcrowd Engagement Radar</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Bugcrowd</p>
+        <h1>Engagement Radar</h1>
+      </header>
+      <div class="controls">
+        <button id="scan" class="primary">Scan programs</button>
+        <button id="refresh" class="quiet">Refresh</button>
+        <button id="cancel" class="danger" hidden>Cancel scan</button>
+        <label for="profile" class="muted">Profile</label>
+        <select id="profile"></select>
+      </div>
+      <p id="status" class="muted" aria-live="polite">Loading…</p>
+      <p id="feedback" class="feedback" aria-live="polite"></p>
+      <table id="results">
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Program</th>
+            <th>Score</th>
+            <th>Confidence</th>
+            <th>Reward</th>
+            <th>Surface</th>
+            <th>Competition</th>
+            <th>Freshness</th>
+          </tr>
+        </thead>
+        <tbody id="results-body"></tbody>
+      </table>
+      <section id="detail" hidden>
+        <h2 id="detail-title"></h2>
+        <p id="detail-meta" class="muted"></p>
+        <table id="components">
+          <thead>
+            <tr>
+              <th>Signal</th>
+              <th>Value</th>
+              <th>Weight</th>
+              <th>Contribution</th>
+            </tr>
+          </thead>
+          <tbody id="components-body"></tbody>
+        </table>
+        <h3>Explanation</h3>
+        <ul id="explanation"></ul>
+      </section>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

@@ -99,6 +99,8 @@ const SINK_REGISTRY: Record<string, string[]> = {
   "entrypoints/options/main.ts": ["browser:runtime-message"],
   // Popup → background job ops.
   "entrypoints/popup/main.ts": ["browser:runtime-message"],
+  // Radar page → background messaging.
+  "entrypoints/radar/main.ts": ["browser:runtime-message"],
   // Final local file save.
   "lib/download.ts": ["browser:download"],
   // Injected tab-messaging dependency.

@@ -6,6 +6,7 @@ import { viewFor } from "../../lib/ui/popupState";
 const exportButton = document.querySelector<HTMLButtonElement>("#export")!;
 const cancelButton = document.querySelector<HTMLButtonElement>("#cancel")!;
 const settingsButton = document.querySelector<HTMLButtonElement>("#settings")!;
+const radarButton = document.querySelector<HTMLButtonElement>("#radar")!;
 const pageStatus = document.querySelector<HTMLElement>("#page-status")!;
 const jobStatus = document.querySelector<HTMLDListElement>("#job-status")!;
 const feedback = document.querySelector<HTMLElement>("#feedback")!;
@@ -74,6 +75,11 @@ cancelButton.addEventListener("click", async () => {
 
 settingsButton.addEventListener("click", () => {
   void browser.runtime.openOptionsPage();
+});
+
+// Radar lives on its own extension page — the popup only launches it (Task 22).
+radarButton.addEventListener("click", () => {
+  void browser.tabs.create({ url: browser.runtime.getURL("/radar.html") });
 });
 
 async function init(): Promise<void> {
