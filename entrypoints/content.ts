@@ -350,6 +350,8 @@ function startLauncher(): void {
       return res.ok === true ? ((res.state ?? null) as JobDescriptor | null) : null;
     },
     openOptions: () => void browser.runtime.openOptionsPage(),
+    // The background owns tabs.create — content scripts have no tabs API.
+    openRadar: () => void send({ op: "OPEN_RADAR" }).catch(() => undefined),
     // The brief navigates client-side; the URL is read per paint, not once.
     pageUrl: () => location.href,
     isVisible: () => document.visibilityState === "visible",
@@ -362,7 +364,12 @@ function startLauncher(): void {
 }
 
 export default defineContentScript({
-  matches: ["https://bugcrowd.com/engagements/*"],
+  // The bare listing path needs its own pattern: "engagements/*" requires a
+  // path segment after the slash, so it never matched the index itself.
+  matches: [
+    "https://bugcrowd.com/engagements",
+    "https://bugcrowd.com/engagements/*",
+  ],
   runAt: "document_idle",
   async main() {
     // 1. The initial URL is captured before any unit runs — collection is

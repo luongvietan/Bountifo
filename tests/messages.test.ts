@@ -135,6 +135,9 @@ describe("parsePopupMessage", () => {
     expect(parsePopupMessage({ op: "GET_TOKEN_STATUS" })).toEqual({
       op: "GET_TOKEN_STATUS",
     });
+    expect(parsePopupMessage({ op: "OPEN_RADAR" })).toEqual({
+      op: "OPEN_RADAR",
+    });
   });
 
   it("rejects unknown ops and malformed payloads", () => {
@@ -166,6 +169,9 @@ describe("parsePopupMessage", () => {
     ).toBeNull();
     expect(
       parsePopupMessage({ op: "SAVE_TOKEN", token: "t", headers: {} }),
+    ).toBeNull();
+    expect(
+      parsePopupMessage({ op: "OPEN_RADAR", url: "https://x/" }),
     ).toBeNull();
   });
 });

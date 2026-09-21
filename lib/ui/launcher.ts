@@ -1,4 +1,5 @@
 import type { JobDescriptor } from "../job/descriptor";
+import { isSupportedEngagementUrl } from "../ids";
 import { viewFor } from "./popupState";
 
 // ---------------------------------------------------------------------------
@@ -22,6 +23,8 @@ export interface LauncherDeps {
   cancelExport: (jobId: string) => Promise<void>;
   getState: () => Promise<JobDescriptor | null>;
   openOptions: () => void;
+  /** Opens the Radar extension page (the background names the tab). */
+  openRadar: () => void;
   /** Read per paint: the brief is a single-page app and navigates in place. */
   pageUrl: () => string;
   /** Defaults to true; a covered window still reports a running job. */
@@ -76,15 +79,85 @@ p { margin: 8px 0 0; font-size: 12px; color: #5b5b6b; }
 `;
 
 /**
- * Where the button belongs: beside the engagement logo, else inside the brief
- * header, else floating over the page. The logo's outermost wrapper inside the
- * header is used so the button is not injected into a link or figure.
+ * True for the engagements index (https://bugcrowd.com/engagements[/]) — the
+ * page whose tab strip ends in "Featured". Sub-paths belong to engagements.
  */
-export function resolveAnchor(doc: Document): {
+function isEngagementListUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    return (
+      url.hostname === "bugcrowd.com" &&
+      (url.pathname === "/engagements" || url.pathname === "/engagements/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The "Featured" item in the index tab strip. The link/button itself may sit
+ * inside a pure wrapper (e.g. an li whose only content is the link), so we
+ * climb while the parent is just this item — the button then mounts as a
+ * sibling item right of Featured, not inside the tab itself.
+ */
+function findFeaturedTab(doc: Document): Element | null {
+  for (const el of doc.querySelectorAll("a, button, [role='tab'], [role='link']")) {
+    if (el.textContent?.trim().toLowerCase() !== "featured") continue;
+    let item = el;
+    while (
+      item.parentElement !== null &&
+      item.parentElement.textContent?.trim().toLowerCase() === "featured"
+    ) {
+      item = item.parentElement;
+    }
+    return item;
+  }
+  return null;
+}
+
+/**
+ * Where the button belongs, by page kind (url is the current page URL — the
+ * brief navigates client-side, so it is read per resolution):
+ *
+ * - engagement detail: inside the program title (the brief header's heading),
+ *   so the button sits on the title line right of the title text;
+ * - engagements index: as a sibling item right of the "Featured" tab;
+ * - fallback: beside the engagement logo, else inside the brief header, else
+ *   floating over the page.
+ *
+ * The logo's outermost wrapper inside the header is used so the button is
+ * not injected into a link or figure.
+ */
+export function resolveAnchor(
+  doc: Document,
+  url?: string,
+): {
   parent: Element;
   after: Element | null;
   floating: boolean;
 } {
+  const pageUrl = url ?? doc.defaultView?.location?.href ?? "";
+  if (isSupportedEngagementUrl(pageUrl)) {
+    const title =
+      doc.querySelector("main header h2") ??
+      doc.querySelector("main header h1") ??
+      doc.querySelector("[role='main'] header h2, [role='main'] header h1") ??
+      doc.querySelector("header h2, header h1");
+    // Mounting inside the heading keeps the button on the title line; the
+    // keeper re-anchors it when the SPA replaces the heading.
+    if (title !== null) {
+      return { parent: title, after: null, floating: false };
+    }
+  } else if (isEngagementListUrl(pageUrl)) {
+    const featured = findFeaturedTab(doc);
+    if (featured !== null) {
+      return {
+        parent: featured.parentElement ?? doc.body,
+        after: featured,
+        floating: false,
+      };
+    }
+  }
   const header =
     doc.querySelector("main header,[role='main'] header") ??
     doc.querySelector("header");
@@ -131,8 +204,8 @@ export function mountLauncher(
     if (handle !== undefined) return handle;
   }
 
-  const anchor = resolveAnchor(doc);
-  const host = el(doc, "div", {
+  const anchor = resolveAnchor(doc, deps.pageUrl());
+  const host = el(doc, "span", {
     [EXPORTER_UI_ATTR]: "ui",
     style: anchor.floating ? `${HOST_STYLE}${FLOATING_STYLE}` : HOST_STYLE,
   });
@@ -177,9 +250,14 @@ export function mountLauncher(
     type: "button",
   });
   settingsBtn.textContent = "Settings";
+  const radarBtn = el(doc, "button", {
+    "data-control": "radar",
+    type: "button",
+  });
+  radarBtn.textContent = "Open Radar";
   const feedback = el(doc, "p", { "data-control": "feedback" });
 
-  row.append(exportBtn, cancelBtn, settingsBtn);
+  row.append(exportBtn, cancelBtn, settingsBtn, radarBtn);
   panel.append(title, status, row, feedback);
   wrap.append(toggle, panel);
   shadow.append(style, wrap);
@@ -269,6 +347,7 @@ export function mountLauncher(
   });
 
   settingsBtn.addEventListener("click", () => deps.openOptions());
+  radarBtn.addEventListener("click", () => deps.openRadar());
 
   paint();
 
@@ -311,9 +390,9 @@ export interface LauncherKeeper {
 }
 
 /** True when the button is missing, detached, or no longer at its anchor. */
-function misplaced(doc: Document, host: Element | null): boolean {
+function misplaced(doc: Document, host: Element | null, url: string): boolean {
   if (host === null || !host.isConnected) return true;
-  const anchor = resolveAnchor(doc);
+  const anchor = resolveAnchor(doc, url);
   // Nothing better to move to: a floating button stays where it is.
   if (anchor.floating) return false;
   if (anchor.after !== null) return host.previousElementSibling !== anchor.after;
@@ -333,7 +412,7 @@ export function keepMounted(
   const check = (): void => {
     if (stopped) return;
     const host = doc.querySelector(`[${EXPORTER_UI_ATTR}]`);
-    if (!misplaced(doc, host)) return;
+    if (!misplaced(doc, host, deps.pageUrl())) return;
     // The previous handle still answers for its own markup even after the
     // page detached it, so an open panel survives the rebuild.
     const open = handle.isOpen();

@@ -11,6 +11,7 @@ function deps(over: Partial<Parameters<typeof mountLauncher>[1]> = {}) {
     cancelExport: vi.fn(async () => undefined),
     getState: vi.fn(async () => null),
     openOptions: vi.fn(),
+    openRadar: vi.fn(),
     pageUrl: () => "https://bugcrowd.com/engagements/webdotcom",
     ...over,
   };
@@ -22,15 +23,60 @@ const control = (doc: Document, name: string) =>
   shadowOf(doc).querySelector<HTMLButtonElement>(`[data-control="${name}"]`)!;
 
 describe("mountLauncher placement", () => {
-  it("sits next to the engagement logo in the brief header", () => {
+  it("sits inside the program title, to the right of the title text", () => {
     const doc = loadDoc("webdotcom-current.html");
     mountLauncher(doc, deps());
-    const logo = doc.querySelector("main header img")!;
-    expect(logo.nextElementSibling?.hasAttribute(EXPORTER_UI_ATTR)).toBe(true);
+    const title = doc.querySelector("main header h2")!;
+    const host = title.querySelector(`[${EXPORTER_UI_ATTR}]`);
+    expect(host).not.toBeNull();
+    expect(title.lastElementChild).toBe(host);
+  });
+
+  it("mounts right of the Featured tab on the engagements index", () => {
+    const doc = new DOMParser().parseFromString(
+      `<main><nav><ul>
+        <li><a href="/engagements">Vulnerability Disclosure</a></li>
+        <li><a href="/engagements?c=pt">Pen Tests</a></li>
+        <li><a href="/engagements?c=f">Featured</a></li>
+      </ul></nav></main>`,
+      "text/html",
+    );
+    mountLauncher(
+      doc,
+      deps({ pageUrl: () => "https://bugcrowd.com/engagements" }),
+    );
+    const featuredItem = [...doc.querySelectorAll("li")].find(
+      (li) => li.textContent?.trim() === "Featured",
+    )!;
+    expect(
+      featuredItem.nextElementSibling?.hasAttribute(EXPORTER_UI_ATTR),
+    ).toBe(true);
+  });
+
+  it("finds the Featured tab through a role=tab strip", () => {
+    const doc = new DOMParser().parseFromString(
+      `<div role="tablist">
+        <button role="tab">Vulnerability Disclosure</button>
+        <button role="tab">Pen Tests</button>
+        <button role="tab">Featured</button>
+      </div>`,
+      "text/html",
+    );
+    mountLauncher(
+      doc,
+      deps({ pageUrl: () => "https://bugcrowd.com/engagements/" }),
+    );
+    const featured = [...doc.querySelectorAll("[role='tab']")].find(
+      (t) => t.textContent?.trim() === "Featured",
+    )!;
+    expect(
+      featured.nextElementSibling?.hasAttribute(EXPORTER_UI_ATTR),
+    ).toBe(true);
   });
 
   it("falls back to the header, then to a floating host", () => {
     const doc = loadDoc("webdotcom-current.html");
+    doc.querySelector("main header h2")!.remove();
     doc.querySelector("main header img")!.remove();
     mountLauncher(doc, deps());
     const host = doc.querySelector(`[${EXPORTER_UI_ATTR}]`)!;
@@ -124,6 +170,15 @@ describe("mountLauncher behavior", () => {
     );
   });
 
+  it("opens the Radar page from the panel", async () => {
+    const doc = loadDoc("webdotcom-current.html");
+    const d = deps();
+    mountLauncher(doc, d);
+    control(doc, "toggle").click();
+    control(doc, "radar").click();
+    expect(d.openRadar).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses to export away from a supported engagement page", async () => {
     const doc = loadDoc("webdotcom-current.html");
     const ui = mountLauncher(
@@ -205,18 +260,24 @@ describe("keepMounted against a re-rendering page", () => {
     const doc = loadDoc("webdotcom-current.html");
     const keeper = keepMounted(doc, deps());
     const header = doc.querySelector("main header")!;
-    // What React does on re-render: the container's children are replaced,
-    // taking any foreign node with them.
-    header.replaceChildren(
-      ...[...header.children].filter((c) => !c.hasAttribute(EXPORTER_UI_ATTR)),
-    );
+    // What React does on re-render: the subtree is rebuilt from scratch,
+    // taking foreign nodes with it — including the button nested inside the
+    // title heading.
+    const clones = [...header.children].map((c) => {
+      const clone = c.cloneNode(true) as Element;
+      clone
+        .querySelectorAll(`[${EXPORTER_UI_ATTR}]`)
+        .forEach((n) => n.remove());
+      return clone;
+    });
+    header.replaceChildren(...clones);
     expect(doc.querySelector(`[${EXPORTER_UI_ATTR}]`)).toBeNull();
     keeper.check();
     expect(doc.querySelector(`[${EXPORTER_UI_ATTR}]`)).not.toBeNull();
     keeper.stop();
   });
 
-  it("moves to the logo once the app has rendered the header", () => {
+  it("moves into the title once the app has rendered the header", () => {
     const doc = new DOMParser().parseFromString(
       "<main id='researcher-engagement-brief-root'></main>",
       "text/html",
@@ -231,7 +292,8 @@ describe("keepMounted against a re-rendering page", () => {
     doc.querySelector("main")!.append(header);
     keeper.check();
     const host = doc.querySelector(`[${EXPORTER_UI_ATTR}]`)!;
-    expect(host.previousElementSibling?.tagName).toBe("IMG");
+    expect(host.parentElement?.tagName).toBe("H2");
+    expect(host.parentElement?.textContent).toContain("Late brief");
     expect(doc.querySelectorAll(`[${EXPORTER_UI_ATTR}]`)).toHaveLength(1);
     keeper.stop();
   });

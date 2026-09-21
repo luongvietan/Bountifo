@@ -203,6 +203,10 @@ export function routeMessage(
         return clearCredential().then(() => ({ ok: true }));
       case "GET_TOKEN_STATUS":
         return hasCredential().then((configured) => ({ ok: true, configured }));
+      case "OPEN_RADAR":
+        return browser.tabs
+          .create({ url: browser.runtime.getURL("/radar.html") })
+          .then(() => ({ ok: true }));
       default:
         return { ok: false, error: "not_implemented" };
     }

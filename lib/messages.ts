@@ -46,6 +46,9 @@ export const PopupMsg = z.discriminatedUnion("op", [
   z.object({ op: z.literal("SAVE_TOKEN"), token: z.string() }).strict(),
   z.object({ op: z.literal("CLEAR_TOKEN") }).strict(),
   z.object({ op: z.literal("GET_TOKEN_STATUS") }).strict(),
+  // Fieldless navigation op: opens the Radar extension page in a new tab.
+  // Sent by the in-page launcher, so sender.tab is allowed (unlike API ops).
+  z.object({ op: z.literal("OPEN_RADAR") }).strict(),
 ]);
 
 export const JobMsg = z.discriminatedUnion("op", [

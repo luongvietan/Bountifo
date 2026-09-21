@@ -122,6 +122,26 @@ describe("routeMessage API op sender restriction", () => {
       `${API_BASE}/engagements?page[number]=1&page[size]=25`,
     );
   });
+
+  it("opens the Radar page in a new tab for the in-page launcher", async () => {
+    const create = vi
+      .spyOn(fakeBrowser.tabs, "create")
+      .mockResolvedValue({} as never);
+    const res = await routeMessage({ op: "OPEN_RADAR" }, contentScriptSender);
+    expect(res).toEqual({ ok: true });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(String(create.mock.calls[0]![0].url)).toContain("radar.html");
+    create.mockRestore();
+  });
+
+  it("OPEN_RADAR also works from an extension page", async () => {
+    const create = vi
+      .spyOn(fakeBrowser.tabs, "create")
+      .mockResolvedValue({} as never);
+    const res = await routeMessage({ op: "OPEN_RADAR" }, extensionPageSender);
+    expect(res).toEqual({ ok: true });
+    create.mockRestore();
+  });
 });
 
 describe("routeMessage TEST_TOKEN", () => {
