@@ -1,0 +1,754 @@
+import { describe, expect, it } from "vitest";
+import {
+  extractProgramFeatures,
+  normReward,
+  parseStatValue,
+} from "../lib/radar/features";
+import {
+  programFeatureVectorSchema,
+  RADAR_FEATURE_KEYS,
+} from "../lib/radar/types";
+import type {
+  ApiEngagementData,
+  ApiTarget,
+  ApiTargetGroup,
+} from "../lib/types";
+import type { RadarProgramSnapshot } from "../lib/radar/types";
+
+// Fixed reference time — freshness bands are calibrated against this and
+// tests never touch the wall clock.
+const NOW = "2026-09-21T00:00:00.000Z";
+const DAY_MS = 86_400_000;
+
+/** ISO string `days` before the fixed NOW (fractional days allowed). */
+function daysAgo(days: number): string {
+  return new Date(Date.parse(NOW) - days * DAY_MS).toISOString();
+}
+
+function target(overrides: Partial<ApiTarget> = {}): ApiTarget {
+  return {
+    id: "t1",
+    groupId: null,
+    location: null,
+    name: null,
+    category: null,
+    tags: [],
+    inScope: true,
+    ...overrides,
+  };
+}
+
+function group(overrides: Partial<ApiTargetGroup> = {}): ApiTargetGroup {
+  return {
+    id: "g1",
+    name: "G",
+    inScope: true,
+    description: null,
+    rewards: { p1: null, p2: null, p3: null, p4: null, p5: null },
+    ...overrides,
+  };
+}
+
+function rewards(p: Partial<ApiTargetGroup["rewards"]>): ApiTargetGroup["rewards"] {
+  return { p1: null, p2: null, p3: null, p4: null, p5: null, ...p };
+}
+
+function detail(overrides: Partial<ApiEngagementData> = {}): ApiEngagementData {
+  return {
+    uuid: "uuid-1",
+    name: "Acme",
+    code: "acme",
+    engagementType: "bug_bounty",
+    managedBounty: true,
+    lifecycleStatus: "live",
+    testingStart: null,
+    testingEnd: null,
+    testingPeriodLabel: null,
+    lastStatusTransition: null,
+    lastBriefUpdate: null,
+    safeHarborLevel: null,
+    statistics: {},
+    targetGroups: [],
+    targets: [],
+    observedApiVersion: null,
+    ...overrides,
+  };
+}
+
+function snapshot(detailValue: ApiEngagementData | null): RadarProgramSnapshot {
+  return {
+    schema_version: 1,
+    uuid: "uuid-1",
+    code: "acme",
+    catalog: {
+      uuid: "uuid-1",
+      code: "acme",
+      name: "Acme",
+      lifecycle_status: "live",
+      engagement_type: "bug_bounty",
+      discovered_at: "2026-09-01T00:00:00.000Z",
+    },
+    detail: detailValue,
+    enrichment:
+      detailValue === null
+        ? { status: "failed", error_kind: "http" }
+        : { status: "complete" },
+    source_hash: `sha256:${"0".repeat(64)}`,
+  };
+}
+
+function vector(d: ApiEngagementData | null, now: string = NOW) {
+  return extractProgramFeatures(snapshot(d), now);
+}
+
+describe("normReward frozen curve", () => {
+  it("hits every anchor exactly", () => {
+    expect(normReward(0)).toBe(0);
+    expect(normReward(500)).toBe(0.25);
+    expect(normReward(2000)).toBe(0.5);
+    expect(normReward(10000)).toBe(0.8);
+    expect(normReward(25000)).toBe(1);
+  });
+
+  it("clamps outside the anchor range", () => {
+    expect(normReward(-100)).toBe(0);
+    expect(normReward(50000)).toBe(1);
+    expect(normReward(Number.POSITIVE_INFINITY)).toBe(1);
+    expect(normReward(Number.NaN)).toBe(0);
+  });
+
+  it("interpolates monotonically in ln(1+amount) space", () => {
+    const mid = normReward(1000);
+    expect(mid).toBeGreaterThan(0.25);
+    expect(mid).toBeLessThan(0.5);
+    // log-space: 1000 sits almost halfway between 500 and 2000 in ln terms
+    // ln(501)=6.2166, ln(1001)=6.9088, ln(2001)=7.6019 → ~0.3749
+    expect(mid).toBeCloseTo(0.3749, 3);
+    expect(normReward(750)).toBeLessThan(normReward(1500));
+    expect(normReward(1500)).toBeLessThan(normReward(5000));
+  });
+});
+
+describe("parseStatValue strict parser", () => {
+  it.each([
+    ["1,234", 1234],
+    ["$512.00", 512],
+    ["321", 321],
+    ["0", 0],
+    ["1,234,567.89", 1234567.89],
+    ["$1,000", 1000],
+    ["42.5", 42.5],
+    ["  77  ", 77],
+    ["1234567", 1234567],
+  ])("accepts %j → %d", (raw, expected) => {
+    expect(parseStatValue(raw)).toBe(expected);
+  });
+
+  it.each([
+    "",
+    "   ",
+    "abc",
+    "N/A",
+    "1,23,4",
+    "1,234,56",
+    "12,34",
+    "1,2345",
+    "-5",
+    "$-5",
+    "$",
+    "1.2.3",
+    ".5",
+    "5.",
+    "1e3",
+    "1 234",
+    "1,234.56.7",
+  ])("rejects %j", (raw) => {
+    expect(parseStatValue(raw)).toBeNull();
+  });
+});
+
+describe("reward_potential", () => {
+  it("blends all three present tiers with frozen weights", () => {
+    const v = vector(
+      detail({
+        targetGroups: [
+          group({ rewards: rewards({ p1: 2000, p2: 500, p3: 25000 }) }),
+        ],
+      }),
+    );
+    // 0.5*norm(2000) + 0.3*norm(500) + 0.2*norm(25000)
+    // = 0.5*0.5 + 0.3*0.25 + 0.2*1.0 = 0.525
+    expect(v.reward_potential).toEqual({
+      value: 0.525,
+      source: "engagement_detail",
+      reason_code: "reward_curve_p1_p2_p3",
+    });
+  });
+
+  it("renormalizes weights over present tiers only", () => {
+    // Only P1 present → weight 0.5/0.5 = 1 → plain norm(maxP1).
+    const onlyP1 = vector(
+      detail({ targetGroups: [group({ rewards: rewards({ p1: 2000 }) })] }),
+    );
+    expect(onlyP1.reward_potential.value).toBe(0.5);
+
+    // P1 + P3 present → (0.5*0.5 + 0.2*0.8) / 0.7 = 0.585714… → 0.5857
+    const p1p3 = vector(
+      detail({
+        targetGroups: [
+          group({ rewards: rewards({ p1: 2000, p3: 10000 }) }),
+        ],
+      }),
+    );
+    expect(p1p3.reward_potential.value).toBe(0.5857);
+
+    // P2 + P3 present → (0.3*norm(500) + 0.2*norm(25000)) / 0.5
+    // = (0.3*0.25 + 0.2*1) / 0.5 = 0.275/0.5 = 0.55
+    const p2p3 = vector(
+      detail({
+        targetGroups: [
+          group({ rewards: rewards({ p2: 500, p3: 25000 }) }),
+        ],
+      }),
+    );
+    expect(p2p3.reward_potential.value).toBe(0.55);
+  });
+
+  it("takes the per-tier max across in-scope groups", () => {
+    const v = vector(
+      detail({
+        targetGroups: [
+          group({ id: "g1", rewards: rewards({ p1: 500 }) }),
+          group({ id: "g2", rewards: rewards({ p1: 2000 }) }),
+        ],
+      }),
+    );
+    expect(v.reward_potential.value).toBe(0.5); // max 2000 → 0.5
+  });
+
+  it("ignores out-of-scope groups entirely", () => {
+    const v = vector(
+      detail({
+        targetGroups: [
+          group({ id: "g1", inScope: false, rewards: rewards({ p1: 25000 }) }),
+          group({ id: "g2", inScope: true, rewards: rewards({ p1: 500 }) }),
+        ],
+      }),
+    );
+    expect(v.reward_potential.value).toBe(0.25);
+  });
+
+  it("is null when no in-scope group carries any P1/P2/P3", () => {
+    for (const groups of [
+      [],
+      [group()],
+      [group({ inScope: false, rewards: rewards({ p1: 25000 }) })],
+      [group({ rewards: rewards({ p4: 9000, p5: 9000 }) })],
+    ]) {
+      const v = vector(detail({ targetGroups: groups }));
+      expect(v.reward_potential.value).toBeNull();
+      expect(v.reward_potential.reason_code).toBe("reward_curve_p1_p2_p3");
+    }
+  });
+});
+
+describe("reward_breadth", () => {
+  it("is the fraction of in-scope groups with ≥1 non-null positive reward", () => {
+    const v = vector(
+      detail({
+        targetGroups: [
+          group({ id: "g1", rewards: rewards({ p3: 100 }) }),
+          group({ id: "g2" }),
+          group({ id: "g3", rewards: rewards({ p5: 50 }) }),
+          group({ id: "g4", inScope: false, rewards: rewards({ p1: 1 }) }),
+        ],
+      }),
+    );
+    // g1 + g3 bear rewards; g4 is out of scope → 2/3
+    expect(v.reward_breadth).toEqual({
+      value: 0.6667,
+      source: "engagement_detail",
+      reason_code: "reward_bearing_group_share",
+    });
+  });
+
+  it("does not count a group whose only rewards are zero", () => {
+    const v = vector(
+      detail({
+        targetGroups: [
+          group({ id: "g1", rewards: rewards({ p1: 0 }) }),
+          group({ id: "g2", rewards: rewards({ p2: 10 }) }),
+        ],
+      }),
+    );
+    expect(v.reward_breadth.value).toBe(0.5);
+  });
+
+  it("is null when there are no in-scope groups", () => {
+    for (const groups of [[], [group({ inScope: false })]]) {
+      const v = vector(detail({ targetGroups: groups }));
+      expect(v.reward_breadth.value).toBeNull();
+      expect(v.reward_breadth.reason_code).toBe("reward_bearing_group_share");
+    }
+  });
+});
+
+describe("meaningful_surface", () => {
+  it("saturates as c/(c+25) over in-scope targets with usable identity", () => {
+    const usable = (id: string) => target({ id, location: "https://a.example" });
+    for (const [count, expected] of [
+      [0, 0],
+      [1, 0.0385], // 1/26
+      [5, 0.1667], // 5/30
+      [25, 0.5], // 25/50
+      [75, 0.75], // 75/100
+    ] as const) {
+      const v = vector(
+        detail({ targets: Array.from({ length: count }, (_, i) => usable(`t${i}`)) }),
+      );
+      expect(v.meaningful_surface).toEqual({
+        value: expected,
+        source: "engagement_detail",
+        reason_code: "in_scope_target_saturation",
+      });
+    }
+  });
+
+  it("counts non-empty name as usable identity and skips blank identity", () => {
+    const v = vector(
+      detail({
+        targets: [
+          target({ id: "t1", name: "Admin panel" }), // usable via name
+          target({ id: "t2", location: "  ", name: "" }), // blank identity
+          target({ id: "t3" }), // null identity
+          target({ id: "t4", location: "https://x", inScope: false }), // out
+        ],
+      }),
+    );
+    expect(v.meaningful_surface.value).toBe(0.0385); // c=1 → 1/26
+  });
+
+  it("is 0 (not null) when detail is present but nothing is in scope", () => {
+    const v = vector(
+      detail({ targets: [target({ inScope: false, location: "https://a" })] }),
+    );
+    expect(v.meaningful_surface.value).toBe(0);
+  });
+});
+
+describe("api_surface / web_surface token classification", () => {
+  it("classifies by token-set intersection over category/tags/name", () => {
+    const v = vector(
+      detail({
+        targets: [
+          target({ id: "t1", category: "api" }), // api
+          target({ id: "t2", name: "GraphQL Endpoint" }), // api (2 tokens)
+          target({ id: "t3", category: "website" }), // web
+          target({ id: "t4", tags: ["Web-App"] }), // web via split token
+        ],
+      }),
+    );
+    expect(v.api_surface).toEqual({
+      value: 0.5,
+      source: "engagement_detail",
+      reason_code: "api_token_share",
+    });
+    expect(v.web_surface).toEqual({
+      value: 0.5,
+      source: "engagement_detail",
+      reason_code: "web_token_share",
+    });
+  });
+
+  it("is substring-trap safe: capitol ≠ api, restaurant ≠ rest", () => {
+    const v = vector(
+      detail({
+        targets: [
+          target({ id: "t1", name: "capitol" }),
+          target({ id: "t2", category: "restaurant" }),
+          target({ id: "t3", name: "graphene", location: "capitol Hill" }),
+        ],
+      }),
+    );
+    expect(v.api_surface.value).toBe(0);
+    expect(v.web_surface.value).toBe(0);
+  });
+
+  it("counts an unmatched target with http(s) location toward web_surface", () => {
+    const v = vector(
+      detail({
+        targets: [
+          target({ id: "t1", category: "other", location: "https://x.example" }),
+          target({ id: "t2", category: "other", location: "http://y.example" }),
+          target({ id: "t3", category: "other", location: "ftp://z.example" }),
+          target({ id: "t4", category: "other", location: "bare.example.com" }),
+          target({ id: "t5", category: "api", location: "https://a.example" }),
+        ],
+      }),
+    );
+    // t5 matches api tokens — no web fallback for it.
+    expect(v.api_surface.value).toBe(0.2); // 1/5
+    expect(v.web_surface.value).toBe(0.4); // t1+t2 /5
+  });
+
+  it("lets a dual-token target count toward both surfaces", () => {
+    const v = vector(
+      detail({
+        targets: [
+          target({ id: "t1", name: "web api" }),
+          target({ id: "t2", category: "website" }),
+        ],
+      }),
+    );
+    expect(v.api_surface.value).toBe(0.5);
+    expect(v.web_surface.value).toBe(1);
+  });
+
+  it("is 0/0 (not null) when no targets are in scope", () => {
+    const v = vector(
+      detail({ targets: [target({ inScope: false, category: "api" })] }),
+    );
+    expect(v.api_surface.value).toBe(0);
+    expect(v.web_surface.value).toBe(0);
+  });
+
+  it("ignores out-of-scope targets", () => {
+    const v = vector(
+      detail({
+        targets: [
+          target({ id: "t1", category: "api", inScope: false }),
+          target({ id: "t2", category: "website" }),
+        ],
+      }),
+    );
+    expect(v.api_surface.value).toBe(0);
+    expect(v.web_surface.value).toBe(1);
+  });
+});
+
+describe("researcher_competition / rewarded_activity", () => {
+  it("saturates researchers_participating as n/(n+500)", () => {
+    const v = vector(
+      detail({
+        statistics: {
+          researchers_participating: { value: "500", window: null },
+        },
+      }),
+    );
+    expect(v.researcher_competition).toEqual({
+      value: 0.5,
+      source: "statistics",
+      reason_code: "researchers_participating_saturation",
+    });
+  });
+
+  it("parses grouped/currency stat values and rounds to 4 decimals", () => {
+    const v = vector(
+      detail({
+        statistics: {
+          researchers_participating: { value: "1,000", window: "90d" },
+          vulnerabilities_rewarded: { value: "$333.00", window: null },
+        },
+      }),
+    );
+    expect(v.researcher_competition.value).toBe(0.6667); // 1000/1500
+    expect(v.rewarded_activity.value).toBe(0.6248); // 333/533 = 0.62476…
+  });
+
+  it("saturates vulnerabilities_rewarded as n/(n+200)", () => {
+    const v = vector(
+      detail({
+        statistics: {
+          vulnerabilities_rewarded: { value: "200", window: null },
+        },
+      }),
+    );
+    expect(v.rewarded_activity).toEqual({
+      value: 0.5,
+      source: "statistics",
+      reason_code: "vulnerabilities_rewarded_saturation",
+    });
+  });
+
+  it("is null on missing or unparseable statistics", () => {
+    const missing = vector(detail({ statistics: {} }));
+    expect(missing.researcher_competition.value).toBeNull();
+    expect(missing.researcher_competition.reason_code).toBe(
+      "researchers_participating_saturation",
+    );
+    expect(missing.rewarded_activity.value).toBeNull();
+    expect(missing.rewarded_activity.reason_code).toBe(
+      "vulnerabilities_rewarded_saturation",
+    );
+
+    const garbage = vector(
+      detail({
+        statistics: {
+          researchers_participating: { value: "lots", window: null },
+          vulnerabilities_rewarded: { value: "1,23,4", window: null },
+        },
+      }),
+    );
+    expect(garbage.researcher_competition.value).toBeNull();
+    expect(garbage.rewarded_activity.value).toBeNull();
+  });
+
+  it("does not feed average_payout into any V1 signal", () => {
+    const v = vector(
+      detail({ statistics: { average_payout: { value: "99999", window: null } } }),
+    );
+    expect(v.rewarded_activity.value).toBeNull();
+    expect(v.researcher_competition.value).toBeNull();
+  });
+});
+
+describe("freshness age bands (fixed now)", () => {
+  it.each([
+    [0, 1],
+    [7, 1],
+    [7.5, 0.85],
+    [30, 0.85],
+    [30.5, 0.6],
+    [90, 0.6],
+    [90.5, 0.35],
+    [180, 0.35],
+    [180.5, 0.15],
+    [400, 0.15],
+  ])("age %dd → %s", (days, expected) => {
+    const v = vector(detail({ lastBriefUpdate: daysAgo(days) }));
+    expect(v.freshness).toEqual({
+      value: expected,
+      source: "engagement_detail",
+      reason_code: "age_band",
+    });
+  });
+
+  it("uses the most recent valid date across both fields", () => {
+    const v = vector(
+      detail({
+        lastBriefUpdate: daysAgo(200),
+        lastStatusTransition: daysAgo(5),
+      }),
+    );
+    expect(v.freshness.value).toBe(1);
+  });
+
+  it("treats a future date as maximally fresh", () => {
+    const v = vector(detail({ lastBriefUpdate: daysAgo(-5) }));
+    expect(v.freshness.value).toBe(1);
+  });
+
+  it("skips invalid dates and is null when none are valid", () => {
+    const partial = vector(
+      detail({
+        lastBriefUpdate: "not-a-date",
+        lastStatusTransition: daysAgo(10),
+      }),
+    );
+    expect(partial.freshness.value).toBe(0.85);
+
+    for (const d of [
+      detail(),
+      detail({ lastBriefUpdate: "garbage", lastStatusTransition: "" }),
+    ]) {
+      const v = vector(d);
+      expect(v.freshness.value).toBeNull();
+      expect(v.freshness.reason_code).toBe("age_band");
+    }
+  });
+
+  it("is null when now itself is unparseable", () => {
+    const v = vector(detail({ lastBriefUpdate: daysAgo(1) }), "junk");
+    expect(v.freshness.value).toBeNull();
+  });
+});
+
+describe("safe_harbor (API field only)", () => {
+  it.each([
+    ["full", 1],
+    ["FULL", 1],
+    ["Full Safe Harbor", 1],
+    ["partial", 0.5],
+    ["Partial coverage", 0.5],
+    ["none", 0],
+    ["absent", 0],
+  ])("maps %j → %s", (level, expected) => {
+    const v = vector(detail({ safeHarborLevel: level }));
+    expect(v.safe_harbor).toEqual({
+      value: expected,
+      source: "engagement_detail",
+      reason_code: "safe_harbor_field",
+    });
+  });
+
+  it.each([null, "unknown", "not specified", "vdp"])(
+    "is null for %j",
+    (level) => {
+      const v = vector(detail({ safeHarborLevel: level }));
+      expect(v.safe_harbor.value).toBeNull();
+      expect(v.safe_harbor.reason_code).toBe("safe_harbor_field");
+    },
+  );
+});
+
+describe("target_data_quality composite", () => {
+  it("means the four documented completeness parts", () => {
+    const v = vector(
+      detail({
+        targets: [
+          target({ id: "t1", category: "api", location: "https://a" }),
+          target({ id: "t2", name: "B" }), // identity, no category
+          target({ id: "t3", category: "", location: "  " }), // neither
+          target({ id: "t4", category: "api", inScope: false }), // excluded
+        ],
+        targetGroups: [
+          group({ id: "g1", rewards: rewards({ p1: 100 }) }),
+          group({ id: "g2" }), // no reward metadata
+          group({ id: "g3", inScope: false, rewards: rewards({ p1: 5 }) }),
+        ],
+      }),
+    );
+    // category 1/3 + identity 2/3 + groups-present 1 + reward-metadata 1/2
+    // = (0.3333 + 0.6667 + 1 + 0.5) / 4 = 0.625
+    expect(v.target_data_quality).toEqual({
+      value: 0.625,
+      source: "derived",
+      reason_code: "field_completeness_mix",
+    });
+  });
+
+  it("scores 0 on group parts when no in-scope groups exist", () => {
+    const v = vector(
+      detail({
+        targets: [target({ category: "api", location: "https://a" })],
+        targetGroups: [],
+      }),
+    );
+    // (1 + 1 + 0 + 0) / 4
+    expect(v.target_data_quality.value).toBe(0.5);
+  });
+
+  it("is null when there are no in-scope targets and no in-scope groups", () => {
+    for (const d of [
+      detail(),
+      detail({
+        targets: [target({ inScope: false, category: "api" })],
+        targetGroups: [group({ inScope: false })],
+      }),
+    ]) {
+      const v = vector(d);
+      expect(v.target_data_quality.value).toBeNull();
+      expect(v.target_data_quality.reason_code).toBe("field_completeness_mix");
+    }
+  });
+
+  it("counts non-null reward metadata even at zero amount", () => {
+    const v = vector(
+      detail({
+        targets: [target({ category: "api", location: "https://a" })],
+        targetGroups: [group({ rewards: rewards({ p1: 0 }) })],
+      }),
+    );
+    // (1 + 1 + 1 + 1) / 4 — p1:0 is reward metadata presence (unlike breadth)
+    expect(v.target_data_quality.value).toBe(1);
+  });
+});
+
+describe("always-null V1 signals", () => {
+  it("never fabricates accessibility / known_issue_density / authz_opportunity", () => {
+    const v = vector(
+      detail({
+        targets: [target({ category: "api", location: "https://a" })],
+        targetGroups: [group({ rewards: rewards({ p1: 100 }) })],
+        statistics: {
+          researchers_participating: { value: "10", window: null },
+          vulnerabilities_rewarded: { value: "5", window: null },
+        },
+        safeHarborLevel: "full",
+        lastBriefUpdate: daysAgo(1),
+      }),
+    );
+    for (const key of [
+      "accessibility",
+      "known_issue_density",
+      "authz_opportunity",
+    ] as const) {
+      expect(v[key]).toEqual({
+        value: null,
+        source: "derived",
+        reason_code: "not_available_v1",
+      });
+    }
+  });
+});
+
+describe("detail:null snapshot", () => {
+  it("emits null for every signal with honest reason codes", () => {
+    const v = vector(null);
+    for (const key of RADAR_FEATURE_KEYS) {
+      expect(v[key].value).toBeNull();
+    }
+    for (const key of [
+      "reward_potential",
+      "reward_breadth",
+      "meaningful_surface",
+      "api_surface",
+      "web_surface",
+      "researcher_competition",
+      "rewarded_activity",
+      "freshness",
+      "safe_harbor",
+      "target_data_quality",
+    ] as const) {
+      expect(v[key].reason_code).toBe("detail_unavailable");
+    }
+    expect(v.accessibility.reason_code).toBe("not_available_v1");
+    expect(v.known_issue_density.reason_code).toBe("not_available_v1");
+    expect(v.authz_opportunity.reason_code).toBe("not_available_v1");
+    expect(programFeatureVectorSchema.safeParse(v).success).toBe(true);
+  });
+});
+
+describe("extractProgramFeatures contract", () => {
+  it("is deterministic: same input → deep-equal vectors", () => {
+    const d = detail({
+      targets: [target({ category: "api", location: "https://a" })],
+      targetGroups: [group({ rewards: rewards({ p1: 2000, p3: 10000 }) })],
+      statistics: {
+        researchers_participating: { value: "1,000", window: null },
+      },
+      safeHarborLevel: "partial",
+      lastBriefUpdate: daysAgo(10),
+    });
+    const a = extractProgramFeatures(snapshot(d), NOW);
+    const b = extractProgramFeatures(snapshot(d), NOW);
+    expect(a).toEqual(b);
+    expect(a).not.toBe(b);
+  });
+
+  it("produces a schema-valid vector with all values in 0..1 or null", () => {
+    const v = vector(
+      detail({
+        targets: [
+          target({ id: "t1", category: "api", location: "https://a" }),
+          target({ id: "t2", name: "portal" }),
+        ],
+        targetGroups: [group({ rewards: rewards({ p1: 2000, p2: 500 }) })],
+        statistics: {
+          researchers_participating: { value: "123", window: null },
+          vulnerabilities_rewarded: { value: "45", window: null },
+        },
+        safeHarborLevel: "full",
+        lastBriefUpdate: daysAgo(3),
+      }),
+    );
+    expect(programFeatureVectorSchema.safeParse(v).success).toBe(true);
+    for (const key of RADAR_FEATURE_KEYS) {
+      const value = v[key].value;
+      if (value !== null) {
+        expect(value).toBeGreaterThanOrEqual(0);
+        expect(value).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+});
