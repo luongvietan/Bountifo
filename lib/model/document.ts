@@ -69,12 +69,16 @@ export interface DocumentModel {
     changeFlags: string[];
     inScope: boolean;
     groupId: string | null;
+    /** Evidence ids for the scope-table record behind this target row. */
+    evidence_refs: string[];
   }[];
   targetGroups: {
     id: string;
     name: string;
     inScope: boolean;
     description: string | null;
+    /** Evidence ids for the scope-card record behind this group. */
+    evidence_refs: string[];
     /**
      * API amounts are integers; a brief that publishes only a visible range
      * ("$2000 – $3000") keeps that string rather than losing the reward.
@@ -419,6 +423,9 @@ export function assembleDocument(args: AssembleArgs): DocumentModel {
       name: dom.name,
       inScope: dom.inScope,
       description: dom.description ?? g?.description ?? null,
+      // `dom:scope:` + domKey is the collector's record convention
+      // ("group:web" → "dom:scope:group:web", "target:x" → "dom:scope:target:x").
+      evidence_refs: refsForKey(`dom:scope:${dom.domKey}`),
       rewards: {
         p1: g?.rewards.p1 ?? dom.rewards.p1,
         p2: g?.rewards.p2 ?? dom.rewards.p2,
@@ -452,6 +459,7 @@ export function assembleDocument(args: AssembleArgs): DocumentModel {
       (dom.groupDomKey !== null
         ? (emittedGroupId.get(dom.groupDomKey) ?? dom.groupDomKey)
         : null),
+    evidence_refs: refsForKey(`dom:scope:${dom.domKey}`),
   }));
   targets.sort((a, b) => cmpStr(a.id, b.id));
 

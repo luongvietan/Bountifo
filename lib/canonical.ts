@@ -1,5 +1,5 @@
-import { TRACKING_PARAMS } from "./constants";
-import type { SourceLocator } from "./types";
+import { TRACKING_PARAMS } from "./constants.ts";
+import type { SourceLocator } from "./types.ts";
 
 /**
  * NFC, CRLF/CR→LF, trim, collapse interior whitespace runs to a single space.

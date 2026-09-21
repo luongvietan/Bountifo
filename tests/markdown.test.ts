@@ -87,6 +87,7 @@ function model(): DocumentModel {
         changeFlags: [],
         inScope: true,
         groupId: "group_web",
+        evidence_refs: ["ev_t1"],
       },
       {
         id: "target_2",
@@ -100,6 +101,7 @@ function model(): DocumentModel {
         changeFlags: [],
         inScope: false,
         groupId: "group_legacy",
+        evidence_refs: ["ev_t2"],
       },
     ],
     targetGroups: [
@@ -109,6 +111,7 @@ function model(): DocumentModel {
         inScope: true,
         description: "Primary web apps",
         rewards: { p1: 1000, p2: 500, p3: null, p4: 100, p5: 50 },
+        evidence_refs: ["ev_g1"],
       },
     ],
     outOfScope: [{ location: null, name: "Legacy", notes: "Do not test" }],
@@ -304,6 +307,43 @@ describe("renderAgentFacts", () => {
     ]);
     expect(parsed.authorized_scope.listed_targets.status).toBe("conditional");
     expect(parsed.authorized_scope.unlisted_targets.status).toBe("prohibited");
+  });
+
+  it("emits a machine-readable scope inventory for Scope Guard", () => {
+    const block = renderAgentFacts(model());
+    const parsed = parseYaml(
+      block.replace(/^```yaml\n/, "").replace(/\n```$/, ""),
+    );
+    expect(parsed.agent_facts_schema_version).toBe(1);
+    expect(parsed.engagement).toEqual({ code: "acme" });
+    expect(parsed.scope_inventory.in_scope).toEqual([
+      {
+        target_id: "target_1",
+        location: "https://app.example.com/a|b",
+        name: "App [prod]",
+        category: "website",
+        scope_group_ids: ["group_web"],
+        evidence_refs: ["ev_t1"],
+      },
+    ]);
+    expect(parsed.scope_inventory.out_of_scope).toEqual([
+      {
+        target_id: "target_2",
+        location: null,
+        name: "Legacy",
+        category: "other",
+        scope_group_ids: ["group_legacy"],
+        evidence_refs: ["ev_t2"],
+        notes: "Do not test",
+      },
+    ]);
+    expect(parsed.scope_groups).toEqual([
+      { id: "group_web", name: "Web", in_scope: true, evidence_refs: ["ev_g1"] },
+    ]);
+    expect(parsed.account_rules).toEqual([
+      { text: "Use `your-own` account.", evidence_refs: ["ev_account"] },
+    ]);
+    expect(parsed.data_rules).toEqual(model().dataRules);
   });
 
   it("reports validation failures separately from missing sections", () => {

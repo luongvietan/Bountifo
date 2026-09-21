@@ -43,7 +43,26 @@ export function renderAgentFacts(model: DocumentModel): string {
       .sort()
       .map((key) => [key, factForYaml(model.techniques[key]!)]),
   );
+  // model.targets is id-sorted while outOfScope follows collection order, so
+  // the rule notes join on the (location, name) identity rather than index.
+  const noteKey = (location: string | null, name: string | null): string =>
+    `${location ?? ""}${name ?? ""}`;
+  const outOfScopeNotes = new Map(
+    model.outOfScope.map((o) => [noteKey(o.location, o.name), o.notes]),
+  );
+  const scopeTarget = (target: DocumentModel["targets"][number]) => ({
+    target_id: target.id,
+    location: target.location,
+    name: target.name,
+    category: target.category,
+    scope_group_ids: target.groupId === null ? [] : [target.groupId],
+    evidence_refs: target.evidence_refs,
+  });
   const facts = {
+    // The guard-facing schema versions independently of the dossier schema:
+    // every key below the version is additive, so old consumers keep parsing.
+    agent_facts_schema_version: 1,
+    engagement: { code: model.engagement.code },
     techniques,
     // Kept beside the techniques so a consumer cannot mistake a refused report
     // for a forbidden activity: the two axes are named separately (§11).
@@ -51,10 +70,34 @@ export function renderAgentFacts(model: DocumentModel): string {
     // Named `authorized_scope` so the key can never read as an HTTP
     // Authorization header in a scan of the output (§19).
     authorized_scope: model.scopeAuthorization,
+    // A deterministic target inventory so a Scope Guard resolves a proposed
+    // URL against the program's listed targets without scraping Markdown.
+    scope_inventory: {
+      in_scope: model.targets
+        .filter((target) => target.inScope)
+        .map(scopeTarget),
+      out_of_scope: model.targets
+        .filter((target) => !target.inScope)
+        .map((target) => ({
+          ...scopeTarget(target),
+          notes:
+            outOfScopeNotes.get(noteKey(target.location, target.name)) ?? null,
+        })),
+    },
+    scope_groups: model.targetGroups.map((group) => ({
+      id: group.id,
+      name: group.name,
+      in_scope: group.inScope,
+      evidence_refs: group.evidence_refs,
+    })),
     // A Scope Guard needs the VRT verdicts beside the target list: they rule
     // whole vulnerability classes in or out regardless of asset.
     vrt_scope_rules: model.vrt.scope_rules,
     safe_harbor: model.engagement.safeHarbor,
+    // Account/data constraints live outside `techniques`; the guard evaluates
+    // them as typed rules with their own evidence trail.
+    account_rules: model.accountRules,
+    data_rules: model.dataRules,
     collection: model.collection,
     integrity: model.integrity,
     collection_issues: model.provenance.collection_issues,

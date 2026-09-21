@@ -319,6 +319,8 @@ function baseArgs(overrides: Partial<AssembleArgs> = {}): AssembleArgs {
       rec("dom:details:program-rules:do-not-exfiltrate", "Do not exfiltrate data"),
       ...VRT_RECS,
       rec("dom:ki:target:example-com", { columns: [], cells: ["P1"] }),
+      rec("dom:scope:target:example-com", { location: "https://example.com" }),
+      rec("dom:scope:group:web", { name: "Web" }),
     ],
     evidence: [
       ev("ev_dom2", "dom:details:program-rules:do-not-exfiltrate"),
@@ -326,6 +328,8 @@ function baseArgs(overrides: Partial<AssembleArgs> = {}): AssembleArgs {
       ev("ev_dom1", "dom:details:account-rules:use-your-own-account"),
       ev("ev_ki1", "dom:ki:target:example-com"),
       ev("ev_vrt", "dom:details:vrt:version"),
+      ev("ev_target1", "dom:scope:target:example-com"),
+      ev("ev_group1", "dom:scope:group:web"),
     ],
     integrity: integrityReport(),
     ...overrides,
@@ -393,6 +397,8 @@ describe("stripVolatile", () => {
           ev("ev_dom1", "dom:details:account-rules:use-your-own-account"),
           ev("ev_ki1", "dom:ki:target:example-com"),
           ev("ev_vrt", "dom:details:vrt:version"),
+          ev("ev_target1", "dom:scope:target:example-com"),
+          ev("ev_group1", "dom:scope:group:web"),
         ].map((e) => ({ ...e, collected_at: "2031-05-05T05:00:00Z" })),
       }),
     );
@@ -438,6 +444,14 @@ describe("assembleDocument — shape", () => {
     expect(m.provenance.missing_sections).toEqual([]);
   });
 
+  it("links scope inventory entries to their collection evidence", () => {
+    // Scope Guard consumes these refs: a target row's evidence is the
+    // `dom:scope:` record the collector emitted for that row's domKey.
+    const m = assembleDocument(baseArgs());
+    expect(m.targets[0]?.evidence_refs).toEqual(["ev_target1"]);
+    expect(m.targetGroups[0]?.evidence_refs).toEqual(["ev_group1"]);
+  });
+
   it("sorts evidence into corpus order (api before dom)", () => {
     const m = assembleDocument(baseArgs());
     expect(m.evidence.map((e) => e.id)).toEqual([
@@ -446,6 +460,8 @@ describe("assembleDocument — shape", () => {
       "ev_dom2",
       "ev_vrt",
       "ev_ki1",
+      "ev_group1",
+      "ev_target1",
     ]);
   });
 
