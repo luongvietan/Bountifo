@@ -62,7 +62,7 @@ const SINK_PATTERNS: Record<string, RegExp> = {
   "browser:storage": /(?:browser|chrome)\.storage\??\s*\.(?:local|session|sync|managed)/,
   idb: /\bopenDB\s*\(|\bindexedDB\.open\s*\(/,
   "dom:effect": /\.(?:click|requestSubmit|submit)\s*\(|\.dispatchEvent\s*\(/,
-  "delegated:network": /\bfetchPage\s*\(|\bapiRequest\s*\(/,
+  "delegated:network": /\bfetchPage\s*\(|(?<!function )\bapiRequest\s*(?:<[^>]*>)?\s*\(/,
   "delegated:tab-message": /\bsendToTab\s*\(/,
   "fs:write":
     /\bwriteFile(?:Sync)?\s*\(|\bappendFile(?:Sync)?\s*\(|\bunlink(?:Sync)?\s*\(|\brename(?:Sync)?\s*\(|\brm(?:Sync)?\s*\(/,
@@ -81,6 +81,8 @@ const SINK_REGISTRY: Record<string, string[]> = {
   // Authenticated Bugcrowd API GETs (allowlisted ops; collection plane).
   "lib/api/client.ts": ["network:fetch"],
   "lib/api/engagements.ts": ["delegated:network"],
+  // Radar catalog enumerator paging LIST_ENGAGEMENTS (collection plane).
+  "lib/radar/catalog.ts": ["delegated:network"],
   // Same-origin dossier page fetch + extension messaging + job bookkeeping.
   "entrypoints/content.ts": [
     "network:fetch",

@@ -68,7 +68,7 @@ export async function enumerateEngagementCatalog(
   for (let page = 1; page <= MAX_CATALOG_PAGES; page++) {
     let parsed: { items: RadarCatalogItem[]; rawCount: number };
     try {
-      const res = await apiRequest<unknown>({
+      const res = await apiRequest({
         operation: "LIST_ENGAGEMENTS",
         page,
       });
