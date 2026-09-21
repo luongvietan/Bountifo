@@ -83,6 +83,10 @@ const SINK_REGISTRY: Record<string, string[]> = {
   "lib/api/engagements.ts": ["delegated:network"],
   // Radar catalog enumerator paging LIST_ENGAGEMENTS (collection plane).
   "lib/radar/catalog.ts": ["delegated:network"],
+  // Radar detail hydration via GET_ENGAGEMENT (collection plane).
+  "lib/radar/enrichment.ts": ["delegated:network"],
+  // Radar IndexedDB persistence (bce-radar database).
+  "lib/radar/store.ts": ["idb"],
   // Same-origin dossier page fetch + extension messaging + job bookkeeping.
   "entrypoints/content.ts": [
     "network:fetch",
