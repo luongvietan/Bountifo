@@ -46,7 +46,12 @@ describe("EPAM-style brief", () => {
           <li>External Service Interactions: Interactions with external services that do not demonstrate security impact.</li>
           <li>Self-XSS: Self-inflicted XSS without realistic threat.</li>
           <li>CSRF: On unauthenticated forms or forms that do not perform sensitive actions.</li>
+          <li>Avoid testing any contact forms on epam.com *.epam.com</li>
         </ul>
+      </section>
+      <section aria-labelledby="conduct">
+        <h2 id="conduct">Conduct</h2>
+        <p>To avoid confusion, we kindly ask researchers to use the provided test accounts.</p>
       </section>
     `),
     PAGE_URL,
@@ -95,10 +100,25 @@ describe("EPAM-style brief", () => {
     }
     // None of them produced a technique permission fact.
     for (const e of data.exclusions) {
-      expect(
-        data.techniques.some((t) => t.quote === e.text),
-      ).toBe(false);
+      expect(data.techniques.some((t) => t.quote === e.text)).toBe(false);
     }
+  });
+
+  it("reads the imperative 'avoid testing' as a prohibition", () => {
+    const e = exclusion(data, /Avoid testing any contact forms/);
+    expect(e).toBeDefined();
+    expect(e!.submissionStatus).toBe("excluded");
+    expect(e!.testingStatus).toBe("prohibited");
+  });
+
+  it("never reads 'to avoid confusion' as a prohibition", () => {
+    // "avoid" only counts when it directly governs an activity verb.
+    expect(
+      data.techniques.some((t) => t.quote.includes("avoid confusion")),
+    ).toBe(false);
+    expect(data.dataRules.every((r) => !/avoid confusion/i.test(r))).toBe(
+      true,
+    );
   });
 
   it("emits only well-formed records", () => {
@@ -118,7 +138,12 @@ describe("Statuspage-style brief", () => {
         <h2 id="rules">Program Rules</h2>
         <ul>
           <li>The use of automated scanners is strictly prohibited.</li>
+          <li>Use of any automated tools/scanners is strictly prohibited.</li>
         </ul>
+      </section>
+      <section aria-labelledby="data">
+        <h2 id="data">Data Handling</h2>
+        <p>If you find sensitive customer data or a way to access customer data, report it, but do not attempt to validate whether it works.</p>
       </section>
       <section aria-labelledby="oosv">
         <h2 id="oosv">Out-of-Scope Vulnerabilities</h2>
@@ -153,6 +178,27 @@ describe("Statuspage-style brief", () => {
     ).toBe(false);
   });
 
+  it("narrows 'automated tools/scanners' — never a bare 'scanning' fact", () => {
+    // The modifier governs the whole coordination; the maximal specific
+    // span wins, so no generic parent fact may appear beside it.
+    const names = data.techniques.map((t) => t.name);
+    expect(names).toContain("automated scanners");
+    expect(names).toContain("automated tools");
+    expect(names).not.toContain("scanning");
+    expect(names).not.toContain("automation");
+  });
+
+  it("reads 'do not validate customer-data access' as a data rule, not a PII ban", () => {
+    // The normative verb is "attempt to validate" — it governs the
+    // validation, not the access span that precedes it.
+    expect(data.techniques.some((t) => t.baseName === "PII access")).toBe(
+      false,
+    );
+    expect(
+      data.dataRules.some((r) => r.includes("sensitive customer data")),
+    ).toBe(true);
+  });
+
   it("keeps the third-party library rule an exclusion, not a permission", () => {
     const e = exclusion(data, /third-party libraries/);
     expect(e).toBeDefined();
@@ -173,9 +219,9 @@ describe("Zendesk-style brief", () => {
     doc(`
       <h1>Zendesk-like Bug Bounty</h1>
       <section aria-labelledby="valid">
-        <h2 id="valid">Valid Submissions</h2>
+        <h2 id="valid">Valid Submissions &amp; Examples</h2>
         <ul>
-          <li>Indirect &amp; Exploitable Prompt Injection: Using nested, encoded, or third-party data inputs to manipulate the agent.</li>
+          <li>Indirect &amp; Exploitable Prompt Injection: Using nested, encoded, or third-party data inputs to force the model into executing disallowed actions.</li>
         </ul>
       </section>
       <section aria-labelledby="rules">

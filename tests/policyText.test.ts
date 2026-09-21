@@ -248,6 +248,103 @@ describe("techniqueFindingsIn", () => {
   });
 });
 
+describe("predicate governance", () => {
+  it("drops a span that sits before a forward-scoped predicate", () => {
+    // "disallowed" bans the model's actions, not the inputs — the Zendesk
+    // live failure.
+    expect(
+      techniqueFindingsIn(
+        "Using nested, encoded, or third-party data inputs to force the model into executing disallowed actions.",
+      ),
+    ).toEqual([]);
+  });
+
+  it("drops a span governed by a different verb — 'do not validate' is not 'do not access'", () => {
+    // Statuspage: the prohibition attaches to the validation attempt; the
+    // "access customer data" span precedes it and is outside its scope.
+    const findings = techniqueFindingsIn(
+      "If you find sensitive customer data or a way to access customer data, report it, but do not attempt to validate whether it works.",
+    );
+    expect(findings.some((f) => f.baseName === "PII access")).toBe(false);
+  });
+
+  it("keeps spans inside a forward predicate's complement", () => {
+    expect(
+      techniqueFindingsIn("Do not test third-party services.").map(
+        (f) => f.status,
+      ),
+    ).toEqual(["prohibited"]);
+    expect(
+      techniqueFindingsIn("We do not allow scanning of customer records.").map(
+        (f) => f.status,
+      ),
+    ).toEqual(["prohibited"]);
+  });
+
+  it("keeps subject spans governed by a passive modal", () => {
+    const findings = techniqueFindingsIn(
+      "Third-party services may not be tested.",
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.status).toBe("prohibited");
+  });
+
+  it("keeps predicative verb-family prohibitions", () => {
+    expect(
+      techniqueFindingsIn("Automated scanners are strictly prohibited.").map(
+        (f) => f.status,
+      ),
+    ).toEqual(["prohibited"]);
+    expect(
+      techniqueFindingsIn("The program prohibits automated scanning.").map(
+        (f) => f.status,
+      ),
+    ).toEqual(["prohibited"]);
+  });
+});
+
+describe("coordinated modifier narrowing", () => {
+  it("narrows every technique noun in an automated X/Y coordination", () => {
+    const findings = techniqueFindingsIn(
+      "Use of any automated tools/scanners is strictly prohibited.",
+    );
+    const names = findings.map((f) => f.name);
+    expect(names).toContain("automated scanners");
+    expect(names).toContain("automated tools");
+    expect(names).not.toContain("scanning");
+    expect(names).not.toContain("automation");
+    expect(findings.every((f) => f.status === "prohibited")).toBe(true);
+  });
+
+  it("does not bleed a modifier across a verb boundary", () => {
+    const findings = techniqueFindingsIn(
+      "Automated reconnaissance is prohibited, and scanning records are reviewed.",
+    );
+    expect(findings.some((f) => f.name === "automated scanning")).toBe(false);
+  });
+});
+
+describe("avoid-imperative", () => {
+  it("reads 'avoid testing' as a prohibition", () => {
+    expect(
+      statusOfSentence(
+        "Avoid testing any contact forms on epam.com *.epam.com.",
+      ),
+    ).toBe("prohibited");
+    expect(statusOfSentence("Refrain from scanning staging hosts.")).toBe(
+      "prohibited",
+    );
+  });
+
+  it("ignores 'avoid' with a non-activity object", () => {
+    expect(
+      statusOfSentence(
+        "To avoid confusion, we kindly ask researchers to use test accounts.",
+      ),
+    ).toBeNull();
+  });
+});
+
 describe("testingStatusOf", () => {
   it("keeps out-of-scope vulnerability classes unspecified", () => {
     for (const line of [

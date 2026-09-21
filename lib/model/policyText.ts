@@ -87,33 +87,57 @@ const ACTION_VERB =
 
 const ACTION_VERB_RE = new RegExp(`^${ACTION_VERB}$`, "i");
 
+// Copula prohibition: "X is prohibited", "testing is not permitted",
+// "automated scanners are strictly forbidden", "X is off limits".
+const COPULA_PROHIBITION_RE = new RegExp(
+  "\\b(?:is|are|was|were|be|been|being|remains?)\\s+(?:\\w+ly\\s+|not\\s+|strictly\\s+|explicitly\\s+|generally\\s+|absolutely\\s+|entirely\\s+|wholly\\s+)*" +
+    "(?:prohibited|forbidden|disallowed|banned|not\\s+(?:permitted|allowed|authorized|authorised)|off[\\s-]?limits|out\\s+of\\s+bounds|illegal|unlawful)\\b",
+  "i",
+);
+// The prohibit/forbid/disallow verb family wherever it appears.
+const VERB_FAMILY_PROHIBITION_RE =
+  /\bprohibit(?:s|ed|ing)?\b|\bforbid(?:s|den|ding)?\b|\bforbidden\b|\bdisallow(?:s|ed|ing)?\b/i;
+// Deontic modal negations are inherently normative.
+const MODAL_NEGATION_RE = /\b(?:must|shall|may)\s+not\b|\bmustn'?t\b|\bshan'?t\b/i;
+// Incapacity on an activity verb: "cannot test", "you can't access". The
+// verb gate keeps "cannot be demonstrated" / "cannot authorize" out —
+// capability and program-side authority are not testing prohibitions.
+const INCAPACITY_ACTION_RE = new RegExp(
+  `\\b(?:cannot|can't|won't|can\\s+not)\\s+${ACTION_VERB}\\b`,
+  "i",
+);
+// Program-side refusal: "we do not allow", "the program does not permit".
+// Only "do/does not" qualifies — "cannot authorize" is incapacity, not a
+// refusal (OpenAI's safe-harbor line is a capability statement).
+const PROGRAM_REFUSAL_RE =
+  /\b(?:we|the\s+(?:program|engagement|company|team)|bugcrowd|this\s+(?:program|engagement))\s+(?:do\s+not|does\s+not)\s+(?:allow|permit|authorize|authorise|support|accept)\b/i;
+// Bare "not permitted/allowed/authorized" standing alone ("may not be
+// tested" is covered by the modal above; this catches "X not allowed").
+const BARE_NEGATED_PERMISSION_RE =
+  /\bnot\s+(?:permitted|allowed|authorized|authorised)\b/i;
+// Enforcement consequence: "can lead to a ban", "will result in termination".
+const ENFORCEMENT_RE =
+  /\b(?:can|could|may|will|would|might|shall|should)?\s*(?:leads?|results?)\s+(?:to|in)\s+[^.;]*?\b(?:ban|banned|termination|removal|suspension|enforcement|account\s+closure)\b|\bgrounds\s+for\s+(?:a\s+|an\s+)?(?:ban|termination|removal)|will\s+be\s+banned|get\s+(?:you\s+)?banned\b/i;
+// Sentence-initial "no <activity>".
+const NO_ACTIVITY_RE =
+  /^\s*no\s+(?:testing|scanning|scans?|automation|automated|brute|denial|dos|ddos|social|phishing|physical|credential|accessing|access|fuzzing|exploitation|exfiltration)\b/i;
+// "Avoid testing", "refrain from accessing" — the imperative governs an
+// activity verb, so "to avoid confusion" is never a prohibition.
+const AVOID_ACTION_RE = new RegExp(
+  `\\b(?:avoid|refrain|abstain)(?:\\s+from)?\\s+${ACTION_VERB}\\b`,
+  "i",
+);
+
 const PROHIBITION_RES = [
-  // Copula prohibition: "X is prohibited", "testing is not permitted",
-  // "automated scanners are strictly forbidden", "X is off limits".
-  new RegExp(
-    "\\b(?:is|are|was|were|be|been|being|remains?)\\s+(?:\\w+ly\\s+|not\\s+|strictly\\s+|explicitly\\s+|generally\\s+|absolutely\\s+|entirely\\s+|wholly\\s+)*" +
-      "(?:prohibited|forbidden|disallowed|banned|not\\s+(?:permitted|allowed|authorized|authorised)|off[\\s-]?limits|out\\s+of\\s+bounds|illegal|unlawful)\\b",
-    "i",
-  ),
-  // The prohibit/forbid/disallow verb family wherever it appears.
-  /\bprohibit(?:s|ed|ing)?\b|\bforbid(?:s|den|ding)?\b|\bforbidden\b|\bdisallow(?:s|ed|ing)?\b/i,
-  // Deontic modal negations are inherently normative.
-  /\b(?:must|shall|may)\s+not\b|\bmustn'?t\b|\bshan'?t\b/i,
-  // Incapacity on an activity verb: "cannot test", "you can't access". The
-  // verb gate keeps "cannot be demonstrated" / "cannot authorize" out —
-  // capability and program-side authority are not testing prohibitions.
-  new RegExp(`\\b(?:cannot|can't|won't|can\\s+not)\\s+${ACTION_VERB}\\b`, "i"),
-  // Program-side refusal: "we do not allow", "the program does not permit".
-  // Only "do/does not" qualifies — "cannot authorize" is incapacity, not a
-  // refusal (OpenAI's safe-harbor line is a capability statement).
-  /\b(?:we|the\s+(?:program|engagement|company|team)|bugcrowd|this\s+(?:program|engagement))\s+(?:do\s+not|does\s+not)\s+(?:allow|permit|authorize|authorise|support|accept)\b/i,
-  // Bare "not permitted/allowed/authorized" standing alone ("may not be
-  // tested" is covered by the modal above; this catches "X not allowed").
-  /\bnot\s+(?:permitted|allowed|authorized|authorised)\b/i,
-  // Enforcement consequence: "can lead to a ban", "will result in termination".
-  /\b(?:can|could|may|will|would|might|shall|should)?\s*(?:leads?|results?)\s+(?:to|in)\s+[^.;]*?\b(?:ban|banned|termination|removal|suspension|enforcement|account\s+closure)\b|\bgrounds\s+for\s+(?:a\s+|an\s+)?(?:ban|termination|removal)|will\s+be\s+banned|get\s+(?:you\s+)?banned\b/i,
-  // Sentence-initial "no <activity>".
-  /^\s*no\s+(?:testing|scanning|scans?|automation|automated|brute|denial|dos|ddos|social|phishing|physical|credential|accessing|access|fuzzing|exploitation|exfiltration)\b/i,
+  COPULA_PROHIBITION_RE,
+  VERB_FAMILY_PROHIBITION_RE,
+  MODAL_NEGATION_RE,
+  INCAPACITY_ACTION_RE,
+  PROGRAM_REFUSAL_RE,
+  BARE_NEGATED_PERMISSION_RE,
+  ENFORCEMENT_RE,
+  NO_ACTIVITY_RE,
+  AVOID_ACTION_RE,
 ];
 
 /** Boundaries before which a "do not"/"never" is still a directive. */
@@ -165,9 +189,12 @@ function hasProhibition(sentence: string): boolean {
   return directiveProhibition(sentence);
 }
 
+// Copula permission: "testing is permitted", "X is allowed".
+const COPULA_PERMISSION_RE =
+  /\b(?:is|are|was|were|be|been|being|remains?)\s+(?:\w+ly\s+)*(?:permitted|allowed|authorized|authorised|encouraged|welcomed)\b/i;
+
 const PERMISSION_RES = [
-  // Copula permission: "testing is permitted", "X is allowed".
-  /\b(?:is|are|was|were|be|been|being|remains?)\s+(?:\w+ly\s+)*(?:permitted|allowed|authorized|authorised|encouraged|welcomed)\b/i,
+  COPULA_PERMISSION_RE,
   // Researcher-subject modal grant: "you may test", "researchers are free to".
   new RegExp(
     `\\b${DIRECTIVE_SUBJECT}\\s+(?:may|are\\s+free\\s+to|are\\s+welcome\\s+to|feel\\s+free\\s+to|are\\s+(?:allowed|permitted|authorized|authorised)\\s+to)\\b`,
@@ -268,6 +295,111 @@ function hasActivityDirective(sentence: string): boolean {
     if (re.test(sentence)) return true;
   }
   return directiveProhibition(sentence);
+}
+
+// ---------------------------------------------------------------------------
+// Predicate scope. A normative predicate must GOVERN the technique span, not
+// merely share its sentence: "using third-party data inputs to force the
+// model into executing disallowed actions" bans the model's actions, not the
+// inputs — the predicate is verb-scoped and the technique sits outside it.
+// ---------------------------------------------------------------------------
+
+/**
+ * Clause-scope evidence predicates on the clause's subject, so every span in
+ * the clause is governed: copula predicatives ("X is prohibited/allowed"),
+ * elided copulas ("X not allowed"), enforcement consequences ("leads to a
+ * ban"), sentence-initial "no <activity>", and restrictive/qualifier markers
+ * ("only against", "unless authorized") that attach to the main predicate.
+ */
+const CLAUSE_SCOPE_RES = [
+  COPULA_PROHIBITION_RE,
+  BARE_NEGATED_PERMISSION_RE,
+  ENFORCEMENT_RE,
+  NO_ACTIVITY_RE,
+  COPULA_PERMISSION_RE,
+  ...RESTRICTIVE_RES,
+  ...QUALIFIER_RES,
+];
+
+/**
+ * Verb-scope evidence governs only its complement — the text after the
+ * predicate within the clause. Passive forms ("may not be tested") flip the
+ * governed side back to the subject; they carry a "be/been/being" marker
+ * inside the match.
+ */
+const VERB_SCOPED_RES = [
+  new RegExp(`\\b(?:do|does)\\s+not\\s+${ACTION_VERB}\\b`, "gi"),
+  new RegExp(`\\bnever\\s+${ACTION_VERB}\\b`, "gi"),
+  new RegExp(
+    `\\b(?:avoid|refrain|abstain)(?:\\s+from)?\\s+${ACTION_VERB}\\b`,
+    "gi",
+  ),
+  new RegExp(
+    `\\b(?:must|shall|may|can|could|will|would|should|might|cannot|can't|won't|can\\s+not)\\s+(?:not\\s+)?(?:be\\s+|been\\s+|being\\s+)?${ACTION_VERB}\\b`,
+    "gi",
+  ),
+  new RegExp(
+    "\\b(?:we|the\\s+(?:program|engagement|company|team)|bugcrowd|this\\s+(?:program|engagement))\\s+(?:(?:do|does)\\s+not\\s+)?(?:allows?|permits?|authorizes?|authorises?|encourages?|welcomes?|supports?|accepts?)\\b",
+    "gi",
+  ),
+  new RegExp(
+    `\\b${DIRECTIVE_SUBJECT}\\s+(?:may|are\\s+free\\s+to|are\\s+welcome\\s+to|feel\\s+free\\s+to|are\\s+(?:allowed|permitted|authorized|authorised)\\s+to)\\b`,
+    "gi",
+  ),
+  new RegExp(
+    `\\b(?:permitted|allowed|authorized|authorised|free|welcome)\\s+to\\s+${ACTION_VERB}\\b`,
+    "gi",
+  ),
+  /\bauthorize[sd]?\s+testing\b/gi,
+];
+
+const VERB_FAMILY_G = new RegExp(VERB_FAMILY_PROHIBITION_RE.source, "gi");
+const PASSIVE_MARKER_RE = /\b(?:be|been|being)\b/i;
+/**
+ * An auxiliary or adverb directly before a verb-family word makes it the
+ * clause predicate ("are strictly prohibited"); otherwise it is attributive
+ * or an active verb whose scope is forward only ("executing disallowed
+ * actions" — the ban is on the actions, not on what preceded the verb).
+ */
+const PREDICATIVE_LEAD_RE =
+  /\b(?:is|are|was|were|be|been|being|remains?|not|never|always|often|usually|typically|generally|strictly|explicitly|absolutely|entirely|wholly|[a-z]+ly)\s*$/i;
+
+/**
+ * Whether the sentence's normative predicate governs the span at `spanStart`.
+ * Any clause-scope evidence governs; otherwise a verb-scope match governs
+ * spans inside its complement (after the predicate start), or the whole
+ * clause when the form is passive. When the sentence's status came from
+ * evidence this scope model does not track, the span is left alone — a veto
+ * is only issued on positive proof that the predicate points elsewhere.
+ */
+function predicateGoverns(sentence: string, spanStart: number): boolean {
+  for (const re of CLAUSE_SCOPE_RES) {
+    re.lastIndex = 0;
+    if (re.test(sentence)) return true;
+  }
+  let sawVerbScoped = false;
+  const check = (re: RegExp, predicativeLead: boolean): boolean => {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(sentence)) !== null) {
+      sawVerbScoped = true;
+      if (PASSIVE_MARKER_RE.test(m[0])) return true;
+      if (
+        predicativeLead &&
+        PREDICATIVE_LEAD_RE.test(sentence.slice(0, m.index))
+      ) {
+        return true;
+      }
+      if (spanStart > m.index) return true;
+      if (m[0] === "") re.lastIndex++;
+    }
+    return false;
+  };
+  for (const re of VERB_SCOPED_RES) {
+    if (check(re, false)) return true;
+  }
+  if (check(VERB_FAMILY_G, true)) return true;
+  return !sawVerbScoped;
 }
 
 /**
@@ -452,6 +584,15 @@ function slugifyName(name: string): string {
   return slug === "" ? "item" : slug;
 }
 
+/** Bare adjective spans that modify — not name — the activity after them. */
+const MODIFIER_WORD_RE = /^(?:automated|automatic|manual)$/i;
+/**
+ * The gap between a modifier and a coordinated technique noun: bare words
+ * each closed by a connector — " tools/" in "automated tools/scanners",
+ * " tools, scripts and " in "automated tools, scripts and scanners".
+ */
+const COORD_GAP_RE = /^(?:\s*[\w-]+\s*(?:\/|,|and\b|or\b)\s*)+$/i;
+
 /**
  * Narrow a matched span to what the sentence rules on:
  * - adjacent modifier merge: "automated scanning" drops "automation", the
@@ -532,7 +673,26 @@ export function techniqueFindingsIn(text: string): TechniqueFinding[] {
       }
       survivors.push(span);
     }
+    // A modifier adjective governs the whole coordinated noun phrase:
+    // "automated tools/scanners" narrows the scanning fact to "automated
+    // scanners" — the maximal specific span wins, and the bare parent is
+    // never emitted beside its narrowed child.
+    for (let i = 0; i < survivors.length; i++) {
+      const source = survivors[i]!;
+      if (!MODIFIER_WORD_RE.test(source.text)) continue;
+      for (let j = i + 1; j < survivors.length; j++) {
+        const gap = sentence.slice(source.end, survivors[j]!.start);
+        if (!COORD_GAP_RE.test(gap)) break;
+        survivors[j]!.modifier = normalizeText(
+          `${source.text} ${survivors[j]!.modifier ?? ""}`,
+        ).toLowerCase();
+      }
+    }
     for (const span of survivors) {
+      // The predicate must govern the span, not merely share the sentence:
+      // "using third-party data inputs to force the model into executing
+      // disallowed actions" bans the model's actions, not third-party inputs.
+      if (!ambiguous && !predicateGoverns(sentence, span.start)) continue;
       const name = narrowedName(span, sentence, survivors);
       out.push({
         name,
