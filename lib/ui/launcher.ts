@@ -79,36 +79,35 @@ p { margin: 8px 0 0; font-size: 12px; color: #5b5b6b; }
 `;
 
 /**
- * True for the engagements index (https://bugcrowd.com/engagements[/]) — the
- * page whose tab strip ends in "Featured". Sub-paths belong to engagements.
- */
-function isEngagementListUrl(raw: string): boolean {
-  try {
-    const url = new URL(raw);
-    return (
-      url.hostname === "bugcrowd.com" &&
-      (url.pathname === "/engagements" || url.pathname === "/engagements/")
-    );
-  } catch {
-    return false;
-  }
-}
-
-/**
  * The "Featured" item in the index tab strip. The link/button itself may sit
  * inside a pure wrapper (e.g. an li whose only content is the link), so we
  * climb while the parent is just this item — the button then mounts as a
  * sibling item right of Featured, not inside the tab itself.
  */
 function findFeaturedTab(doc: Document): Element | null {
+  // Wrappers we may climb INTO (li/div/span around the tab) — but never past
+  // the strip's container, or the mount point would leave the list entirely.
+  const stripContainers = new Set([
+    "UL",
+    "OL",
+    "NAV",
+    "HEADER",
+    "MAIN",
+    "BODY",
+    "HTML",
+  ]);
   for (const el of doc.querySelectorAll("a, button, [role='tab'], [role='link']")) {
     if (el.textContent?.trim().toLowerCase() !== "featured") continue;
     let item = el;
+    let parent = item.parentElement;
     while (
-      item.parentElement !== null &&
-      item.parentElement.textContent?.trim().toLowerCase() === "featured"
+      parent !== null &&
+      !stripContainers.has(parent.tagName) &&
+      parent.getAttribute("role") !== "tablist" &&
+      parent.textContent?.trim().toLowerCase() === "featured"
     ) {
-      item = item.parentElement;
+      item = parent;
+      parent = item.parentElement;
     }
     return item;
   }
@@ -116,12 +115,35 @@ function findFeaturedTab(doc: Document): Element | null {
 }
 
 /**
- * Where the button belongs, by page kind (url is the current page URL — the
- * brief navigates client-side, so it is read per resolution):
+ * The last item of the index tab strip — "Secondary navigation" per Bugcrowd's
+ * aria-label. Region variants (/engagements-us, …) don't all carry a Featured
+ * tab; the strip's tail is the stable mount point either way.
+ */
+function findIndexTabTail(doc: Document): Element | null {
+  for (const nav of doc.querySelectorAll("nav")) {
+    const label = nav.getAttribute("aria-label")?.toLowerCase() ?? "";
+    if (!label.includes("secondary")) continue;
+    const list = nav.querySelector("ul, ol, [role='tablist'], [role='list']");
+    const last = list?.lastElementChild;
+    if (last != null) return last;
+  }
+  return null;
+}
+
+/**
+ * Where the button belongs (url is the current page URL — the brief navigates
+ * client-side, so it is read per resolution):
  *
- * - engagement detail: inside the program title (the brief header's heading),
- *   so the button sits on the title line right of the title text;
- * - engagements index: as a sibling item right of the "Featured" tab;
+ * - engagement detail (a supported engagement URL with a rendered title):
+ *   inside the program title, so the button sits on the title line right of
+ *   the title text;
+ * - any page carrying the index tab strip ("Secondary navigation"): as a
+ *   sibling item right of "Featured" when it exists, else right of the
+ *   strip's last item — the strip's tail is the intended spot on every
+ *   region/query variant (/engagements, /engagements-us, /engagements/…?x).
+ *   This is DOM-driven rather than URL-driven because Bugcrowd regionalizes
+ *   and parameterizes the index path, and "/engagements/featured" itself is
+ *   a listing, not a program.
  * - fallback: beside the engagement logo, else inside the brief header, else
  *   floating over the page.
  *
@@ -148,15 +170,14 @@ export function resolveAnchor(
     if (title !== null) {
       return { parent: title, after: null, floating: false };
     }
-  } else if (isEngagementListUrl(pageUrl)) {
-    const featured = findFeaturedTab(doc);
-    if (featured !== null) {
-      return {
-        parent: featured.parentElement ?? doc.body,
-        after: featured,
-        floating: false,
-      };
-    }
+  }
+  const tail = findFeaturedTab(doc) ?? findIndexTabTail(doc);
+  if (tail !== null) {
+    return {
+      parent: tail.parentElement ?? doc.body,
+      after: tail,
+      floating: false,
+    };
   }
   const header =
     doc.querySelector("main header,[role='main'] header") ??

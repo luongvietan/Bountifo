@@ -34,16 +34,20 @@ describe("mountLauncher placement", () => {
 
   it("mounts right of the Featured tab on the engagements index", () => {
     const doc = new DOMParser().parseFromString(
-      `<main><nav><ul>
+      `<main><nav aria-label="Secondary navigation"><ul>
         <li><a href="/engagements">Vulnerability Disclosure</a></li>
         <li><a href="/engagements?c=pt">Pen Tests</a></li>
         <li><a href="/engagements?c=f">Featured</a></li>
       </ul></nav></main>`,
       "text/html",
     );
+    // The real index URL is regionalized and parameterized.
     mountLauncher(
       doc,
-      deps({ pageUrl: () => "https://bugcrowd.com/engagements" }),
+      deps({
+        pageUrl: () =>
+          "https://bugcrowd.com/engagements?category=bug_bounty&page=1",
+      }),
     );
     const featuredItem = [...doc.querySelectorAll("li")].find(
       (li) => li.textContent?.trim() === "Featured",
@@ -51,6 +55,47 @@ describe("mountLauncher placement", () => {
     expect(
       featuredItem.nextElementSibling?.hasAttribute(EXPORTER_UI_ATTR),
     ).toBe(true);
+  });
+
+  it("mounts at the tail of the secondary nav when the index has no Featured tab", () => {
+    // /engagements-us carries only Bug Bounty | Vulnerability Disclosure |
+    // Pen Tests — no Featured. The strip's tail is the same visual spot.
+    const doc = new DOMParser().parseFromString(
+      `<header><img alt="logo"></header>
+       <main><nav aria-label="Secondary navigation"><ul>
+        <li><a href="/engagements-us">Bug Bounty</a></li>
+        <li><a href="/engagements-us?c=vdp">Vulnerability Disclosure</a></li>
+        <li><a href="/engagements-us?c=pt">Pen Tests</a></li>
+      </ul></nav></main>`,
+      "text/html",
+    );
+    mountLauncher(
+      doc,
+      deps({
+        pageUrl: () =>
+          "https://bugcrowd.com/engagements-us?category=bug_bounty&page=1&sort_by=promoted",
+      }),
+    );
+    const penTests = [...doc.querySelectorAll("li")].find(
+      (li) => li.textContent?.trim() === "Pen Tests",
+    )!;
+    expect(
+      penTests.nextElementSibling?.hasAttribute(EXPORTER_UI_ATTR),
+    ).toBe(true);
+  });
+
+  it("ignores a breadcrumb nav that is not the index tab strip", () => {
+    const doc = new DOMParser().parseFromString(
+      `<main><nav aria-label="Breadcrumb"><ul><li><a>Engagements</a></li></ul></nav></main>`,
+      "text/html",
+    );
+    mountLauncher(
+      doc,
+      deps({ pageUrl: () => "https://bugcrowd.com/engagements-us" }),
+    );
+    const host = doc.querySelector(`[${EXPORTER_UI_ATTR}]`)!;
+    expect(host.closest("nav")).toBeNull();
+    expect(host.parentElement?.tagName).toBe("BODY");
   });
 
   it("finds the Featured tab through a role=tab strip", () => {
@@ -72,6 +117,21 @@ describe("mountLauncher placement", () => {
     expect(
       featured.nextElementSibling?.hasAttribute(EXPORTER_UI_ATTR),
     ).toBe(true);
+  });
+
+  it("uses the Featured tab even on a detail-shaped URL with no title", () => {
+    // /engagements/featured parses like an engagement code but is a listing
+    // view — the tab strip is the tell, not the URL shape.
+    const doc = new DOMParser().parseFromString(
+      `<nav><ul><li><a>Featured</a></li></ul></nav>`,
+      "text/html",
+    );
+    mountLauncher(
+      doc,
+      deps({ pageUrl: () => "https://bugcrowd.com/engagements/featured" }),
+    );
+    const item = doc.querySelector("li")!;
+    expect(item.nextElementSibling?.hasAttribute(EXPORTER_UI_ATTR)).toBe(true);
   });
 
   it("falls back to the header, then to a floating host", () => {

@@ -364,12 +364,11 @@ function startLauncher(): void {
 }
 
 export default defineContentScript({
-  // The bare listing path needs its own pattern: "engagements/*" requires a
-  // path segment after the slash, so it never matched the index itself.
-  matches: [
-    "https://bugcrowd.com/engagements",
-    "https://bugcrowd.com/engagements/*",
-  ],
+  // "engagements*" — the path part of a match pattern includes the query
+  // string, so "/engagements" alone never matched the real index URL
+  // ("/engagements?category=...&page=..."), and "engagements/*" missed the
+  // index entirely (no trailing segment). One pattern covers both.
+  matches: ["https://bugcrowd.com/engagements*"],
   runAt: "document_idle",
   async main() {
     // 1. The initial URL is captured before any unit runs — collection is
