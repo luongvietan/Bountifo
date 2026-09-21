@@ -68,9 +68,9 @@ export const proposedActionSchema = z
         automated: z.boolean(),
         scanner: z.boolean().optional(),
         tool_type: z.string().optional(),
-        estimated_requests: z.number().optional(),
-        estimated_requests_per_minute: z.number().optional(),
-        requests_per_second: z.number().optional(),
+        estimated_requests: z.number().nonnegative().optional(),
+        estimated_requests_per_minute: z.number().nonnegative().optional(),
+        requests_per_second: z.number().nonnegative().optional(),
       })
       .strict()
       .optional(),
@@ -279,6 +279,7 @@ export type GuardReasonCode =
   | "KNOWN_ISSUES_COUNTS_INVALID"
   | "REQUIRED_SECTIONS_INCOMPLETE"
   | "POLICY_CONFLICT"
+  | "SAFE_HARBOR_PRESENT"
   | "SAFE_HARBOR_ABSENT"
   | "SAFE_HARBOR_UNCLEAR"
   | "ENGAGEMENT_MISMATCH"

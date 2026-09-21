@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluateScopeGuard } from "@/lib/guard/index.ts";
+import { evaluateScopeGuard, ScopeGuardInputError } from "@/lib/guard/index.ts";
 import { resolveTarget } from "@/lib/guard/targets.ts";
 import type {
   AgentFacts,
@@ -544,6 +544,34 @@ describe("LastPass automation rate limit", () => {
     );
     expect(d.decision).toBe("ALLOW");
   });
+
+  // §46 boundary matrix: <= 5 rps satisfies, > 5 fails, missing is unknown.
+  it.each([
+    { rps: 0, decision: "ALLOW" },
+    { rps: 5, decision: "ALLOW" },
+    { rps: 5.0001, decision: "DENY" },
+  ])("$rps req/s against a 5 req/s ceiling → $decision", async ({ rps, decision }) => {
+    const d = await decide(
+      lastpassFacts,
+      lpAction({ automated: true, requests_per_second: rps }),
+    );
+    expect(d.decision).toBe(decision);
+  });
+
+  it("negative request rate is rejected at the action-schema layer", async () => {
+    await expect(
+      decide(
+        lastpassFacts,
+        lpAction({ automated: true, requests_per_second: -1 }),
+      ),
+    ).rejects.toThrow(ScopeGuardInputError);
+    await expect(
+      decide(
+        lastpassFacts,
+        lpAction({ automated: true, estimated_requests_per_minute: -10 }),
+      ),
+    ).rejects.toThrow(ScopeGuardInputError);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -676,6 +704,26 @@ describe("residual unknowns", () => {
     expect(d.decision).toBe("REVIEW");
     expect(hasReason(d, "SAFE_HARBOR_UNCLEAR")).toBe(true);
   });
+
+  it("safe harbor present emits SAFE_HARBOR_PRESENT but never grants", async () => {
+    const d = await decide(makeFacts(), action());
+    expect(d.decision).toBe("ALLOW");
+    expect(hasReason(d, "SAFE_HARBOR_PRESENT")).toBe(true);
+    // Present alone cannot authorize: an unspecified technique still REVIEWs.
+    const d2 = await decide(
+      makeFacts({
+        techniques: {
+          "Cross-Site Scripting (XSS)": {
+            status: "unspecified",
+            evidence_refs: ["ev_xss"],
+          },
+        },
+      }),
+      action(),
+    );
+    expect(d2.decision).toBe("REVIEW");
+    expect(hasReason(d2, "SAFE_HARBOR_PRESENT")).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -743,5 +791,88 @@ describe("determinism properties", () => {
     );
     expect(deniedHard.decision).toBe("DENY");
     expect(deniedHard.execution_allowed).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §50 — monotonic safety: weakening an input must never improve the verdict
+// ---------------------------------------------------------------------------
+
+describe("monotonic safety", () => {
+  const rank = (d: string): number =>
+    d === "ALLOW" ? 2 : d === "REVIEW" ? 1 : 0;
+
+  it("removing verified context never improves the decision", async () => {
+    const ctx = [
+      verified("account.ownership", "researcher"),
+      verified("data.ownership", "researcher"),
+      verified("data.sensitivity", "none"),
+    ];
+    const withCtx = await decide(rapydFacts, rapydAction, ctx);
+    const without = await decide(rapydFacts, rapydAction, []);
+    expect(withCtx.decision).toBe("ALLOW");
+    expect(rank(without.decision)).toBeLessThanOrEqual(rank(withCtx.decision));
+    expect(without.decision).not.toBe("ALLOW");
+  });
+
+  it("asserted context never beats verified context", async () => {
+    const asserted: ContextFact[] = [
+      { key: "account.ownership", value: "researcher", source: "tool", verification: "asserted" },
+      { key: "data.ownership", value: "researcher", source: "tool", verification: "asserted" },
+      { key: "data.sensitivity", value: "none", source: "tool", verification: "asserted" },
+    ];
+    const d = await decide(rapydFacts, rapydAction, asserted);
+    expect(d.decision).not.toBe("ALLOW");
+  });
+
+  it("planner-sourced verified-looking claims still cannot satisfy", async () => {
+    // Even a "verified" flag from the planner source is untrusted.
+    const planner: ContextFact[] = [
+      { key: "account.ownership", value: "researcher", source: "planner", verification: "verified" },
+      { key: "data.ownership", value: "researcher", source: "planner", verification: "verified" },
+      { key: "data.sensitivity", value: "none", source: "planner", verification: "verified" },
+    ];
+    const d = await decide(rapydFacts, rapydAction, planner);
+    expect(d.decision).not.toBe("ALLOW");
+  });
+
+  it("ownership researcher → unknown never improves", async () => {
+    const base = [verified("data.ownership", "researcher"), verified("data.sensitivity", "none")];
+    const good = await decide(rapydFacts, rapydAction, [
+      verified("account.ownership", "researcher"),
+      ...base,
+    ]);
+    const worse = await decide(rapydFacts, rapydAction, [
+      verified("account.ownership", "unknown"),
+      ...base,
+    ]);
+    expect(good.decision).toBe("ALLOW");
+    expect(rank(worse.decision)).toBeLessThanOrEqual(rank(good.decision));
+    expect(worse.decision).not.toBe("ALLOW");
+  });
+
+  it("raising the request rate above the ceiling never improves", async () => {
+    const low = await decide(
+      lastpassFacts,
+      lpAction({ automated: true, requests_per_second: 3 }),
+    );
+    const high = await decide(
+      lastpassFacts,
+      lpAction({ automated: true, requests_per_second: 8 }),
+    );
+    expect(low.decision).toBe("ALLOW");
+    expect(rank(high.decision)).toBeLessThan(rank(low.decision));
+    expect(high.decision).toBe("DENY");
+  });
+
+  it("in-scope → explicit out-of-scope never improves", async () => {
+    const inScope = await decide(makeFacts(), action());
+    const oos = await decide(
+      makeFacts(),
+      action({ target: { url: "https://blocked.example.com/" } }),
+    );
+    expect(inScope.decision).toBe("ALLOW");
+    expect(oos.decision).toBe("DENY");
+    expect(rank(oos.decision)).toBeLessThan(rank(inScope.decision));
   });
 });

@@ -133,7 +133,11 @@ function ownershipEval(
       };
     }
   }
-  if (trusted.length > 0) return { result: "true" };
+  // An attestation only satisfies when a trusted source names an allowed
+  // value — a verified "unknown" is absence of knowledge, not ownership.
+  if (trusted.some((v) => allowed.includes(v as OwnershipValue))) {
+    return { result: "true" };
+  }
   // Only claims that would satisfy (or silence) remain — unverified.
   return { result: "unknown", code: unverifiedCode, detail: `${key} not verified` };
 }
@@ -161,7 +165,11 @@ function deniedValueEval(
       };
     }
   }
-  if (trusted.length > 0) return { result: "true" };
+  // Trusted values clear the constraint only when they carry information —
+  // a verified "unknown" cannot prove the value is outside the denied set.
+  if (trusted.length > 0 && trusted.every((v) => v !== "unknown")) {
+    return { result: "true" };
+  }
   if (asserted.length === 0) {
     return { result: "unknown", code: unverifiedCode, detail: `${key} undeclared` };
   }
@@ -577,6 +585,7 @@ export async function evaluateAction(
     record({
       check: "safe_harbor",
       result: "pass",
+      reason_code: "SAFE_HARBOR_PRESENT",
       rule_status: "present",
       evidence_refs: ir.safe_harbor.evidence_refs,
     });

@@ -306,9 +306,9 @@ Deterministic order; no check may convert an existing DENY into ALLOW:
    Any failure short-circuits to REVIEW. `api_status: "unavailable"` does
    **not** block when the exporter declared the collection complete.
 2. **Engagement** — `engagement.code` must match exactly → else REVIEW.
-3. **Safe harbor** — `present` continues; `absent`/`unclear`/missing →
-   REVIEW (`SAFE_HARBOR_ABSENT` / `SAFE_HARBOR_UNCLEAR`). Never a DENY
-   cause, never an upgrade.
+3. **Safe harbor** — `present` continues (`SAFE_HARBOR_PRESENT`);
+   `absent`/`unclear`/missing → REVIEW (`SAFE_HARBOR_ABSENT` /
+   `SAFE_HARBOR_UNCLEAR`). Never a DENY cause, never an upgrade.
 4. **Program state** — `testing_state`: `prohibited` → DENY
    (`PROGRAM_TESTING_PROHIBITED`), `allowed` → pass,
    `unspecified` → REVIEW (`PROGRAM_TESTING_UNSPECIFIED`); a missing
@@ -386,7 +386,7 @@ inputs produce identical `decision_hash` at any clock.
 ACTION_INVALID  FACTS_INVALID
 DOSSIER_PARTIAL  DOSSIER_FAILED  EVIDENCE_HASH_INVALID
 KNOWN_ISSUES_COUNTS_INVALID  REQUIRED_SECTIONS_INCOMPLETE  POLICY_CONFLICT
-SAFE_HARBOR_ABSENT  SAFE_HARBOR_UNCLEAR  ENGAGEMENT_MISMATCH
+SAFE_HARBOR_PRESENT  SAFE_HARBOR_ABSENT  SAFE_HARBOR_UNCLEAR  ENGAGEMENT_MISMATCH
 PROGRAM_SUBMISSIONS_PAUSED  PROGRAM_TESTING_PROHIBITED
 PROGRAM_TESTING_UNSPECIFIED
 SCOPE_INVENTORY_UNAVAILABLE
