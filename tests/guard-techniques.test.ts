@@ -15,6 +15,14 @@ describe("canonicalTechniqueId", () => {
     expect(canonicalTechniqueId("DoS")).toBe("denial_of_service");
     expect(canonicalTechniqueId("dos")).toBe("denial_of_service");
     expect(canonicalTechniqueId("social engineering")).toBe("social_engineering");
+    // Specific live ID (spec §8): must outrank the generic social_engineering
+    // alias so the Zendesk staff prohibition keys on its own rule.
+    expect(canonicalTechniqueId("social engineering zendesk staff")).toBe(
+      "social_engineering_zendesk_staff",
+    );
+    expect(canonicalTechniqueId("social_engineering_zendesk_staff")).toBe(
+      "social_engineering_zendesk_staff",
+    );
     expect(canonicalTechniqueId("automated scanning")).toBe("automated_scanning");
     expect(canonicalTechniqueId("automated scanners")).toBe("automated_scanners");
     expect(canonicalTechniqueId("automated tools")).toBe("automated_tools");

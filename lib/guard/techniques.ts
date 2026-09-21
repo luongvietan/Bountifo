@@ -43,6 +43,7 @@ export const CANONICAL_TECHNIQUE_IDS = [
   "persistent_access",
   "denial_of_service",
   "social_engineering",
+  "social_engineering_zendesk_staff",
   "physical_testing",
   // vulnerability classes (VRT categories, exclusion rows)
   "xss",
@@ -103,6 +104,12 @@ const ALIASES: AliasRule[] = [
   {
     re: /\bdenial[\s-]?of[\s-]?service|\bd?dos\b/i,
     id: "denial_of_service",
+  },
+  {
+    // Program-scoped staff prohibition — more specific than generic social
+    // engineering, so it must match first ("social engineering zendesk staff").
+    re: /\bsocial[\s-]?engineer\w*\s+zendesk[\s_-]?staff\b/i,
+    id: "social_engineering_zendesk_staff",
   },
   {
     re: /\bsocial[\s-]?engineer|\bphishing\b|\bvishing\b|\bsmishing\b|\bimpersonat/i,
