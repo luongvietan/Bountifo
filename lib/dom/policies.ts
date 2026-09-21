@@ -27,6 +27,7 @@ import {
   tableBodyRows,
   itemsUnderHeading,
   precedingHeadingText,
+  scopeBlocks,
   sectionHeading,
   sectionItems,
   slugify,
@@ -44,6 +45,12 @@ export interface PolicyData {
     baseName: string;
     status: PermissionStatus;
     conditions: string[];
+    /**
+     * Leading situational clause bounding the rule's applicability
+     * ("if you have managed to compromise an Okta-owned server"). Empty
+     * when the sentence applies unconditionally.
+     */
+    contexts: string[];
     quote: string;
   }[];
   accountRules: string[];
@@ -163,6 +170,53 @@ const SCOPE_GROUP_HEADING_RE =
  * "The following are excluded:") introduce the items; they are not items.
  */
 const LEAD_IN_RE = /[:：]\s*$|^(?:the\s+)?following\b/i;
+
+/**
+ * Semantic lanes inside one parent section. A brief mixes "In-scope
+ * focused vulnerabilities:" and "Out of Scope vulnerabilities
+ * specifically excluded:" under a single heading — one section is not one
+ * category. A block becomes a lane marker when it reads like a label: a
+ * heading or colon-terminated lead-in starting with a lane prefix, or a
+ * short verb-free label. Everything after a marker belongs to that lane
+ * until the next marker.
+ */
+type AreaLane = "focus" | "exclusion";
+
+const LANE_RES: { lane: AreaLane; re: RegExp }[] = [
+  {
+    lane: "exclusion",
+    re: /^(?:out[- ]?of[- ]?scope|out[- ]?scope|excluded|exclusions?|not\s+(?:eligible|accepted|covered|in\s+scope)|prohibited|disallowed|forbidden|banned|ineligible|non[- ]?qualifying)\b/i,
+  },
+  {
+    lane: "focus",
+    re: /^(?:in[- ]?scope|focus(?:ed)?|priority|preferred|allowed|permitted|valid|accepted|eligible|qualifying|of\s+particular\s+interest)\b/i,
+  },
+];
+
+const LANE_TAIL_VERB_RE =
+  /\b(?:is|are|was|were|be|been|being|will|would|can|could|must|shall|should|may|might|do|does|did|has|have|had|not|get|gets|make|makes|take|takes)\b/i;
+
+function subsectionLane(text: string, heading: boolean): AreaLane | null {
+  const t = normalizeText(text).trim();
+  if (t === "") return null;
+  const colon = /[:：]\s*$/.test(t);
+  const stripped = t.replace(/[.,;:!?]+$/, "");
+  for (const { lane, re } of LANE_RES) {
+    const m = re.exec(stripped);
+    if (m === null) continue;
+    if (heading || colon) return lane;
+    // A short label-looking block ("Out of Scope vulnerabilities") also
+    // marks a range; a verb anywhere in the tail means it is prose, not a
+    // label.
+    if (
+      stripped.split(/\s+/).length <= 8 &&
+      !LANE_TAIL_VERB_RE.test(stripped.slice(m[0].length))
+    ) {
+      return lane;
+    }
+  }
+  return null;
+}
 
 /** Keyword bucket for program-rule lines that match no technique. */
 const FALLBACK_BUCKETS: { bucket: keyof PolicyData; re: RegExp }[] = [
@@ -298,6 +352,7 @@ export function collectPolicies(
         baseName: finding.baseName,
         status: finding.status,
         conditions: finding.conditions,
+        contexts: finding.contexts,
         quote: text,
       };
       data.techniques.push(technique);
@@ -340,20 +395,58 @@ export function collectPolicies(
     exclusions: boolean,
   ): void => {
     const heading = scope.heading ?? keyPrefix;
-    for (const item of scope.items) {
+    // Focus/exclusion passes read the scope as a lane-marked block stream:
+    // one parent section can hold an in-scope range and an out-of-scope
+    // range, and the marker — not the parent label — decides where an item
+    // lands. Other passes keep the flat item list.
+    const laneAware = exclusions || keyPrefix === "focus-areas";
+    const blocks = laneAware
+      ? scopeBlocks(scope)
+      : scope.items.map((i) => ({ el: i.el, text: i.text, heading: false }));
+    let lane: AreaLane | null = null;
+    for (const item of blocks) {
+      if (laneAware) {
+        const detected = subsectionLane(item.text, item.heading);
+        if (detected !== null) {
+          lane = detected;
+          continue;
+        }
+      }
+      const route: AreaLane | "plain" = laneAware
+        ? (lane ?? (exclusions ? "exclusion" : "focus"))
+        : "plain";
       if (seen !== null && seen !== undefined && seen.has(sectionKey(heading, item.text))) {
         continue;
       }
       // A list lead-in ("Out of scope findings include (but are not limited
       // to):") introduces the items; it is not itself an exclusion or a focus
       // area.
-      if ((exclusions || keyPrefix === "focus-areas") && LEAD_IN_RE.test(item.text)) {
+      if (laneAware && LEAD_IN_RE.test(item.text)) {
         continue;
       }
       seen?.add(sectionKey(heading, item.text));
-      if (!sink.includes(item.text)) sink.push(item.text);
-      if (exclusions) {
+      if (route === "focus") {
+        if (!data.focusAreas.includes(item.text)) {
+          data.focusAreas.push(item.text);
+        }
+        emit(
+          "focus-areas",
+          slugify(item.text),
+          item.text,
+          item.text,
+          level,
+          "exact",
+          { section: heading },
+        );
+        continue;
+      }
+      if (route === "exclusion") {
+        if (!data.nonFocusAreas.includes(item.text)) {
+          data.nonFocusAreas.push(item.text);
+        }
         const textKey = normalizeText(item.text);
+        // Exclusions dedupe on text: a repeated excluded finding emits
+        // neither a second exclusion nor a second technique record.
         if (seenExclusionTexts.has(textKey)) continue;
         seenExclusionTexts.add(textKey);
         data.exclusions.push({
@@ -362,10 +455,21 @@ export function collectPolicies(
           testingStatus: testingStatusOf(item.text),
           rewardStatus: rewardStatusOf(item.text),
         });
-      }
-      if (exclusions && emitTechniques(item.text, keyPrefix, { section: heading })) {
+        if (emitTechniques(item.text, "non-focus-areas", { section: heading })) {
+          continue;
+        }
+        emit(
+          "non-focus-areas",
+          slugify(item.text),
+          item.text,
+          item.text,
+          level,
+          "exact",
+          { section: heading },
+        );
         continue;
       }
+      if (!sink.includes(item.text)) sink.push(item.text);
       emit(keyPrefix, slugify(item.text), item.text, item.text, level, "exact", {
         section: heading,
       });

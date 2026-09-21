@@ -657,6 +657,89 @@ export function sectionItems(
   return out;
 }
 
+export interface ScopeBlock {
+  el: Element;
+  text: string;
+  /**
+   * True for sub-headings/labels that can mark a semantic range inside the
+   * scope — the scope's own leading heading is never a marker.
+   */
+  heading: boolean;
+}
+
+/** blocksOf variant that emits sub-headings as marker-capable blocks. */
+function blocksOfMarked(
+  el: Element,
+  out: { el: Element; heading: boolean }[],
+): void {
+  if (chainHidden(el)) return;
+  if (el.matches(HEADING_SEL)) {
+    out.push({ el, heading: true });
+    return;
+  }
+  if (el.matches("ul,ol")) {
+    for (const li of el.querySelectorAll("li")) {
+      if (li.querySelector("li") === null) out.push({ el: li, heading: false });
+    }
+    return;
+  }
+  if (el.matches(TEXT_BLOCK_SEL) && el.querySelector(TEXT_BLOCK_SEL) === null) {
+    out.push({ el, heading: false });
+    return;
+  }
+  for (const li of el.querySelectorAll("li")) {
+    if (li.querySelector("li") === null) out.push({ el: li, heading: false });
+  }
+  for (const block of eachTextBlock(el)) {
+    if (block.el.closest("li") !== null) continue;
+    out.push({ el: block.el, heading: block.el.matches(HEADING_SEL) });
+  }
+}
+
+/**
+ * A scope's content as an ordered block stream that keeps sub-headings
+ * visible as marker-capable blocks. `scope.items` alone flattens a mixed
+ * section ("In-scope … / Out of Scope …" ranges under one parent heading)
+ * into an unlabelled list; the marker blocks let a collector split the
+ * ranges by their semantic labels in document order.
+ */
+export function scopeBlocks(scope: SectionScope): ScopeBlock[] {
+  const marked: { el: Element; heading: boolean }[] = [];
+  if (scope.bounded) {
+    for (const member of scope.members) blocksOfMarked(member, marked);
+  } else {
+    const ownedBy = (el: Element): boolean => {
+      let cur = el.parentElement;
+      while (cur !== null) {
+        if (cur === scope.el) return true;
+        if (cur.matches(OWNER_SEL)) return false;
+        cur = cur.parentElement;
+      }
+      return false;
+    };
+    const first = scope.el.querySelector(HEADING_SEL);
+    for (const h of scope.el.querySelectorAll(HEADING_SEL)) {
+      if (h === first) continue; // the section's own label is not a marker
+      if (!ownedBy(h)) continue;
+      if (chainHidden(h, scope.el)) continue;
+      marked.push({ el: h, heading: true });
+    }
+    for (const item of scope.items) {
+      marked.push({ el: item.el, heading: false });
+    }
+  }
+  const els = inDocumentOrder(marked.map((m) => m.el));
+  const flag = new Map(marked.map((m) => [m.el, m.heading]));
+  const out: ScopeBlock[] = [];
+  for (const el of els) {
+    const text = textOf(el);
+    if (text !== "") {
+      out.push({ el, text, heading: flag.get(el) === true });
+    }
+  }
+  return out;
+}
+
 /**
  * Text-block elements that sit under a subheading inside a container: finds
  * the first heading matching `re`, then walks its following siblings until the
