@@ -186,6 +186,56 @@ describe("technique identity specificity", () => {
     expect(findings[0]!.contexts.join(" ")).toContain(
       "compromise an Okta-owned server",
     );
+    expect(findings[0]!.applicability).toEqual({
+      type: "conditional_context",
+      conditions: [{ kind: "phase", value: "post_compromise" }],
+    });
+  });
+
+  it("reads the antecedent through a discourse marker without a comma", () => {
+    // Live Okta phrasing: "However, if ... server we do not allow ..."
+    const findings = techniqueFindingsIn(
+      "However, if you have managed to compromise an Okta owned server " +
+        "we do not allow for escalations such as " +
+        "port scanning internal networks, privilege escalation attempts, " +
+        "attempting to pivot to other systems, etc.",
+    );
+    const port = findings.find(
+      (f) => f.name === "port scanning internal networks",
+    );
+    expect(port).toBeDefined();
+    expect(port!.status).toBe("prohibited");
+    expect(port!.applicability).toEqual({
+      type: "conditional_context",
+      conditions: [{ kind: "phase", value: "post_compromise" }],
+    });
+  });
+
+  it("preserves an unknown antecedent verbatim instead of widening", () => {
+    const findings = techniqueFindingsIn(
+      "If the program announces a maintenance window, do not run scanners.",
+    );
+    const scan = findings.find((f) => f.name === "scanning");
+    expect(scan).toBeDefined();
+    expect(scan!.applicability).toEqual({
+      type: "conditional_context",
+      conditions: [
+        {
+          kind: "antecedent_text",
+          text: "the program announces a maintenance window",
+        },
+      ],
+    });
+  });
+
+  it("leaves rules without an antecedent engagement-wide", () => {
+    const findings = techniqueFindingsIn(
+      "The use of any automated tools or scanners is prohibited.",
+    );
+    expect(findings.length).toBeGreaterThan(0);
+    expect(
+      findings.every((f) => f.applicability.type === "engagement"),
+    ).toBe(true);
   });
 
   it("keeps earlier narrowed forms stable", () => {
@@ -226,10 +276,34 @@ describe("data-access object splitting", () => {
     expect(findings.every((f) => f.status === "prohibited")).toBe(true);
   });
 
+  it("keeps a broad PII fact for direct PII language", () => {
+    // Suppression applies only when evidence resolves to a narrower,
+    // non-equivalent resource or ownership boundary — a rule that
+    // directly governs PII keeps the canonical bucket.
+    const direct = techniqueFindingsIn(
+      "Access to personally identifiable information is prohibited.",
+    );
+    const pii = direct.find((f) => f.name === "PII access");
+    expect(pii).toBeDefined();
+    expect(pii!.status).toBe("prohibited");
+    const imperative = techniqueFindingsIn("Do not access PII.");
+    expect(
+      imperative.some((f) => f.name.toLowerCase() === "pii access"),
+    ).toBe(true);
+    const approval = techniqueFindingsIn(
+      "Personal information may be accessed only with prior approval.",
+    );
+    expect(approval.some((f) => f.name === "PII access")).toBe(true);
+  });
+
   it("own-account and data-access rules never share a fact key", () => {
     const own = techniqueFindingsIn(
       "Only test on accounts you own. " +
         "Do not attempt to access other merchants.",
+    );
+    const scoped = techniqueFindingsIn(
+      "When investigating a vulnerability, please only target your account " +
+        "and do not attempt to access data from anyone else's account.",
     );
     const data = techniqueFindingsIn(
       "Do not access customer or employee personal information, " +
@@ -238,6 +312,13 @@ describe("data-access object splitting", () => {
     const cross = own.find((f) => f.name === "cross-account testing");
     expect(cross).toBeDefined();
     expect(cross!.status).toBe("conditional");
+    // Account-scoped data access resolves to its own narrow identity —
+    // never the broad PII bucket.
+    expect(scoped.some((f) => f.name === "PII access")).toBe(false);
+    const accountData = scoped.find((f) =>
+      f.name.includes("anyone else's account"),
+    );
+    expect(accountData).toBeDefined();
     // No fake PII conflict: distinct semantic resources → distinct keys.
     const byName = new Map<string, AssertionInput[]>();
     for (const f of [...own, ...data]) {
@@ -424,6 +505,7 @@ describe("Rapyd live-shape brief", () => {
         <h2 id="rules">Program Rules</h2>
         <ul>
           <li>Only test on accounts you own — do not attempt to access other merchants.</li>
+          <li>When investigating a vulnerability, please only target your account and do not attempt to access data from anyone else's account.</li>
           <li>Do not access customer or employee personal information, credit card data, and Rapyd confidential information. If you accidentally access any of these, stop testing and submit the vulnerability.</li>
           <li>Automated scanning against any contact/submission form will not be tolerated.</li>
         </ul>
@@ -452,6 +534,10 @@ describe("Rapyd live-shape brief", () => {
     expect(cross).toBeDefined();
     expect(cross!.status).toBe("conditional");
     expect(cross!.conditions.join(" ")).toContain("accounts you own");
+    // Ownership/cross-account evidence is not a PII permission — the broad
+    // bucket key must not survive when the action resolves to a narrower
+    // account-scoped identity.
+    expect(data.techniques.some((t) => t.name === "PII access")).toBe(false);
     const names = data.techniques.map((t) => t.name);
     for (const n of [
       "customer or employee personal information access",
@@ -499,22 +585,27 @@ describe("Okta live-shape brief", () => {
           <li>The use of any automated tools or scanners is prohibited.</li>
           <li>No automated scanning.</li>
           <li>Do NOT perform any type of burp scans or scanners.</li>
-          <li>If you have managed to compromise an Okta-owned server, we do not allow escalations such as port scanning internal networks, privilege escalation attempts, attempting to pivot to other systems.</li>
+          <li>Chaining of bugs is not frowned upon in any way, we love to see clever exploit chains! However, if you have managed to compromise an Okta owned server we do not allow for escalations such as port scanning internal networks, privilege escalation attempts, attempting to pivot to other systems, etc.</li>
         </ul>
       </section>
     `),
     PAGE_URL,
   );
 
-  it("keeps the blanket automated-tool prohibitions", () => {
+  it("keeps the blanket automated-tool prohibitions engagement-wide", () => {
     const names = data.techniques.map((t) => t.name);
     expect(names).toContain("automated tools");
     expect(names).toContain("automated scanners");
     expect(names).toContain("automated scanning");
-    for (const n of ["automated tools", "automated scanners", "automated scanning"]) {
-      expect(
-        data.techniques.find((t) => t.name === n)!.status,
-      ).toBe("prohibited");
+    for (const n of [
+      "automated tools",
+      "automated scanners",
+      "automated scanning",
+    ]) {
+      const row = data.techniques.find((t) => t.name === n)!;
+      expect(row.status).toBe("prohibited");
+      // The post-compromise antecedent must not bleed into global rules.
+      expect(row.applicability.type).toBe("engagement");
     }
   });
 
@@ -525,7 +616,15 @@ describe("Okta live-shape brief", () => {
     );
     expect(port).toBeDefined();
     expect(port!.status).toBe("prohibited");
-    expect(port!.contexts.join(" ")).toContain("Okta-owned server");
+    expect(port!.contexts.join(" ")).toContain(
+      "compromise an Okta owned server",
+    );
+    // The prohibition is scoped to the post-compromise context — never
+    // silently widened to the whole engagement.
+    expect(port!.applicability).toEqual({
+      type: "conditional_context",
+      conditions: [{ kind: "phase", value: "post_compromise" }],
+    });
   });
 
   it("emits only well-formed records", () => {

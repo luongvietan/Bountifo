@@ -475,7 +475,14 @@ export class JobCoordinator {
       const matching = evidence.filter((item) => normalizeText(item.quote) === normalizeText(technique.quote));
       addAssertion(
         technique.name,
-        mapTechnique(technique, matching, { type: "engagement" }),
+        // A contextual rule keeps the narrowest antecedent that governs its
+        // predicate ("if you have managed to compromise a server …"); it is
+        // never silently broadened to engagement-wide.
+        mapTechnique(
+          technique,
+          matching,
+          technique.applicability ?? { type: "engagement" },
+        ),
       );
     }
     const targetIdByDomKey = new Map(

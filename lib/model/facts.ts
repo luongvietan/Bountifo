@@ -48,23 +48,45 @@ function uniqSortedIds(evs: Evidence[]): string[] {
 
 /**
  * Merge applicability across assertions. Identical scopes pass through (ids
- * normalized to sorted-unique). Multiple `target_ids` scopes union. Anything
- * more divergent widens conservatively to `engagement` — the fact cannot be
- * narrowed when its backing sources disagree about where it applies.
+ * normalized to sorted-unique, context conditions preserved). Multiple
+ * `target_ids` scopes union. Multiple `conditional_context` scopes union
+ * their antecedents — the rule applies when any of them holds. Anything
+ * more divergent widens conservatively to `engagement`: a fact asserted
+ * unconditionally anywhere is engagement-wide, never narrower.
  */
 function mergeApplicability(apps: Applicability[]): Applicability {
   if (apps.length === 0) return { type: "engagement" };
   const first = apps[0]!;
   if (apps.every((a) => canonicalJson(a) === canonicalJson(first))) {
-    return first.ids === undefined
-      ? { type: first.type }
-      : { type: first.type, ids: [...new Set(first.ids)].sort() };
+    return {
+      type: first.type,
+      ...(first.ids === undefined
+        ? {}
+        : { ids: [...new Set(first.ids)].sort() }),
+      ...(first.conditions === undefined
+        ? {}
+        : { conditions: first.conditions }),
+    };
   }
   if (apps.every((a) => a.type === "target_ids")) {
     return {
       type: "target_ids",
       ids: [...new Set(apps.flatMap((a) => a.ids ?? []))].sort(),
     };
+  }
+  if (apps.every((a) => a.type === "conditional_context")) {
+    const seen = new Set<string>();
+    const conditions = apps
+      .flatMap((a) => a.conditions ?? [])
+      .filter((c) => {
+        const key = canonicalJson(c);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    if (conditions.length > 0) {
+      return { type: "conditional_context", conditions };
+    }
   }
   return { type: "engagement" };
 }

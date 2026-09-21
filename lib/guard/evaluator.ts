@@ -266,6 +266,12 @@ function appliesTo(
       const groups = targetGroupIds(ir, targetId);
       return (applies.ids ?? []).some((id) => groups.includes(id));
     }
+    // A context-bound rule ("if you have managed to compromise a server")
+    // cannot be verified without a context signal, so it never covers the
+    // action unconditionally — the action falls back to REVIEW rather than
+    // inheriting the rule's prohibition engagement-wide.
+    case "conditional_context":
+      return false;
     default:
       return false;
   }

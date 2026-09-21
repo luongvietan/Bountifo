@@ -21,9 +21,24 @@ export interface IrTechniqueRule {
   canonical: string | null;
   status: "allowed" | "prohibited" | "conditional" | "unspecified";
   predicates: GuardPredicate[];
+  /**
+   * `conditional_context` keeps a rule bounded by an explicit antecedent
+   * (e.g. post-compromise). The evaluator cannot verify context yet, so
+   * such a rule never covers an action unconditionally — the action falls
+   * back to review rather than inheriting a widened prohibition.
+   */
   applies_to: {
-    type: "all_targets" | "target_ids" | "target_group_ids" | "engagement";
+    type:
+      | "all_targets"
+      | "target_ids"
+      | "target_group_ids"
+      | "engagement"
+      | "conditional_context";
     ids?: string[];
+    conditions?: (
+      | { kind: "phase"; value: "post_compromise" }
+      | { kind: "antecedent_text"; text: string }
+    )[];
   };
   evidence_refs: string[];
   conflict_detected: boolean;

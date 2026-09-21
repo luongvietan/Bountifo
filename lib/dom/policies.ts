@@ -8,6 +8,7 @@ import {
   testingStatusOf,
 } from "../model/policyText";
 import type {
+  Applicability,
   ExtractionStatus,
   PermissionStatus,
   SourceLevel,
@@ -51,6 +52,12 @@ export interface PolicyData {
      * when the sentence applies unconditionally.
      */
     contexts: string[];
+    /**
+     * The narrowest explicit antecedent governing the rule — a typed
+     * condition when deterministic, verbatim `antecedent_text` otherwise.
+     * `engagement` only when no antecedent bounds the rule.
+     */
+    applicability: Applicability;
     quote: string;
   }[];
   accountRules: string[];
@@ -353,6 +360,7 @@ export function collectPolicies(
         status: finding.status,
         conditions: finding.conditions,
         contexts: finding.contexts,
+        applicability: finding.applicability,
         quote: text,
       };
       data.techniques.push(technique);

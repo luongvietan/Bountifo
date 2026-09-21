@@ -20,7 +20,8 @@ export type ApplicabilityType =
   | "all_targets"
   | "target_ids"
   | "target_group_ids"
-  | "engagement";
+  | "engagement"
+  | "conditional_context";
 export type IdentityQuality =
   | "api"
   | "exact_location"
@@ -61,9 +62,20 @@ export interface Evidence {
   extraction: { status: ExtractionStatus; parser_version: string };
 }
 
+/**
+ * A deterministic condition bounding a rule's applicability. `phase` covers
+ * antecedents the exporter can type with certainty (post-compromise); any
+ * other antecedent is preserved verbatim as `antecedent_text` so the rule
+ * stays narrow instead of silently widening to the whole engagement.
+ */
+export type PolicyContextCondition =
+  | { kind: "phase"; value: "post_compromise" }
+  | { kind: "antecedent_text"; text: string };
+
 export interface Applicability {
   type: ApplicabilityType;
   ids?: string[];
+  conditions?: PolicyContextCondition[];
 }
 
 export interface Condition {

@@ -1,5 +1,9 @@
 import { normalizeText } from "../canonical";
-import type { PermissionStatus } from "../types";
+import type {
+  Applicability,
+  PermissionStatus,
+  PolicyContextCondition,
+} from "../types";
 
 /**
  * Sentence-level semantics for policy text (spec §11).
@@ -41,7 +45,7 @@ export const TECHNIQUES: TechniqueDef[] = [
   // researcher's own second account, which the cross-account rule governs.
   { name: "other customer data", slug: "other-customer-data", re: /(?:other|another)\s+(?:users?|customers?|tenants?)(?:'|’)?s?\s+(?:data|services?|accounts?|information)/i },
   { name: "third-party", slug: "third-party", re: /third[\s-]?part(?:y|ies)/i },
-  { name: "PII access", slug: "pii-access", re: /\bpii\b|personally\s+identifiable|personal\s+(?:data|information)|(?:access|accessed|accessing|retain(?:ed|ing)?|cop(?:y|ied|ying)|download(?:ed|ing)?|collect(?:ed|ing)?)\s+(?:any\s+|user\s+|customer\s+|personal\s+)*data\b|\bdata\s+accessed\b/i },
+  { name: "PII access", slug: "pii-access", re: /\bpii\b|personally\s+identifiable(?:\s+(?:information|data))?|personal\s+(?:data|information)|(?:access|accessed|accessing|retain(?:ed|ing)?|cop(?:y|ied|ying)|download(?:ed|ing)?|collect(?:ed|ing)?)\s+(?:any\s+|user\s+|customer\s+|personal\s+)*data\b|\bdata\s+accessed\b/i },
   { name: "data exfiltration", slug: "data-exfiltration", re: /exfiltrat|data\s+theft|dump(?:ing)?\s+(?:data|databases?)/i },
   { name: "persistent access", slug: "persistent-access", re: /persist(?:ent|ence)|backdoor|web\s*shell|maintain(?:ing)?\s+access/i },
 ];
@@ -702,6 +706,14 @@ export interface TechniqueFinding {
    * sentence applies unconditionally.
    */
   contexts: string[];
+  /**
+   * Structured form of the same antecedent: a rule inherits the narrowest
+   * explicit context governing its normative predicate. Known antecedents
+   * become typed conditions; anything else stays verbatim under
+   * `antecedent_text` so the rule is never silently widened to
+   * `engagement`.
+   */
+  applicability: Applicability;
   /** The sentence the finding was read from. */
   quote: string;
   /** Both polarities asserted without a restrictive form — unattributable. */
@@ -712,10 +724,13 @@ export interface TechniqueFinding {
  * A leading situational clause bounds the rule's applicability:
  * "if you have managed to compromise an Okta-owned server, we do not allow
  * escalations …" — the port-scanning ban applies post-compromise, not
- * engagement-wide. Preserved verbatim (deterministic, not typed).
+ * engagement-wide. Leading discourse markers ("However,") are skipped; the
+ * antecedent ends at a comma, "then", a program-side clause subject
+ * ("we do not allow"), an imperative head ("do not", "please"), or a
+ * permission copula ("is not allowed") — whichever comes first.
  */
 const CONTEXT_LEAD_RE =
-  /^\s*(?:if|when|after|once|in\s+the\s+event(?:\s+that)?|should|assuming|upon)\s+([^,;:]{3,200}?)(?:,|\bthen\b)/i;
+  /^\s*(?:(?:however|but|note|also|additionally|furthermore|moreover|finally|please\s+note|in\s+addition)\s*[,;:—–-]?\s*)*(?:if|when|after|once|in\s+the\s+event(?:\s+that)?|should|assuming|upon)\s+(.+?)(?=\s*,|\s*\bthen\b|\s+(?:we|our|the\s+(?:program|engagement|company|team)|bugcrowd)\b|\s+(?:(?:do|does|did|must|shall|will|would|may|might|can|could|should)\s+not|cannot|can't|never|please)\b|\s+(?:is|are|was|were|will|would|may|might|can|could|should|must|shall)\s+(?:not\s+|never\s+)?(?:allowed|permitted|prohibited|forbidden|banned|tolerated|acceptable|authorized|authorised)\b|\s*$)/i;
 
 function contextsOf(sentence: string): string[] {
   const m = CONTEXT_LEAD_RE.exec(sentence.trim());
@@ -725,14 +740,49 @@ function contextsOf(sentence: string): string[] {
 }
 
 /**
+ * Antecedents the exporter can type deterministically: a compromise or
+ * first foothold on program infrastructure — "you have managed to
+ * compromise an Okta-owned server", "once a system is compromised",
+ * "if you gain access to a host". Anything outside this stays verbatim.
+ */
+const POST_COMPROMISE_RE =
+  /\bcompromis\w*\b[^.!?]{0,80}?\b(?:servers?|systems?|hosts?|machines?|networks?|accounts?|targets?|boxes|devices?|domains?|infrastructures?|environments?|applications?|services?|assets?|endpoints?|databases?)\b|\b(?:servers?|systems?|hosts?|machines?|networks?|accounts?|targets?|boxes|devices?|domains?|infrastructures?|environments?|applications?|services?|assets?|endpoints?|databases?)\b[^.!?]{0,80}?\bcompromis\w*\b|\bgain\w*\s+(?:initial\s+)?(?:access|control|a\s+foothold|foothold|code\s+execution|a\s+shell|root|admin)\b|\bobtain\w*\s+(?:access|control|code\s+execution|a\s+shell|root)\b|\b(?:remote\s+code\s+execution|rce|a\s+shell|root|admin(?:istrator)?\s+access)\s+on\b|\bestablish\w*\s+a?\s*foothold\b/i;
+
+/**
+ * The narrowest explicit antecedent governs the rule. A known antecedent is
+ * typed (`phase: post_compromise`); an unknown one keeps its exact text as
+ * `antecedent_text` — partial but never broadened to `engagement`.
+ */
+function applicabilityOf(sentence: string): Applicability {
+  const ctx = contextsOf(sentence)[0];
+  if (ctx === undefined) return { type: "engagement" };
+  const conditions: PolicyContextCondition[] = POST_COMPROMISE_RE.test(ctx)
+    ? [{ kind: "phase", value: "post_compromise" }]
+    : [{ kind: "antecedent_text", text: ctx }];
+  return { type: "conditional_context", conditions };
+}
+
+/**
  * A coordinated object list under one access verb names *different*
  * resources — "do not access customer or employee personal information,
  * credit card data, and Rapyd confidential information" is three separate
  * data-access prohibitions, not one PII bucket that could collide with an
  * unrelated own-account rule into a fake conflict.
  */
-const ACCESS_VERB_G =
-  /\b(?:do|does|did)\s+not\s+(access|copy|download|collect|retain|exfiltrate|dump|store|share|disclose|read|view|reuse|use)\w*\b|\bnever\s+(access|copy|download|collect|retain|exfiltrate|dump|store|share|disclose|read|view)\w*\b|\b(?:must|shall|may|can|could|will|would|should|might|cannot|can't)\s+not\s+(access|copy|download|collect|retain|exfiltrate|dump|store|share|disclose|read|view)\w*\b/gi;
+const ACCESS_ATTEMPT =
+  "(?:attempts?|attempted|attempting|try|tries|tried|trying|seek|seeks|sought|seeking|endeavou?rs?|endeavou?red|endeavou?ring)\\s+to\\s+";
+const ACCESS_VERB_G = new RegExp(
+  "\\b(?:do|does|did)\\s+not\\s+(?:" +
+    ACCESS_ATTEMPT +
+    ")?(access|copy|download|collect|retain|exfiltrate|dump|store|share|disclose|read|view|reuse|use)\\w*\\b" +
+    "|\\bnever\\s+(?:" +
+    ACCESS_ATTEMPT +
+    ")?(access|copy|download|collect|retain|exfiltrate|dump|store|share|disclose|read|view)\\w*\\b" +
+    "|\\b(?:must|shall|may|can|could|will|would|should|might|cannot|can't)\\s+not\\s+(?:" +
+    ACCESS_ATTEMPT +
+    ")?(access|copy|download|collect|retain|exfiltrate|dump|store|share|disclose|read|view)\\w*\\b",
+  "gi",
+);
 const OBJECT_BOUNDARY_RE =
   /\bbut\b|\bhowever\b|\bbecause\b|\bsince\b|\bunless\b|\bexcept\b|\bprovided\b|\bif\b|\bwhen\b|\bwhile\b|\bin\s+order\b|[.!?:;()]/i;
 const RESOURCE_RE =
@@ -1040,6 +1090,7 @@ export function techniqueFindingsIn(text: string): TechniqueFinding[] {
     const conditions =
       status === "conditional" ? conditionsOf(sentence) : [];
     const contexts = contextsOf(sentence);
+    const applicability = applicabilityOf(sentence);
     // Drop a matched topic when an adjacent match is its modifier: in
     // "automated scanning", "automated" describes the scanning — it is not a
     // separate "automation" claim.
@@ -1093,6 +1144,7 @@ export function techniqueFindingsIn(text: string): TechniqueFinding[] {
               status: status!,
               conditions,
               contexts,
+              applicability,
               quote: sentence,
               ambiguous,
             });
@@ -1108,6 +1160,7 @@ export function techniqueFindingsIn(text: string): TechniqueFinding[] {
         status: ambiguous ? "unspecified" : status!,
         conditions,
         contexts,
+        applicability,
         quote: sentence,
         ambiguous,
       });
