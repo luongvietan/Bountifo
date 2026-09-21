@@ -238,6 +238,65 @@ describe("technique identity specificity", () => {
     ).toBe(true);
   });
 
+  it("determines status per governed clause, not per sentence", () => {
+    // The restrictive "only target" conditions its own clause; it must not
+    // downgrade the explicit "do not attempt to access" prohibition that
+    // governs the data-access span.
+    const findings = techniqueFindingsIn(
+      "When investigating a vulnerability, please only target your account " +
+        "and do not attempt to access data from anyone else's account.",
+    );
+    const scoped = findings.find((f) =>
+      f.name.includes("anyone else's account"),
+    );
+    expect(scoped).toBeDefined();
+    expect(scoped!.status).toBe("prohibited");
+    expect(scoped!.conditions).toEqual([]);
+    expect(scoped!.applicability.type).toBe("engagement");
+    expect(findings.some((f) => f.name === "PII access")).toBe(false);
+  });
+
+  it("keeps coordinated object lists in one clause", () => {
+    // A list comma never separates the objects from their governing verb.
+    const findings = techniqueFindingsIn(
+      "Do not access customer or employee personal information, " +
+        "credit card data, and Rapyd confidential information.",
+    );
+    expect(findings.length).toBe(3);
+    expect(findings.every((f) => f.status === "prohibited")).toBe(true);
+  });
+
+  it("treats generic research framing as engagement-wide", () => {
+    // "When investigating…", "during security testing…" restate the
+    // activity; they are not antecedents that narrow a rule.
+    for (const lead of [
+      "When investigating a vulnerability",
+      "During security testing",
+      "While performing security research",
+      "When testing the program",
+    ]) {
+      const findings = techniqueFindingsIn(
+        `${lead}, do not access user data.`,
+      );
+      const f = findings.find((x) => x.name === "user data access");
+      expect(f, lead).toBeDefined();
+      expect(f!.status).toBe("prohibited");
+      expect(f!.applicability.type, lead).toBe("engagement");
+    }
+  });
+
+  it("still narrows a real situational antecedent", () => {
+    const findings = techniqueFindingsIn(
+      "If you compromise a server, do not run scanners.",
+    );
+    const f = findings.find((x) => x.name === "scanning");
+    expect(f).toBeDefined();
+    expect(f!.applicability).toEqual({
+      type: "conditional_context",
+      conditions: [{ kind: "phase", value: "post_compromise" }],
+    });
+  });
+
   it("keeps earlier narrowed forms stable", () => {
     expect(
       techniqueFindingsIn("Automated scanning is prohibited.").map((f) => f.name),
@@ -319,6 +378,14 @@ describe("data-access object splitting", () => {
       f.name.includes("anyone else's account"),
     );
     expect(accountData).toBeDefined();
+    // Status is determined per governed clause: the restrictive "only
+    // target" marks its own clause conditional; the "do not attempt to
+    // access" clause is an explicit prohibition and keeps it.
+    expect(accountData!.status).toBe("prohibited");
+    expect(accountData!.conditions).toEqual([]);
+    // "When investigating a vulnerability" is research framing — it does
+    // not narrow the rule into a conditional context.
+    expect(accountData!.applicability.type).toBe("engagement");
     // No fake PII conflict: distinct semantic resources → distinct keys.
     const byName = new Map<string, AssertionInput[]>();
     for (const f of [...own, ...data]) {
@@ -538,6 +605,15 @@ describe("Rapyd live-shape brief", () => {
     // bucket key must not survive when the action resolves to a narrower
     // account-scoped identity.
     expect(data.techniques.some((t) => t.name === "PII access")).toBe(false);
+    // The account-scoped access rule is an explicit prohibition in its own
+    // clause — never the "only target" clause's conditional, and never
+    // narrowed by research framing.
+    const accountData = data.techniques.find((t) =>
+      t.name.includes("anyone else's account"),
+    );
+    expect(accountData).toBeDefined();
+    expect(accountData!.status).toBe("prohibited");
+    expect(accountData!.applicability.type).toBe("engagement");
     const names = data.techniques.map((t) => t.name);
     for (const n of [
       "customer or employee personal information access",

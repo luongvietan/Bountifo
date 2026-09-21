@@ -336,6 +336,79 @@ function clauseAfter(sentence: string, end: number): string {
 }
 
 /**
+ * Independent-clause boundaries inside a sentence. A separator starts a new
+ * clause only when what follows can head one — a negation/imperative
+ * ("and do not"), a subject ("but we"), or a subordinator ("when").
+ * A coordinated list never separates: in "do not access X, Y, and Z" the
+ * comma before "Y" and the "and" before "Z" introduce no clause head, so
+ * every object keeps the prohibition that governs it.
+ */
+const CLAUSE_SEP_G =
+  /[,;:—–()]|\band\b|\bbut\b|\bhowever\b|\botherwise\b|\bthen\b/gi;
+const CLAUSE_HEAD_RE =
+  /^\s*(?:do|does|did|must|shall|will|would|may|might|can|could|should|cannot|can't|won't|never|please|not|only|we|our|you|your|it|they|bugcrowd|researchers?|testers?|participants?|hackers?|if|when|after|once|unless|otherwise|else|also|additionally|furthermore|moreover|note|no|none|automated|manual|use|using|access|accessing|avoid|refrain|stop|submit|report|however)\b/i;
+
+interface ClauseBound {
+  start: number;
+  end: number;
+}
+
+function clauseBounds(sentence: string): ClauseBound[] {
+  const bounds: ClauseBound[] = [];
+  let start = 0;
+  let depth = 0;
+  CLAUSE_SEP_G.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = CLAUSE_SEP_G.exec(sentence)) !== null) {
+    const sep = m[0];
+    if (sep === "(") {
+      // A top-level "(" can open a directive parenthetical ("(do not use
+      // third-party sites)"); a nested one is just part of the clause.
+      if (depth === 0) {
+        const after = sentence.slice(m.index + sep.length);
+        if (CLAUSE_HEAD_RE.test(after)) {
+          if (m.index > start) bounds.push({ start, end: m.index });
+          start = m.index + sep.length;
+        }
+      }
+      depth++;
+      continue;
+    }
+    if (sep === ")") {
+      depth = Math.max(0, depth - 1);
+      const after = sentence.slice(m.index + sep.length);
+      if (depth === 0 && CLAUSE_HEAD_RE.test(after)) {
+        if (m.index > start) bounds.push({ start, end: m.index });
+        start = m.index + sep.length;
+      }
+      continue;
+    }
+    // Inside parentheses a separator belongs to the parenthetical —
+    // "(instead, please use other credentials)" must not split the host
+    // clause away from the predicate that governs its spans.
+    if (depth > 0) continue;
+    const after = sentence.slice(m.index + sep.length);
+    if (!CLAUSE_HEAD_RE.test(after)) continue;
+    if (m.index > start) bounds.push({ start, end: m.index });
+    start = m.index + sep.length;
+  }
+  if (sentence.length > start) bounds.push({ start, end: sentence.length });
+  return bounds;
+}
+
+/** The text of the independent clause containing `pos`. */
+function clauseAt(
+  sentence: string,
+  bounds: ClauseBound[],
+  pos: number,
+): string {
+  const found = bounds.find((b) => pos >= b.start && pos < b.end);
+  return found === undefined
+    ? sentence
+    : sentence.slice(found.start, found.end);
+}
+
+/**
  * The false-ALLOW gate: a permission predicate only counts when its
  * governed span names a testing action — the grant verb itself, the clause
  * it heads, or a technique mention inside that clause. Setup/resource
@@ -732,11 +805,64 @@ export interface TechniqueFinding {
 const CONTEXT_LEAD_RE =
   /^\s*(?:(?:however|but|note|also|additionally|furthermore|moreover|finally|please\s+note|in\s+addition)\s*[,;:—–-]?\s*)*(?:if|when|after|once|in\s+the\s+event(?:\s+that)?|should|assuming|upon)\s+(.+?)(?=\s*,|\s*\bthen\b|\s+(?:we|our|the\s+(?:program|engagement|company|team)|bugcrowd)\b|\s+(?:(?:do|does|did|must|shall|will|would|may|might|can|could|should)\s+not|cannot|can't|never|please)\b|\s+(?:is|are|was|were|will|would|may|might|can|could|should|must|shall)\s+(?:not\s+|never\s+)?(?:allowed|permitted|prohibited|forbidden|banned|tolerated|acceptable|authorized|authorised)\b|\s*$)/i;
 
+/**
+ * Words that only restate "you are doing security research". An antecedent
+ * built entirely of them — "when investigating a vulnerability", "during
+ * security testing", "while performing security research" — frames the
+ * activity; it is not a precondition that narrows a rule. A single
+ * non-generic word ("compromise", "production", "automated tools") makes
+ * the antecedent a real context.
+ */
+const GENERIC_CONTEXT_WORDS = new Set([
+  // function words
+  "a", "an", "the", "your", "you", "yours", "this", "that", "these", "those",
+  "for", "of", "in", "on", "during", "while", "when", "as", "at", "to",
+  "into", "upon", "within", "against", "under", "over", "by", "with", "from",
+  "per", "each", "every", "all", "any", "and", "or", "our", "we", "it",
+  "its", "their", "his", "her", "part", "course", "process", "case", "event",
+  "time", "times", "period", "way", "manner", "order", "context",
+  // research activity and program nouns
+  "investigating", "investigate", "investigates", "investigation",
+  "investigations", "researching", "research", "researches", "researcher",
+  "researchers", "testing", "test", "tests", "tested", "tester", "testers",
+  "security", "vulnerability", "vulnerabilities", "bug", "bugs", "issue",
+  "issues", "finding", "findings", "weakness", "weaknesses", "hunting",
+  "hunt", "hunts", "performing", "perform", "performs", "conducting",
+  "conduct", "conducts", "carrying", "out", "doing", "do", "engaging",
+  "engage", "engagement", "engagements", "participating", "participate",
+  "participation", "working", "work", "works", "looking", "exploring",
+  "explore", "examining", "examine", "probing", "probe", "assessing",
+  "assess", "assessment", "assessments", "evaluating", "evaluate",
+  "evaluation", "analyzing", "analyze", "analysing", "analyse", "reviewing",
+  "review", "reporting", "report", "reports", "submitting", "submit",
+  "submission", "submissions", "triaging", "verifying", "verify", "program",
+  "programs", "scope", "scoped", "target", "targets", "using", "use",
+  "used", "attempting", "attempt", "attempts", "trying", "try", "penetration",
+  "pentest", "pentesting", "audit", "auditing", "audits",
+]);
+
+function isGenericFraming(ctx: string): boolean {
+  const words = normalizeText(ctx)
+    .toLowerCase()
+    .replace(/[^a-z0-9'\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w !== "");
+  return (
+    words.length > 0 &&
+    words.every(
+      (w) =>
+        GENERIC_CONTEXT_WORDS.has(w) ||
+        GENERIC_CONTEXT_WORDS.has(w.replace(/'s$/, "")),
+    )
+  );
+}
+
 function contextsOf(sentence: string): string[] {
   const m = CONTEXT_LEAD_RE.exec(sentence.trim());
   if (m === null) return [];
   const ctx = (m[1] ?? "").replace(/[\s.,;:!?]+$/, "").trim();
-  return ctx === "" ? [] : [ctx];
+  if (ctx === "" || isGenericFraming(ctx)) return [];
+  return [ctx];
 }
 
 /**
@@ -1078,17 +1204,7 @@ export function techniqueFindingsIn(text: string): TechniqueFinding[] {
   for (const sentence of sentencesOf(text)) {
     const spans = techniqueSpans(sentence);
     if (spans.length === 0) continue;
-    const prohibited = hasProhibition(sentence);
-    const permitted = hasPermission(sentence);
-    const explicitCond = RESTRICTIVE_RES.some((re) => {
-      re.lastIndex = 0;
-      return re.test(sentence);
-    });
-    const ambiguous = prohibited && permitted && !explicitCond;
-    const status = statusOfSentence(sentence);
-    if (status === null && !ambiguous) continue;
-    const conditions =
-      status === "conditional" ? conditionsOf(sentence) : [];
+    const bounds = clauseBounds(sentence);
     const contexts = contextsOf(sentence);
     const applicability = applicabilityOf(sentence);
     // Drop a matched topic when an adjacent match is its modifier: in
@@ -1124,6 +1240,22 @@ export function techniqueFindingsIn(text: string): TechniqueFinding[] {
       }
     }
     for (const span of survivors) {
+      // Status is read from the clause governing the span, not the whole
+      // sentence: a restrictive "only X" clause conditions only its own
+      // span and must not downgrade an explicit "do not V Y" prohibition
+      // governing Y's clause.
+      const clause = clauseAt(sentence, bounds, span.start);
+      const prohibited = hasProhibition(clause);
+      const permitted = hasPermission(clause);
+      const explicitCond = RESTRICTIVE_RES.some((re) => {
+        re.lastIndex = 0;
+        return re.test(clause);
+      });
+      const ambiguous = prohibited && permitted && !explicitCond;
+      const status = statusOfSentence(clause);
+      if (status === null && !ambiguous) continue;
+      const conditions =
+        status === "conditional" ? conditionsOf(clause) : [];
       // The predicate must govern the span, not merely share the sentence:
       // "using third-party data inputs to force the model into executing
       // disallowed actions" bans the model's actions, not third-party inputs.
