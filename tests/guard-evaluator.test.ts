@@ -437,7 +437,7 @@ describe("decision lattice — §30", () => {
       VERIFIED_OWNED,
     );
     expect(d.decision).toBe("REVIEW");
-    expect(hasReason(d, "SAFE_HARBOR_UNCLEAR")).toBe(true);
+    expect(hasReason(d, "SAFE_HARBOR_ABSENT")).toBe(true);
   });
 
   it("leaked credentials trigger the credential rule → DENY", async () => {

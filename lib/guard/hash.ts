@@ -8,8 +8,8 @@ import { GUARD_ENGINE_VERSION, type GuardDecision } from "./types.ts";
  * produce identical hashes.
  */
 
-export async function policyHash(agentFacts: unknown): Promise<string> {
-  return `sha256:${await sha256Hex(`scope-guard-policy-v1:${canonicalJson(agentFacts)}`)}`;
+export async function policyHash(policyPreimage: unknown): Promise<string> {
+  return `sha256:${await sha256Hex(`scope-guard-policy-v1:${canonicalJson(policyPreimage)}`)}`;
 }
 
 export async function actionHash(action: unknown): Promise<string> {

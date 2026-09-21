@@ -15,7 +15,7 @@ describe("canonicalTechniqueId", () => {
     expect(canonicalTechniqueId("DoS")).toBe("denial_of_service");
     expect(canonicalTechniqueId("dos")).toBe("denial_of_service");
     expect(canonicalTechniqueId("social engineering")).toBe("social_engineering");
-    expect(canonicalTechniqueId("automated scanning")).toBe("automated_scanners");
+    expect(canonicalTechniqueId("automated scanning")).toBe("automated_scanning");
     expect(canonicalTechniqueId("automated scanners")).toBe("automated_scanners");
     expect(canonicalTechniqueId("automated tools")).toBe("automated_tools");
     expect(canonicalTechniqueId("scanning")).toBe("scanning");

@@ -6,6 +6,7 @@ import {
 } from "./conditions.ts";
 import { policyHash } from "./hash.ts";
 import { canonicalTechniqueId, techniquesMentionedIn } from "./techniques.ts";
+import { GUARD_ENGINE_VERSION } from "./types.ts";
 import type { AgentFacts, AgentFactsTarget } from "./types.ts";
 import type { ScopeInventoryInput } from "./targets.ts";
 
@@ -28,12 +29,14 @@ export interface IrTechniqueRule {
    * back to review rather than inheriting a widened prohibition.
    */
   applies_to: {
+    // Unknown types flow through to the evaluator, which REVIEWs them.
     type:
       | "all_targets"
       | "target_ids"
       | "target_group_ids"
       | "engagement"
-      | "conditional_context";
+      | "conditional_context"
+      | (string & {});
     ids?: string[];
     conditions?: (
       | { kind: "phase"; value: "post_compromise" }
@@ -249,7 +252,15 @@ export async function compilePolicy(facts: AgentFacts): Promise<CompiledPolicy> 
     diagnostics,
   };
 
-  return { ir, policy_hash: await policyHash(facts) };
+  // The policy hash identifies the normalized IR content plus the engine
+  // version — never raw input bytes or volatile values.
+  return {
+    ir,
+    policy_hash: await policyHash({
+      engine_version: GUARD_ENGINE_VERSION,
+      ir,
+    }),
+  };
 }
 
 /** Group ids a resolved target belongs to (for `target_group_ids` rules). */

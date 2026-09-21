@@ -18,7 +18,11 @@ export const CANONICAL_TECHNIQUE_IDS = [
   "automation",
   "scanning",
   "automated_scanners",
+  "automated_scanning",
   "automated_tools",
+  "automated_vulnerability_scanning",
+  "burp_scanning",
+  "port_scanning_internal_networks",
   "form_submission_automation",
   "contact_form_testing",
   "customer_data_validation",
@@ -28,8 +32,13 @@ export const CANONICAL_TECHNIQUE_IDS = [
   "cross_tenant",
   "cross_account_testing",
   "third_party",
+  "third_party_file_sharing",
   "pii_access",
   "other_customer_data",
+  "other_account_data_access",
+  "customer_personal_data_access",
+  "credit_card_data_access",
+  "confidential_information_access",
   "data_exfiltration",
   "persistent_access",
   "denial_of_service",
@@ -72,6 +81,15 @@ const ALIASES: AliasRule[] = [
     id: "customer_data_validation",
   },
   { re: /\bself[\s-]?xss\b/i, id: "self_xss" },
+  {
+    re: /\b(?:internal[\s-]?network|internal[\s-]?systems?)[\s-]?scann\w*|\bport[\s-]?scann\w*|\bscann\w*\s+(?:of\s+)?internal[\s-]?network/i,
+    id: "port_scanning_internal_networks",
+  },
+  {
+    re: /\bautomated\s+vulnerability\s+scann\w*|\bvulnerability\s+scanners?\b/i,
+    id: "automated_vulnerability_scanning",
+  },
+  { re: /\bburp(?:\s+suite|\s+scann\w*)?\b/i, id: "burp_scanning" },
   { re: /\bautomated\s+(?:tools?|tooling)\b/i, id: "automated_tools" },
   {
     re: /\b(?:automated|automatic)\s+scann\w*/i,
@@ -109,6 +127,26 @@ const ALIASES: AliasRule[] = [
   {
     re: /\b(?:other|another)\s+(?:users?|customers?|tenants?)'?s?\s+(?:data|services?|accounts?|information)/i,
     id: "other_customer_data",
+  },
+  {
+    re: /\b(?:anyone|someone)\s+else'?s?\s+account|\bdata\s+(?:from|of)\s+(?:anyone|someone)\s+else|\bother\s+people'?s?\s+accounts?\b/i,
+    id: "other_account_data_access",
+  },
+  {
+    re: /\bcredit[\s-]?card/i,
+    id: "credit_card_data_access",
+  },
+  {
+    re: /\bcustomer\s+(?:personal\s+|private\s+)?(?:data|information|records?)\b|\bcustomer\s+pii\b/i,
+    id: "customer_personal_data_access",
+  },
+  {
+    re: /\bconfidential\s+(?:information|data|records?)\b/i,
+    id: "confidential_information_access",
+  },
+  {
+    re: /\bthird[\s-]?party\s+(?:file|data)\s+sharing|\b(?:file|data)\s+sharing\s+(?:with|to|via)\s+third[\s-]?part/i,
+    id: "third_party_file_sharing",
   },
   { re: /\bthird[\s-]?part(?:y|ies)\b/i, id: "third_party" },
   {

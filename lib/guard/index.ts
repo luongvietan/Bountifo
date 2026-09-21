@@ -17,11 +17,24 @@ import {
 
 export { FactsParseError, parseAgentFacts, extractAgentFactsYaml } from "./parse.ts";
 export { compilePolicy, type CompiledPolicy, type PolicyIR } from "./policy.ts";
-export { evaluateAction, type EvaluateOptions } from "./evaluator.ts";
+export { evaluateAction, evaluateCondition, type EvaluateOptions } from "./evaluator.ts";
 export { resolveTarget, type TargetResolution } from "./targets.ts";
-export { canonicalTechniqueId, techniquesMentionedIn, CANONICAL_TECHNIQUE_IDS } from "./techniques.ts";
+export {
+  canonicalTechniqueId,
+  canonicalTechniqueId as canonicalizeTechnique,
+  techniquesMentionedIn,
+  CANONICAL_TECHNIQUE_IDS,
+} from "./techniques.ts";
 export { compileCondition, compileRule, type GuardPredicate, type GuardConstraint } from "./conditions.ts";
-export { policyHash, actionHash, decisionHash, decisionPreimage } from "./hash.ts";
+export {
+  policyHash,
+  policyHash as hashPolicy,
+  actionHash,
+  actionHash as hashAction,
+  decisionHash,
+  decisionHash as hashDecision,
+  decisionPreimage,
+} from "./hash.ts";
 export { runWithGuard, guardWrap, ScopeGuardBlocked } from "./harness.ts";
 export {
   GUARD_SCHEMA_VERSION,

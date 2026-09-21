@@ -5,7 +5,7 @@
  * `unresolved`, which the evaluator reads as REVIEW — never as satisfied.
  */
 
-export type OwnershipValue = "researcher" | "explicitly_authorized";
+export type OwnershipValue = "researcher" | "explicitly_authorized" | "test";
 
 export type GuardPredicate =
   | { kind: "target_is_explicitly_listed" }
@@ -77,7 +77,8 @@ export function compileCondition(text: string): GuardPredicate {
       : ["researcher"];
     return { kind: "account_ownership", allowed };
   }
-  if (DATA_OWN_RE.test(t)) return { kind: "data_ownership", allowed: ["researcher"] };
+  if (DATA_OWN_RE.test(t))
+    return { kind: "data_ownership", allowed: ["researcher", "test"] };
   if (PRIOR_AUTHORIZATION_RE.test(t)) return { kind: "prior_authorization" };
   if (NON_DESTRUCTIVE_RE.test(t)) return { kind: "non_destructive" };
   return { kind: "unresolved", source_text: t };
@@ -98,7 +99,7 @@ const OWN_ACCOUNT_RULE_RES = [
 ];
 
 const OTHER_PARTY_RULE_RE =
-  /\b(?:do\s+not|don't|never|must\s+not|shall\s+not|avoid|refrain\s+from)\s+(?:access|accessing|use|using|modify|modifying|change|alter|delete|test|testing|interact\s+with|target|targeting|view|read|copy|download|retain|store|collect|disrupt|exfiltrate)\b[^.;]*\b(?:other|another|others?)\s+(?:users?'?s?\s+|customers?'?s?\s+|tenants?'?s?\s+)?(?:accounts?|data|information|services?)\b/i;
+  /\b(?:do\s+not|don't|never|must\s+not|shall\s+not|avoid|refrain\s+from)\s+(?:access|accessing|use|using|modify|modifying|change|alter|delete|test|testing|interact\s+with|target|targeting|view|read|copy|download|retain|store|collect|disrupt|exfiltrate)\b[^.;]*\b(?:other|another|others?|anyone\s+else'?s?|someone\s+else'?s?)\s+(?:users?'?s?\s+|customers?'?s?\s+|tenants?'?s?\s+)?(?:accounts?|data|information|services?)\b/i;
 
 const PROGRAM_ISSUED_ACCOUNTS_RE =
   /\b(?:use|only\s+use|testing\s+with|test\s+with)\s+(?:only\s+)?(?:program|company|researcher|we)[\s-]?(?:issued|provided|assigned|provisioned|supplied)\s+(?:test\s+)?accounts?\b|\b(?:program|company)[\s-]?(?:issued|provided|assigned)\s+(?:test\s+)?accounts?\s+(?:are\s+)?(?:required|only)/i;
@@ -116,7 +117,15 @@ const CUSTOMER_DATA_VALIDATION_RE =
   /\b(?:do\s+not|don't|never|must\s+not|stop|avoid|refrain)\b[^.;]*\b(?:validat|verif|confirm)\w*\b[^.;]*\b(?:customer|sensitive|personal|credential|user)\s+data\b|\b(?:customer|sensitive|personal|credential|user)\s+data\b[^.;]*\b(?:do\s+not|don't|never|must\s+not|stop|avoid|refrain)\b[^.;]*\b(?:validat|verif|confirm)\w*\b|\b(?:do\s+not|stop|never)\s+(?:attempt(?:ing)?\s+to\s+|try(?:ing)?\s+to\s+)?(?:successfully\s+)?(?:validat|verif|confirm)\w*\b[^.;]*(?:data|access)\s+(?:works?|is\s+valid|functions?)/i;
 
 const THIRD_PARTY_DATA_RE =
-  /\b(?:do\s+not|don't|never|must\s+not|shall\s+not|avoid|refrain\s+from)\s+(?:access|accessing|read|reading|copy|copying|download|downloading|retain|retaining|store|storing|collect|collecting|exfiltrat\w+|modify|modifying|delete|deleting|disrupt\w*|use|using|view|viewing|share|sharing|disclos\w+)\b[^.;]*\b(?:other\s+(?:users?|customers?|tenants?)|another\s+(?:user|customer)|customer|customers|sensitive|personal|third[\s-]?party|user)\b[^.;]*\b(?:data|information|accounts?|content|records?|pii)\b|\b(?:do\s+not|never|must\s+not)\b[^.;]*\b(?:access|copy|exfiltrat\w+|download|retain|collect|store)\b[^.;]*\b(?:customer|user|third[\s-]?party)\s+data\b/i;
+  /\b(?:do\s+not|don't|never|must\s+not|shall\s+not|avoid|refrain\s+from)\s+(?:access|accessing|read|reading|copy|copying|download|downloading|retain|retaining|store|storing|collect|collecting|exfiltrat\w+|modify|modifying|delete|deleting|disrupt\w*|use|using|view|viewing|share|sharing|disclos\w+)\b[^.;]*\b(?:other\s+(?:users?|customers?|tenants?)|another\s+(?:user|customer)|customer|customers|sensitive|personal|third[\s-]?party|user|confidential)\b[^.;]*\b(?:data|information|accounts?|content|records?|pii)\b|\b(?:do\s+not|never|must\s+not)\b[^.;]*\b(?:access|copy|exfiltrat\w+|download|retain|collect|store)\b[^.;]*\b(?:customer|user|third[\s-]?party|confidential)\s+(?:data|information)\b/i;
+
+/** Sensitivities a foreign-data prohibition denies; "confidential" joins
+ * only when the rule text names it. */
+function deniedSensitivity(text: string): string[] {
+  const out = ["customer", "personal"];
+  if (/\bconfidential\b/i.test(text)) out.push("confidential");
+  return out;
+}
 
 /**
  * Compile one account/data rule sentence into a typed constraint. The
@@ -153,13 +162,18 @@ export function compileRule(
   }
 
   if (OTHER_PARTY_RULE_RE.test(t)) {
-    // "Do not modify another user's account" — only own/authorized allowed.
-    if (/\b(?:data|information)\b/i.test(t) && !/\baccounts?\b/i.test(t)) {
+    // "Do not access data from anyone else's account" — the prohibited
+    // object is the data; the foreign account is only a qualifier. "Do not
+    // modify another user's account" — only own/authorized allowed.
+    const dataIsObject =
+      /\b(?:data|information)\s+(?:from|of|in|on|belonging\s+to)\b/i.test(t) ||
+      (/\b(?:data|information)\b/i.test(t) && !/\baccounts?\b/i.test(t));
+    if (dataIsObject) {
       return {
         ...base,
         kind: "data_access",
-        denied_ownership: ["third_party"],
-        denied_sensitivity: ["customer", "personal"],
+        denied_ownership: ["third_party", "customer", "employee"],
+        denied_sensitivity: deniedSensitivity(t),
       };
     }
     return {
@@ -173,8 +187,8 @@ export function compileRule(
     return {
       ...base,
       kind: "data_access",
-      denied_ownership: ["third_party"],
-      denied_sensitivity: ["customer", "personal"],
+      denied_ownership: ["third_party", "customer", "employee"],
+      denied_sensitivity: deniedSensitivity(t),
     };
   }
 

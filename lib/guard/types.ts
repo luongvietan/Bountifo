@@ -67,8 +67,10 @@ export const proposedActionSchema = z
       .object({
         automated: z.boolean(),
         scanner: z.boolean().optional(),
+        tool_type: z.string().optional(),
         estimated_requests: z.number().optional(),
         estimated_requests_per_minute: z.number().optional(),
+        requests_per_second: z.number().optional(),
       })
       .strict()
       .optional(),
@@ -101,12 +103,23 @@ export const proposedActionSchema = z
       .object({
         ownership: z.enum([
           "researcher",
+          "test",
+          "customer",
+          "employee",
           "explicitly_authorized",
           "third_party",
           "unknown",
         ]),
         sensitivity: z
-          .enum(["none", "personal", "credentials", "financial", "customer", "unknown"])
+          .enum([
+            "none",
+            "personal",
+            "credentials",
+            "financial",
+            "customer",
+            "confidential",
+            "unknown",
+          ])
           .optional(),
       })
       .strict()
@@ -142,12 +155,15 @@ export interface AgentFactsFact {
   status: "allowed" | "prohibited" | "conditional" | "unspecified";
   conditions?: { id: string; text: string }[];
   applies_to?: {
+    // Known values below; `(string & {})` keeps the union suggestible while
+    // tolerating future types — the evaluator fails closed on unknown ones.
     type:
       | "all_targets"
       | "target_ids"
       | "target_group_ids"
       | "engagement"
-      | "conditional_context";
+      | "conditional_context"
+      | (string & {});
     ids?: string[];
     conditions?: (
       | { kind: "phase"; value: "post_compromise" }
@@ -263,8 +279,12 @@ export type GuardReasonCode =
   | "KNOWN_ISSUES_COUNTS_INVALID"
   | "REQUIRED_SECTIONS_INCOMPLETE"
   | "POLICY_CONFLICT"
+  | "SAFE_HARBOR_ABSENT"
   | "SAFE_HARBOR_UNCLEAR"
   | "ENGAGEMENT_MISMATCH"
+  | "PROGRAM_SUBMISSIONS_PAUSED"
+  | "PROGRAM_TESTING_PROHIBITED"
+  | "PROGRAM_TESTING_UNSPECIFIED"
   | "SCOPE_INVENTORY_UNAVAILABLE"
   | "TARGET_IN_SCOPE"
   | "TARGET_OUT_OF_SCOPE"
@@ -273,6 +293,12 @@ export type GuardReasonCode =
   | "TARGET_ID_UNRESOLVED"
   | "UNLISTED_TARGETS_PROHIBITED"
   | "LISTED_TARGETS_PROHIBITED"
+  | "AUTHORIZATION_EXCEPTION_AVAILABLE"
+  | "AUTHORIZATION_EXCEPTION_VERIFIED"
+  | "AUTHORIZATION_EXCEPTION_UNVERIFIED"
+  | "APPLICABILITY_MATCHED"
+  | "APPLICABILITY_NOT_MATCHED"
+  | "APPLICABILITY_UNRESOLVED"
   | "TECHNIQUE_ALLOWED"
   | "TECHNIQUE_PROHIBITED"
   | "EXCLUSION_TESTING_PROHIBITED"
@@ -307,8 +333,11 @@ export interface GuardCheck {
     | "integrity"
     | "engagement"
     | "safe_harbor"
+    | "program_state"
     | "target"
     | "authorized_scope"
+    | "authorization_exception"
+    | "applicability"
     | "vrt"
     | "technique"
     | "automation"

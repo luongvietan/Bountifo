@@ -103,15 +103,31 @@ authorized_scope:
       evidence_refs: [ev_...]
 ```
 
-An exception is metadata, not an ALLOW: the baseline prohibition still
-applies until a gate verifies the consent claim, and technique/data/account
-prohibitions continue to apply after it. The exporter compiles exceptions
-only from explicit written-authorization phrasing ("prior written
-consent/permission/authorization/approval") with testing or excluded-system
-context — never from generic "contact us / request permission" language.
-When no program-side issuer is recognizable the condition stays verbatim
-`source_text`. Missing `exceptions` on an old dossier means "no exceptions",
-not "unverified permission".
+An exception is never a permission: it can only re-open *evaluation* of a
+target the baseline already denies. The evaluator consumes it as follows:
+
+- **No consent claim at all** — the exception is not invoked; the baseline
+  `out_of_scope`/`unlisted_targets: prohibited` verdict stands (DENY).
+- **Consent claimed but not verified** — a `prior_written_consent` claim
+  exists (`authorization.prior_written_consent === true` in `context_facts`
+  or `trustedContext`, any source/verification) but is not `verified` +
+  non-`planner` → REVIEW (`AUTHORIZATION_EXCEPTION_UNVERIFIED`). A claim
+  also REVIEWs when the exception's `applies_to` is unrecognized or its
+  condition is an unverifiable kind (`source_text`, unknown kind, or a
+  non-`permit_evaluation` effect).
+- **Verified consent** — a verified non-planner
+  `authorization.prior_written_consent === true` → the baseline target
+  denial is lifted and evaluation *continues*
+  (`AUTHORIZATION_EXCEPTION_VERIFIED`). Other dimensions still decide: a
+  prohibited technique still DENYs, a policy-less technique still REVIEWs,
+  and ALLOW only emerges if every dimension passes.
+
+The exporter compiles exceptions only from explicit written-authorization
+phrasing ("prior written consent/permission/authorization/approval") with
+testing or excluded-system context — never from generic "contact us /
+request permission" language. When no program-side issuer is recognizable
+the condition stays verbatim `source_text`. Missing `exceptions` on an old
+dossier means "no exceptions", not "unverified permission".
 
 `program_state` is the operational axis, separate from testing
 authorization:
@@ -133,10 +149,26 @@ The exporter asserts a state only on explicit operational language
 Within one brief, the last state assertion in document order wins; the
 exporter never derives state from the announcements feed or from the
 absence of a resume notice. `program_state: null` (or absent on an old
-dossier) means unknown — never inferred. Submission availability, reward
-eligibility, and testing permission stay three separate axes: `paused`
-submissions + `ineligible` rewards + `unspecified` testing is the honest
-normalization of a pause announcement.
+dossier) means unknown — never inferred, and contributes no check.
+Submission availability, reward eligibility, and testing permission stay
+three separate axes: `paused` submissions + `ineligible` rewards +
+`unspecified` testing is the honest normalization of a pause announcement.
+
+When a `program_state` is present, the gate consumes each axis separately:
+
+- `testing_state` — the only axis that gates execution:
+  `prohibited` → DENY (`PROGRAM_TESTING_PROHIBITED`), `allowed` → pass,
+  `unspecified`/missing → REVIEW (`PROGRAM_TESTING_UNSPECIFIED`).
+- `submission_state` — eligibility only: `paused`/`closed` →
+  `eligibility.submission = "excluded"` (`PROGRAM_SUBMISSIONS_PAUSED`),
+  `open` → `eligible`, else `unknown`. Never a testing verdict.
+- `reward_state` — eligibility only: `ineligible` →
+  `eligibility.reward = "ineligible"` (`REWARD_INELIGIBLE`), `eligible` →
+  `eligible`, else `unknown`. Never a testing verdict.
+
+So Code.org's `paused`/`unspecified`/`ineligible` state yields REVIEW with
+the submission/reward marks on their own axes — never a fabricated
+testing prohibition, and never an ALLOW on an unspecified axis.
 
 The inventory is generated from already-normalized `DocumentModel.targets` /
 `targetGroups` — no new inference. Old dossiers lacking `scope_inventory`
@@ -160,17 +192,20 @@ type ProposedAction = {
   automation?: {
     automated: boolean;
     scanner?: boolean;
+    tool_type?: string;                     // e.g. "intrusive_automation"
     estimated_requests?: number;
     estimated_requests_per_minute?: number;
+    requests_per_second?: number;
   };
   credentials?: { source: "none" | "own" | "program_issued" | "public"
                         | "third_party" | "leaked" | "unknown" };
   account?: { ownership: "researcher" | "explicitly_authorized"
                       | "third_party" | "unknown" };
   data?: {
-    ownership: "researcher" | "explicitly_authorized" | "third_party" | "unknown";
+    ownership: "researcher" | "test" | "customer" | "employee"
+             | "explicitly_authorized" | "third_party" | "unknown";
     sensitivity?: "none" | "personal" | "credentials" | "financial"
-                | "customer" | "unknown";
+                | "customer" | "confidential" | "unknown";
   };
   context_facts?: ContextFact[];
 };
@@ -196,10 +231,12 @@ and a non-planner `source`.
 ### Techniques
 
 `technique.id` is canonicalized through a deterministic alias table
-(`canonicalTechniqueId`): `denial_of_service`, `automated_scanners`,
+(`canonicalTechniqueId`, also exported as `canonicalizeTechnique`):
+`denial_of_service`, `automated_scanners`, `automated_scanning`,
 `automated_tools`, `form_submission_automation`, `cross_account_testing`,
-`customer_data_validation`, `social_engineering`, `physical_testing`, plus
-the vulnerability classes VRT rows and exclusion rows name (`xss`,
+`customer_data_validation`, `social_engineering`, `physical_testing`,
+`rate_limiting`, `application_dos`, `intrusive_automation`, plus the
+vulnerability classes VRT rows and exclusion rows name (`xss`,
 `broken_access_control`, ...). Unknown ids → `TECHNIQUE_UNKNOWN` → REVIEW.
 No fuzzy matching.
 
@@ -225,6 +262,10 @@ declared inventory:
 Resolution outcomes: `matched_in_scope` / `matched_out_of_scope` (with
 `target_ids` + `evidence_refs`), `unlisted`, `ambiguous`.
 
+A `target.target_id` on the action resolves top-specificity: the id is
+looked up in the inventory and the URL only has to be consistent with that
+row; an id absent from the inventory → `TARGET_ID_UNRESOLVED` → REVIEW.
+
 `authorized_scope` then applies: an explicit listed match satisfies
 `target_is_explicitly_listed` conditions; `unlisted` falls to
 `unlisted_targets.status` (`prohibited` → DENY, anything else → REVIEW
@@ -242,7 +283,7 @@ predicates; anything else compiles to `unresolved` → REVIEW (never true):
 | `data_ownership` | verified `data.ownership` ∈ allowed set |
 | `prior_authorization` | verified `authorization.prior_approval === true` |
 | `non_destructive` | `operation.destructive === false` declared |
-| `rate_limit` | declared rpm ≤ rule ceiling |
+| `rate_limit` | declared rate ≤ rule ceiling; reads `automation.requests_per_second` (converted to rpm) or `automation.estimated_requests_per_minute` — none declared → REVIEW |
 | `unresolved` | never — always REVIEW |
 
 `compileRule(text)` handles whole-sentence account/data rules:
@@ -266,22 +307,47 @@ Deterministic order; no check may convert an existing DENY into ALLOW:
    **not** block when the exporter declared the collection complete.
 2. **Engagement** — `engagement.code` must match exactly → else REVIEW.
 3. **Safe harbor** — `present` continues; `absent`/`unclear`/missing →
-   REVIEW (`SAFE_HARBOR_UNCLEAR`). Never a DENY cause, never an upgrade.
-4. **Target resolution + authorized scope** — see above.
-5. **VRT rules** — canonical category match + `applies_to` coverage;
+   REVIEW (`SAFE_HARBOR_ABSENT` / `SAFE_HARBOR_UNCLEAR`). Never a DENY
+   cause, never an upgrade.
+4. **Program state** — `testing_state`: `prohibited` → DENY
+   (`PROGRAM_TESTING_PROHIBITED`), `allowed` → pass,
+   `unspecified` → REVIEW (`PROGRAM_TESTING_UNSPECIFIED`); a missing
+   `program_state` contributes no check. `submission_state`/`reward_state`
+   never gate — they mark the eligibility axes
+   (`PROGRAM_SUBMISSIONS_PAUSED` → `submission: "excluded"`,
+   `REWARD_INELIGIBLE` → `reward: "ineligible"`).
+5. **Target resolution + authorized scope** — see above. Baseline target
+   denials then consult `authorized_scope.exceptions`: unclaimed → DENY
+   stands; claimed unverified → REVIEW
+   (`AUTHORIZATION_EXCEPTION_UNVERIFIED`); verified → continue
+   (`AUTHORIZATION_EXCEPTION_VERIFIED`).
+6. **VRT rules** — canonical category match + `applies_to` coverage;
    `out_of_scope` → DENY, `conditional` → REVIEW.
-6. **Technique rules** — `prohibited` → DENY; `allowed` → pass;
+7. **Technique rules** — `prohibited` → DENY; `allowed` → pass;
    `conditional` → predicate tri-state; `unspecified`/absent → REVIEW.
-   Applicability respects `target_ids` / `target_group_ids` / `engagement`.
-7. **Automation overlay** — `automation.automated`/`scanner` pulls in the
+   Applicability respects `target_ids` / `target_group_ids` / `engagement`
+   and is tri-state: `yes` → rule applies; `no` → rule skipped
+   (`APPLICABILITY_NOT_MATCHED`); `unknown` → REVIEW
+   (`APPLICABILITY_UNRESOLVED` — an unrecognized `applies_to` type never
+   widens to engagement-wide). `conditional_context` resolves each
+   antecedent against trusted context: a verified non-planner
+   `context.phase === "post_compromise"` applies the rule, a verified
+   different phase skips it, missing/unverified/planner-asserted context
+   REVIEWs, and verbatim `antecedent_text` is always `unknown` — the gate
+   does not NLP free text.
+8. **Automation overlay** — `automation.automated`/`scanner` pulls in the
    automation rule family (`automation`, `automated_scanners`,
-   `automated_tools`, `scanning`) regardless of the declared technique.
-8. **Credentials / account / data constraints** — typed rule evaluation.
-9. **Eligibility** — `submission_exclusions` matching the action's canonical
-   technique report `submission`/`reward` on their own axis. Only an
-   exclusion with `testing_status: prohibited` DENYs
-   (`EXCLUSION_TESTING_PROHIBITED`); `excluded`/`ineligible` alone never deny.
-10. **Aggregate** — any `fail` → DENY; else any `unknown` → REVIEW; else
+   `automated_scanning`, `automated_tools`, `scanning`,
+   `intrusive_automation`, `rate_limiting`) regardless of the declared
+   technique — but never re-reports a rule the technique pass already
+   evaluated.
+9. **Credentials / account / data constraints** — typed rule evaluation.
+10. **Eligibility** — `submission_exclusions` matching the action's
+    canonical technique report `submission`/`reward` on their own axis.
+    Only an exclusion with `testing_status: prohibited` DENYs
+    (`EXCLUSION_TESTING_PROHIBITED`); `excluded`/`ineligible` alone never
+    deny.
+11. **Aggregate** — any `fail` → DENY; else any `unknown` → REVIEW; else
     ALLOW.
 
 ## Decision output
@@ -320,9 +386,15 @@ inputs produce identical `decision_hash` at any clock.
 ACTION_INVALID  FACTS_INVALID
 DOSSIER_PARTIAL  DOSSIER_FAILED  EVIDENCE_HASH_INVALID
 KNOWN_ISSUES_COUNTS_INVALID  REQUIRED_SECTIONS_INCOMPLETE  POLICY_CONFLICT
-SAFE_HARBOR_UNCLEAR  ENGAGEMENT_MISMATCH  SCOPE_INVENTORY_UNAVAILABLE
+SAFE_HARBOR_ABSENT  SAFE_HARBOR_UNCLEAR  ENGAGEMENT_MISMATCH
+PROGRAM_SUBMISSIONS_PAUSED  PROGRAM_TESTING_PROHIBITED
+PROGRAM_TESTING_UNSPECIFIED
+SCOPE_INVENTORY_UNAVAILABLE
 TARGET_IN_SCOPE  TARGET_OUT_OF_SCOPE  TARGET_UNLISTED  TARGET_AMBIGUOUS
 TARGET_ID_UNRESOLVED  UNLISTED_TARGETS_PROHIBITED  LISTED_TARGETS_PROHIBITED
+AUTHORIZATION_EXCEPTION_AVAILABLE  AUTHORIZATION_EXCEPTION_VERIFIED
+AUTHORIZATION_EXCEPTION_UNVERIFIED
+APPLICABILITY_MATCHED  APPLICABILITY_NOT_MATCHED  APPLICABILITY_UNRESOLVED
 TECHNIQUE_ALLOWED  TECHNIQUE_PROHIBITED  TECHNIQUE_CONDITIONAL
 TECHNIQUE_UNSPECIFIED  TECHNIQUE_UNKNOWN  TECHNIQUE_NO_POLICY
 EXCLUSION_TESTING_PROHIBITED
@@ -341,13 +413,15 @@ SUBMISSION_EXCLUDED  REWARD_INELIGIBLE
 node lib/guard/cli.ts check \
   --dossier ./bugcrowd-zendesk.md \
   --action ./action.json \
-  [--context ./context.json] [--compact]
+  [--context ./context.json] [--compact] [--json]
 ```
 
 - `--dossier` accepts a full Markdown dossier (the fenced `## Agent Facts`
   block is extracted) or a bare Agent Facts YAML/JSON file.
 - `--action` is a ProposedAction in JSON or YAML.
 - `--context` is an optional `ContextFact[]` file (trusted attestations).
+- `--compact` emits the decision as one JSON line; `--json` is an explicit
+  alias for the default JSON output.
 
 Exit codes: `0` ALLOW, `10` REVIEW, `20` DENY, `2` invalid input/runtime.
 The decision JSON goes to stdout; diagnostics to stderr.
@@ -359,10 +433,16 @@ import {
   evaluateScopeGuard,   // one-shot: parse + compile + evaluate
   compilePolicy,        // compile once
   evaluateAction,       // evaluate many actions against a CompiledPolicy
+  evaluateCondition,    // evaluate a single compiled condition (tri-state)
   runWithGuard,         // decision-gated executor
   guardWrap,            // executor wrapper that throws ScopeGuardBlocked
   ScopeGuardBlocked,
   ScopeGuardInputError,
+  // deterministic helpers + aliases
+  canonicalTechniqueId, // also exported as canonicalizeTechnique
+  compileCondition, compileRule,
+  resolveTarget,
+  policyHash, actionHash, decisionHash,   // also hashPolicy/hashAction/hashDecision
 } from "@/lib/guard/index.ts";
 
 // one-shot
@@ -422,11 +502,13 @@ prohibited technique: `["TECHNIQUE_PROHIBITED"]`.
   `unknown` → REVIEW.
 - `{placeholder}` labels match exactly one DNS label; targets expressed only
   as names (no URL/host) cannot resolve a proposed URL → `unlisted`.
-- `authorized_scope.exceptions` and `program_state` compile into the hashed
-  IR but are not yet consumed by the evaluator — the baseline prohibition
-  still DENYs an out-of-scope action, and a `paused` program_state does not
-  yet DENY submissions (there is no submission action kind). Wiring both
-  into decisions is Scope Guard work, intentionally deferred.
+- Authorization exceptions only model *written consent from the program*:
+  the evaluator recognizes exactly the `authorization.prior_written_consent`
+  context key. Other consent artifacts (`source_text`, unrecognized
+  `applies_to`, non-`permit_evaluation` effects) always REVIEW when invoked.
+- `program_state` gates only `testing_state`; there is no submission action
+  kind, so `submission_state`/`reward_state` surface as eligibility marks
+  rather than verdicts.
 - Exception coverage is limited to explicit written-authorization phrasing;
   other consent forms compile to verbatim `source_text` or nothing.
 - Trusted context provenance is modeled by `source`/`verification`; the gate

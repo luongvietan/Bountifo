@@ -25,6 +25,7 @@ function usage(): string {
     "  --dossier <path>             Markdown dossier or bare Agent Facts YAML",
     "  --action <path>              ProposedAction (JSON or YAML)",
     "  --context <path>             optional trusted ContextFact[] (JSON/YAML)",
+    "  --json                       emit the GuardDecision as JSON (default)",
     "  --compact                    single-line JSON output",
     "",
     "exit codes: 0=ALLOW  10=REVIEW  20=DENY  2=invalid input/runtime failure",

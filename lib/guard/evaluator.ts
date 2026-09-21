@@ -8,8 +8,9 @@ import {
   resolveTarget,
   type TargetResolution,
 } from "./targets.ts";
-import type { CompiledPolicy, PolicyIR } from "./policy.ts";
+import type { CompiledPolicy, IrTechniqueRule, PolicyIR } from "./policy.ts";
 import { targetGroupIds } from "./policy.ts";
+import { compileCondition } from "./conditions.ts";
 import type {
   GuardConstraint,
   GuardPredicate,
@@ -216,13 +217,18 @@ function evalPredicate(pred: GuardPredicate, ctx: Context): PredEval {
       return { result: "unknown", detail: "destructive flag undeclared" };
     }
     case "rate_limit": {
+      const rps = ctx.action.automation?.requests_per_second;
       const rpm = ctx.action.automation?.estimated_requests_per_minute;
-      if (rpm === undefined) {
+      const effectiveRpm = rps !== undefined ? rps * 60 : rpm;
+      if (effectiveRpm === undefined) {
         return { result: "unknown", detail: "request rate undeclared" };
       }
-      return rpm <= pred.max_per_minute
+      return effectiveRpm <= pred.max_per_minute
         ? { result: "true" }
-        : { result: "false", detail: `${rpm} rpm > ${pred.max_per_minute} rpm` };
+        : {
+            result: "false",
+            detail: `${effectiveRpm} rpm > ${pred.max_per_minute} rpm ceiling`,
+          };
     }
     case "unresolved":
       return { result: "unknown", detail: pred.source_text };
@@ -250,31 +256,114 @@ function predicateResults(
   return { results, outcome, code };
 }
 
-/** Does this rule's applies_to scope cover the resolved target? */
-function appliesTo(
-  applies: { type: string; ids?: string[] },
+/** Tri-state: does this rule's applies_to scope cover the action? */
+type Applicability = "yes" | "no" | "unknown";
+
+/**
+ * One `conditional_context` antecedent. `phase` is decided by a verified,
+ * non-planner `context.phase` fact; `antecedent_text` is never evaluable —
+ * the guard does not NLP free text, so it stays `unknown`.
+ */
+function evalContextCondition(cond: {
+  kind: string;
+  value?: string;
+  text?: string;
+}, ctx: Context): PredOutcome {
+  if (cond.kind === "phase") {
+    const { trusted } = attestedValue("context.phase", ctx);
+    if (trusted.length === 0) return "unknown";
+    // Conflicting trusted phase attestations resolve nothing.
+    if (new Set(trusted).size > 1) return "unknown";
+    return trusted[0] === cond.value ? "true" : "false";
+  }
+  return "unknown";
+}
+
+/**
+ * A rule's applicability. `conditional_context` conditions OR (the exporter
+ * unions antecedents): any verified-true applies the rule, all
+ * verified-false leaves it inapplicable, anything else is unresolved —
+ * including a missing context signal, since applicability could change
+ * authorization. Unknown `applies_to` types fail closed to `unknown`.
+ */
+function applicability(
+  applies: IrTechniqueRule["applies_to"],
   targetId: string | undefined,
   ir: PolicyIR,
-): boolean {
+  ctx: Context,
+): Applicability {
   switch (applies.type) {
     case "engagement":
     case "all_targets":
-      return true;
+      return "yes";
     case "target_ids":
-      return targetId !== undefined && (applies.ids ?? []).includes(targetId);
+      return targetId !== undefined && (applies.ids ?? []).includes(targetId)
+        ? "yes"
+        : "no";
     case "target_group_ids": {
       const groups = targetGroupIds(ir, targetId);
-      return (applies.ids ?? []).some((id) => groups.includes(id));
+      return (applies.ids ?? []).some((id) => groups.includes(id))
+        ? "yes"
+        : "no";
     }
-    // A context-bound rule ("if you have managed to compromise a server")
-    // cannot be verified without a context signal, so it never covers the
-    // action unconditionally — the action falls back to REVIEW rather than
-    // inheriting the rule's prohibition engagement-wide.
-    case "conditional_context":
-      return false;
+    case "conditional_context": {
+      const conditions = applies.conditions ?? [];
+      if (conditions.length === 0) return "unknown";
+      let sawUnknown = false;
+      for (const c of conditions) {
+        const r = evalContextCondition(c, ctx);
+        if (r === "true") return "yes";
+        if (r === "unknown") sawUnknown = true;
+      }
+      return sawUnknown ? "unknown" : "no";
+    }
     default:
-      return false;
+      return "unknown";
   }
+}
+
+type IrException = NonNullable<PolicyIR["authorized_scope"]>["exceptions"][number];
+
+/**
+ * Does the exception's `applies_to` cover this baseline failure? An
+ * unrecognized `applies_to` returns `unknown` — the exception might cover
+ * the action, so the baseline cannot stand unchallenged (REVIEW, not DENY).
+ */
+function exceptionCoverage(
+  e: IrException,
+  baseline: "out_of_scope" | "unlisted",
+  targetId: string | undefined,
+  ir: PolicyIR,
+): "yes" | "no" | "unknown" {
+  switch (e.applies_to) {
+    case "out_of_scope_targets":
+      return baseline === "out_of_scope" ? "yes" : "no";
+    case "unlisted_targets":
+      return baseline === "unlisted" ? "yes" : "no";
+    case "target_ids":
+      return targetId !== undefined && (e.ids ?? []).includes(targetId)
+        ? "yes"
+        : "no";
+    case "target_group_ids": {
+      const groups = targetGroupIds(ir, targetId);
+      return (e.ids ?? []).some((id) => groups.includes(id)) ? "yes" : "no";
+    }
+    default:
+      return "unknown";
+  }
+}
+
+/**
+ * A `permit_evaluation` exception is honored only on verified, non-planner
+ * proof of prior written consent (`authorization.prior_written_consent`).
+ * Planner-asserted consent, unknown condition kinds, and unrecognized
+ * effects never bypass the baseline.
+ */
+function exceptionVerified(e: IrException, ctx: Context): boolean {
+  if (e.effect !== "permit_evaluation") return false;
+  if (e.condition.kind !== "prior_written_consent") return false;
+  const { trusted } = attestedValue("authorization.prior_written_consent", ctx);
+  return trusted.some((v) => v === true);
 }
 
 /**
@@ -495,11 +584,50 @@ export async function evaluateAction(
     record({
       check: "safe_harbor",
       result: "unknown",
-      reason_code: "SAFE_HARBOR_UNCLEAR",
+      reason_code:
+        ir.safe_harbor.status === "absent"
+          ? "SAFE_HARBOR_ABSENT"
+          : "SAFE_HARBOR_UNCLEAR",
       rule_status: ir.safe_harbor.status ?? "missing",
       detail: "safe harbor is not present",
       evidence_refs: ir.safe_harbor.evidence_refs,
     });
+  }
+
+  // --- C2. Program state -------------------------------------------------------
+  // The operational axis is separate from testing authorization: only a
+  // stated `testing_state` gates execution. `unspecified` is unresolved →
+  // REVIEW; a paused submission state alone never decides testing. An
+  // absent program_state contributes nothing (old dossiers).
+  const ps = ir.program_state;
+  if (ps !== null) {
+    if (ps.testing_state === "prohibited") {
+      record({
+        check: "program_state",
+        result: "fail",
+        reason_code: "PROGRAM_TESTING_PROHIBITED",
+        rule_status: ps.testing_state,
+        detail: "program state prohibits testing",
+        evidence_refs: ps.evidence_refs,
+      });
+    } else if (ps.testing_state === "allowed") {
+      record({
+        check: "program_state",
+        result: "pass",
+        rule_status: ps.testing_state,
+        detail: "program state allows testing",
+        evidence_refs: ps.evidence_refs,
+      });
+    } else {
+      record({
+        check: "program_state",
+        result: "unknown",
+        reason_code: "PROGRAM_TESTING_UNSPECIFIED",
+        rule_status: ps.testing_state ?? "missing",
+        detail: "program testing authorization is unspecified",
+        evidence_refs: ps.evidence_refs,
+      });
+    }
   }
 
   // --- D. Target resolution + authorized scope --------------------------------
@@ -514,7 +642,11 @@ export async function evaluateAction(
     return finish("REVIEW", null, noEligibility);
   }
 
-  const resolution = resolveTarget(action.target.url, ir.inventory);
+  const resolution = resolveTarget(
+    action.target.url,
+    ir.inventory,
+    action.target.target_id,
+  );
   const ctx: Context = { action, resolution, ...contextMaps(action, opts.trustedContext ?? []) };
   const primaryTargetId =
     resolution.status === "matched_in_scope" ||
@@ -543,16 +675,89 @@ export async function evaluateAction(
       : [];
   const scope = ir.authorized_scope;
 
+  /**
+   * Evaluate consent carve-outs against a baseline scope failure. Returns
+   * "verified" (evaluation may continue — never an ALLOW by itself),
+   * "unverified" (an applicable exception exists but its proof is missing
+   * or untrusted → REVIEW), or "none" (baseline stands → DENY).
+   */
+  const exceptionOutcome = (
+    baseline: "out_of_scope" | "unlisted",
+  ): { outcome: "verified" | "unverified" | "none"; verified?: IrException; candidates: IrException[] } => {
+    const exceptions = scope?.exceptions ?? [];
+    const candidates: IrException[] = [];
+    let verified: IrException | undefined;
+    for (const e of exceptions) {
+      const cov = exceptionCoverage(e, baseline, primaryTargetId, ir);
+      if (cov === "no") continue;
+      candidates.push(e);
+      if (cov === "yes" && exceptionVerified(e, ctx)) verified = e;
+    }
+    if (verified !== undefined) return { outcome: "verified", verified, candidates };
+    // An exception only engages when consent is actually claimed — a bare
+    // `true` attestation, verified or merely asserted. With no claim at all
+    // the baseline prohibition simply stands (DENY); a claim that cannot be
+    // verified — planner-asserted, unknown coverage, unverifiable condition
+    // kind — re-opens nothing and forces REVIEW.
+    const claimed =
+      attestedValue("authorization.prior_written_consent", ctx).asserted.some(
+        (v) => v === true,
+      ) ||
+      attestedValue("authorization.prior_written_consent", ctx).trusted.some(
+        (v) => v === true,
+      );
+    return candidates.length > 0 && claimed
+      ? { outcome: "unverified", candidates }
+      : { outcome: "none", candidates };
+  };
+
   switch (resolution.status) {
-    case "matched_out_of_scope":
-      record({
-        check: "target",
-        result: "fail",
-        reason_code: "TARGET_OUT_OF_SCOPE",
-        detail: `resolved to out-of-scope target ${primaryTargetId}`,
-        evidence_refs: scopeEvidence,
-      });
+    case "matched_out_of_scope": {
+      const ex = exceptionOutcome("out_of_scope");
+      if (ex.outcome === "verified" && ex.verified !== undefined) {
+        record({
+          check: "target",
+          result: "pass",
+          rule_status: "exception",
+          detail: `resolved to out-of-scope target ${primaryTargetId}; verified consent permits continued evaluation`,
+          evidence_refs: [...scopeEvidence, ...ex.verified.evidence_refs],
+        });
+        record({
+          check: "authorization_exception",
+          result: "pass",
+          reason_code: "AUTHORIZATION_EXCEPTION_VERIFIED",
+          rule_status: ex.verified.condition.kind,
+          detail:
+            "prior written consent verified — evaluation continues; all other prohibitions still apply",
+          evidence_refs: ex.verified.evidence_refs,
+        });
+      } else if (ex.outcome === "unverified") {
+        record({
+          check: "target",
+          result: "unknown",
+          reason_code: "TARGET_OUT_OF_SCOPE",
+          detail: `resolved to out-of-scope target ${primaryTargetId}; consent exception present but unverified`,
+          evidence_refs: scopeEvidence,
+        });
+        record({
+          check: "authorization_exception",
+          result: "unknown",
+          reason_code: "AUTHORIZATION_EXCEPTION_UNVERIFIED",
+          detail:
+            "prior written consent requires a verified, non-planner attestation",
+          evidence_refs: ex.candidates.flatMap((e) => e.evidence_refs),
+        });
+      } else {
+        record({
+          check: "target",
+          result: "fail",
+          reason_code: "TARGET_OUT_OF_SCOPE",
+          detail: `resolved to out-of-scope target ${primaryTargetId}`,
+          evidence_refs: scopeEvidence,
+        });
+      }
       break;
+    }
     case "ambiguous":
       record({
         check: "target",
@@ -565,13 +770,51 @@ export async function evaluateAction(
     case "unlisted": {
       const status = scope?.unlisted_status;
       if (status === "prohibited") {
-        record({
-          check: "target",
-          result: "fail",
-          reason_code: "UNLISTED_TARGETS_PROHIBITED",
-          detail: "target is unlisted and unlisted targets are prohibited",
-          evidence_refs: scope?.evidence_refs ?? [],
-        });
+        const ex = exceptionOutcome("unlisted");
+        if (ex.outcome === "verified" && ex.verified !== undefined) {
+          record({
+            check: "target",
+            result: "pass",
+            rule_status: "exception",
+            detail:
+              "unlisted target; verified consent permits continued evaluation",
+            evidence_refs: ex.verified.evidence_refs,
+          });
+          record({
+            check: "authorization_exception",
+            result: "pass",
+            reason_code: "AUTHORIZATION_EXCEPTION_VERIFIED",
+            rule_status: ex.verified.condition.kind,
+            detail:
+              "prior written consent verified — evaluation continues; all other prohibitions still apply",
+            evidence_refs: ex.verified.evidence_refs,
+          });
+        } else if (ex.outcome === "unverified") {
+          record({
+            check: "target",
+            result: "unknown",
+            reason_code: "TARGET_UNLISTED",
+            detail:
+              "target is unlisted; consent exception present but unverified",
+            evidence_refs: scope?.evidence_refs ?? [],
+          });
+          record({
+            check: "authorization_exception",
+            result: "unknown",
+            reason_code: "AUTHORIZATION_EXCEPTION_UNVERIFIED",
+            detail:
+              "prior written consent requires a verified, non-planner attestation",
+            evidence_refs: ex.candidates.flatMap((e) => e.evidence_refs),
+          });
+        } else {
+          record({
+            check: "target",
+            result: "fail",
+            reason_code: "UNLISTED_TARGETS_PROHIBITED",
+            detail: "target is unlisted and unlisted targets are prohibited",
+            evidence_refs: scope?.evidence_refs ?? [],
+          });
+        }
       } else if (status === "allowed") {
         record({
           check: "target",
@@ -690,6 +933,7 @@ export async function evaluateAction(
   }
 
   // --- F. Technique rules -------------------------------------------------------
+  const evaluatedRules = new Set<IrTechniqueRule>();
   if (canonical === null) {
     record({
       check: "technique",
@@ -699,22 +943,58 @@ export async function evaluateAction(
       evidence_refs: [],
     });
   } else {
-    const rules = ir.techniques.filter(
-      (r) =>
-        r.canonical === canonical &&
-        appliesTo(r.applies_to, primaryTargetId, ir),
-    );
-    if (rules.length === 0) {
+    let sawApplicable = false;
+    let sawUnknownApplicability = false;
+    for (const rule of ir.techniques) {
+      if (rule.canonical !== canonical) continue;
+      const app = applicability(rule.applies_to, primaryTargetId, ir, ctx);
+      if (app === "no") {
+        if (rule.applies_to.type === "conditional_context") {
+          record({
+            check: "applicability",
+            result: "not_applicable",
+            reason_code: "APPLICABILITY_NOT_MATCHED",
+            rule_status: rule.applies_to.type,
+            detail: `'${rule.key}' context conditions verified not met`,
+            evidence_refs: rule.evidence_refs,
+          });
+        }
+        continue;
+      }
+      if (app === "unknown") {
+        sawUnknownApplicability = true;
+        record({
+          check: "applicability",
+          result: "unknown",
+          reason_code: "APPLICABILITY_UNRESOLVED",
+          rule_status: rule.applies_to.type,
+          detail: `'${rule.key}' applicability cannot be verified`,
+          evidence_refs: rule.evidence_refs,
+        });
+        continue;
+      }
+      sawApplicable = true;
+      evaluatedRules.add(rule);
+      if (rule.applies_to.type === "conditional_context") {
+        record({
+          check: "applicability",
+          result: "pass",
+          reason_code: "APPLICABILITY_MATCHED",
+          rule_status: rule.applies_to.type,
+          detail: `'${rule.key}' context conditions verified`,
+          evidence_refs: rule.evidence_refs,
+        });
+      }
+      record(techniqueCheck(rule, ctx));
+    }
+    if (!sawApplicable && !sawUnknownApplicability) {
       record({
         check: "technique",
         result: "unknown",
         reason_code: "TECHNIQUE_NO_POLICY",
-        detail: `no policy fact for technique '${canonical}'`,
+        detail: `no applicable policy fact for technique '${canonical}'`,
         evidence_refs: [],
       });
-    }
-    for (const rule of rules) {
-      record(techniqueCheck(rule, ctx));
     }
   }
 
@@ -724,16 +1004,37 @@ export async function evaluateAction(
     const family = new Set([
       "automation",
       "automated_scanners",
+      "automated_scanning",
       "automated_tools",
+      "automated_vulnerability_scanning",
+      "burp_scanning",
+      "port_scanning_internal_networks",
       "scanning",
     ]);
-    const rules = ir.techniques.filter(
-      (r) =>
-        r.canonical !== null &&
-        family.has(r.canonical) &&
-        appliesTo(r.applies_to, primaryTargetId, ir),
-    );
-    if (rules.length === 0) {
+    let sawUnknownApplicability = false;
+    let familyRuleExists = false;
+    for (const rule of ir.techniques) {
+      if (rule.canonical === null || !family.has(rule.canonical)) continue;
+      familyRuleExists = true;
+      if (evaluatedRules.has(rule)) continue;
+      const app = applicability(rule.applies_to, primaryTargetId, ir, ctx);
+      if (app === "no") continue;
+      if (app === "unknown") {
+        sawUnknownApplicability = true;
+        record({
+          check: "applicability",
+          result: "unknown",
+          reason_code: "APPLICABILITY_UNRESOLVED",
+          rule_status: rule.applies_to.type,
+          detail: `automation rule '${rule.key}' applicability cannot be verified`,
+          evidence_refs: rule.evidence_refs,
+        });
+        continue;
+      }
+      evaluatedRules.add(rule);
+      record({ ...techniqueCheck(rule, ctx), check: "automation" });
+    }
+    if (!familyRuleExists && !sawUnknownApplicability) {
       record({
         check: "automation",
         result: "unknown",
@@ -741,9 +1042,6 @@ export async function evaluateAction(
         detail: "action is automated but no automation-family rule exists",
         evidence_refs: [],
       });
-    }
-    for (const rule of rules) {
-      record({ ...techniqueCheck(rule, ctx), check: "automation" });
     }
   }
 
@@ -758,6 +1056,35 @@ export async function evaluateAction(
   // --- J. Submission / reward eligibility (never silently a testing denial) ---
   let submission: GuardDecision["eligibility"]["submission"] = "unknown";
   let reward: GuardDecision["eligibility"]["reward"] = "unknown";
+  // Program operational state feeds the eligibility axes only.
+  if (ps !== null) {
+    if (ps.submission_state === "paused" || ps.submission_state === "closed") {
+      submission = "excluded";
+      record({
+        check: "eligibility",
+        result: "not_applicable",
+        reason_code: "PROGRAM_SUBMISSIONS_PAUSED",
+        rule_status: ps.submission_state,
+        detail: `submissions ${ps.submission_state} — eligibility axis, not a testing denial`,
+        evidence_refs: ps.evidence_refs,
+      });
+    } else if (ps.submission_state === "open") {
+      submission = "eligible";
+    }
+    if (ps.reward_state === "ineligible") {
+      reward = "ineligible";
+      record({
+        check: "eligibility",
+        result: "not_applicable",
+        reason_code: "REWARD_INELIGIBLE",
+        rule_status: ps.reward_state,
+        detail: "rewards ineligible — eligibility axis, not a testing denial",
+        evidence_refs: ps.evidence_refs,
+      });
+    } else if (ps.reward_state === "eligible") {
+      reward = "eligible";
+    }
+  }
   if (canonical !== null) {
     const matched = ir.exclusions.filter((e) => e.techniques.includes(canonical));
     for (const e of matched) {
@@ -798,6 +1125,26 @@ export async function evaluateAction(
       ? "REVIEW"
       : "ALLOW";
   return finish(decision, resolution, { submission, reward });
+}
+
+/**
+ * Compile one condition clause and evaluate it standalone — against an
+ * action plus trusted context, with no target resolution (target-bound
+ * predicates come back `unknown`). Convenience wrapper for harnesses that
+ * need a single predicate verdict.
+ */
+export function evaluateCondition(
+  text: string,
+  action: ProposedAction,
+  trustedContext: ContextFact[] = [],
+): PredOutcome {
+  const pred = compileCondition(text);
+  const ctx: Context = {
+    action,
+    resolution: null,
+    ...contextMaps(action, trustedContext),
+  };
+  return evalPredicate(pred, ctx).result;
 }
 
 function techniqueCheck(

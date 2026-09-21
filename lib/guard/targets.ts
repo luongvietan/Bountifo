@@ -250,11 +250,34 @@ interface Match {
  * Resolve the proposed URL against the declared scope inventory. The most
  * specific matching pattern decides; ties between in-scope and out-of-scope
  * listings at top specificity are `ambiguous`, never silently ordered.
+ *
+ * An explicit `targetId` is the most specific selector of all: when it
+ * names a declared inventory row it wins outright, whatever the URL would
+ * have matched. An unknown `targetId` falls back to URL matching (the
+ * evaluator then flags it TARGET_ID_UNRESOLVED).
  */
 export function resolveTarget(
   rawUrl: string,
   inventory: ScopeInventoryInput,
+  targetId?: string,
 ): TargetResolution {
+  if (targetId !== undefined) {
+    for (const [scope, list] of [
+      ["in", inventory.in_scope ?? []],
+      ["out", inventory.out_of_scope ?? []],
+    ] as const) {
+      const hit = list.find((t) => t.target_id === targetId);
+      if (hit !== undefined) {
+        return {
+          status:
+            scope === "in" ? "matched_in_scope" : "matched_out_of_scope",
+          target_ids: [hit.target_id],
+          evidence_refs: [...hit.evidence_refs].sort(),
+        };
+      }
+    }
+  }
+
   const url = parseActionUrl(rawUrl);
   if (url === null) return { status: "unlisted" };
 
