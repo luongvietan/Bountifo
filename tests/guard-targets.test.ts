@@ -216,3 +216,34 @@ describe("resolveTarget — unmatchable input", () => {
     );
   });
 });
+
+describe("resolveTarget — Bitdefender explicit OOS child over wildcard IS", () => {
+  // Live Bitdefender shape: "*.bitdefender.com" is in scope while named
+  // children (brand., community., …) are listed out of scope. The exact
+  // listing must win; the wildcard must not widen the exclusion.
+  const inv = inventory(
+    [target("wild", "*.bitdefender.com")],
+    [
+      target("brand", "brand.bitdefender.com"),
+      target("community", "community.bitdefender.com"),
+    ],
+  );
+
+  it("an explicit out-of-scope child beats the wildcard in-scope parent", () => {
+    for (const host of [
+      "brand.bitdefender.com",
+      "community.bitdefender.com",
+    ]) {
+      const r = resolveTarget(`https://${host}/`, inv);
+      expect(r.status, host).toBe("matched_out_of_scope");
+    }
+  });
+
+  it("unlisted siblings still resolve through the wildcard", () => {
+    const r = resolveTarget("https://api.bitdefender.com/", inv);
+    expect(r).toMatchObject({
+      status: "matched_in_scope",
+      target_ids: ["wild"],
+    });
+  });
+});

@@ -81,6 +81,37 @@ export interface PolicyIR {
     listed_status: string;
     listed_predicates: GuardPredicate[];
     unlisted_status: string;
+    /**
+     * Consent carve-outs for otherwise unlisted/OOS targets. The evaluator
+     * does not consume them yet — they compile into the IR so the hashed
+     * policy is complete and a future gate can verify consent claims
+     * deterministically. Never a permission by itself.
+     */
+    exceptions: {
+      applies_to: string;
+      ids?: string[];
+      condition: {
+        kind: string;
+        issuer?: string;
+        verification_required?: boolean;
+        text?: string;
+      };
+      effect: string;
+      evidence_refs: string[];
+    }[];
+    evidence_refs: string[];
+  } | null;
+  /**
+   * Program operational state — the submission/reward axis, never a
+   * testing authorization. Compiled verbatim into the hashed IR; the
+   * evaluator does not consume it yet.
+   */
+  program_state: {
+    submission_state: string | null;
+    testing_state: string | null;
+    reward_state: string | null;
+    effective_at_text: string | null;
+    resume_at: string | null;
     evidence_refs: string[];
   } | null;
   techniques: IrTechniqueRule[];
@@ -168,7 +199,27 @@ export async function compilePolicy(facts: AgentFacts): Promise<CompiledPolicy> 
             compileCondition,
           ),
           unlisted_status: scope.unlisted_targets.status,
+          exceptions: (scope.exceptions ?? []).map((e) => ({
+            applies_to: e.applies_to,
+            ...(e.ids === undefined ? {} : { ids: [...e.ids].sort() }),
+            condition: e.condition,
+            effect: e.effect,
+            evidence_refs: [...(e.evidence_refs ?? [])].sort(),
+          })),
           evidence_refs: scope.evidence_refs ?? [],
+        };
+
+  const program = facts.program_state;
+  const programState: PolicyIR["program_state"] =
+    program === null || program === undefined
+      ? null
+      : {
+          submission_state: program.submission_state ?? null,
+          testing_state: program.testing_state ?? null,
+          reward_state: program.reward_state ?? null,
+          effective_at_text: program.effective_at_text ?? null,
+          resume_at: program.resume_at ?? null,
+          evidence_refs: [...(program.evidence_refs ?? [])].sort(),
         };
 
   const ir: PolicyIR = {
@@ -189,6 +240,7 @@ export async function compilePolicy(facts: AgentFacts): Promise<CompiledPolicy> 
     inventory,
     groups,
     authorized_scope: authorizedScope,
+    program_state: programState,
     techniques,
     vrt_rules: vrtRules,
     exclusions,

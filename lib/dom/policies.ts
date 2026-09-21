@@ -1,20 +1,26 @@
 import { normalizeText } from "../canonical";
 import {
+  OOS_ONLY_BOUNDARY_RES,
   SCOPE_AUTHORIZATION_EXCLUSIVE_RE,
   SCOPE_BOUNDARY_RES,
+  programSentenceOf,
   rewardStatusOf,
+  sentencesOf,
   techniqueFindingsIn,
   techniqueMatches,
   testingStatusOf,
+  writtenConsentException,
 } from "../model/policyText";
 import type {
   Applicability,
   ExtractionStatus,
   PermissionStatus,
+  ScopeAuthorizationException,
   SourceLevel,
   SourceLocator,
   SourceRecord,
 } from "../types";
+import type { ProgramRewardState, SubmissionState } from "../model/policyText";
 import {
   HEADING_SEL,
   SECTION_SEL,
@@ -85,7 +91,26 @@ export interface PolicyData {
   scopeAuthorization: {
     listedTargets: { status: PermissionStatus; conditions: string[] };
     unlistedTargets: { status: PermissionStatus };
+    /**
+     * Written-consent carve-outs that re-open *evaluation* of otherwise
+     * unlisted/out-of-scope targets. They never weaken the baseline and
+     * are never themselves a permission.
+     */
+    exceptions: ScopeAuthorizationException[];
     quote: string;
+  } | null;
+  /**
+   * Program/submission operational state — a separate axis from testing
+   * authorization. A paused program stops submissions and rewards; it does
+   * not, by itself, say anything about testing permission.
+   */
+  programState: {
+    submissionState: SubmissionState;
+    rewardState: ProgramRewardState;
+    effectiveAtText: string | null;
+    resumeAt: string | null;
+    /** Verbatim sentences backing the state — resolved to evidence refs. */
+    quotes: string[];
   } | null;
   reportingRequirements: string[];
   vrt: {
@@ -289,6 +314,7 @@ export function collectPolicies(
     nonFocusAreas: [],
     exclusions: [],
     scopeAuthorization: null,
+    programState: null,
     reportingRequirements: [],
     vrt: {
       version: null,
@@ -526,6 +552,10 @@ export function collectPolicies(
       SCOPE_BOUNDARY_RES.some((re) => {
         re.lastIndex = 0;
         return re.test(text);
+      }) ||
+      OOS_ONLY_BOUNDARY_RES.some((re) => {
+        re.lastIndex = 0;
+        return re.test(text);
       });
     if (!classified) continue;
     authorizationCorpus.push(text);
@@ -565,6 +595,7 @@ export function collectPolicies(
         conditions: listed === "" ? [] : [listed],
       },
       unlistedTargets: { status: "prohibited" },
+      exceptions: [],
       quote: statement,
     };
   }
@@ -581,9 +612,135 @@ export function collectPolicies(
           conditions: ["target must be explicitly declared in scope"],
         },
         unlistedTargets: { status: "prohibited" },
+        exceptions: [],
         quote: statement,
       };
       break;
+    }
+  }
+  if (data.scopeAuthorization === null) {
+    // Statements that rule only on the unlisted side ("testing on all
+    // out-of-scope targets is expressly prohibited") still prove the OOS
+    // baseline; the listed side stays honestly unspecified.
+    for (const statement of authorizationCorpus) {
+      const boundary = OOS_ONLY_BOUNDARY_RES.some((re) => {
+        re.lastIndex = 0;
+        return re.test(statement);
+      });
+      if (!boundary) continue;
+      data.scopeAuthorization = {
+        listedTargets: { status: "unspecified", conditions: [] },
+        unlistedTargets: { status: "prohibited" },
+        exceptions: [],
+        quote: statement,
+      };
+      break;
+    }
+  }
+
+  // Written-consent exceptions reopen evaluation of otherwise unlisted/OOS
+  // targets — scope metadata only, never a permission and never a weakening
+  // of the baseline prohibition.
+  const exceptions: ScopeAuthorizationException[] = [];
+  const seenExceptions = new Set<string>();
+  for (const { el, text } of eachTextBlock(doc)) {
+    if (el.matches(HEADING_SEL)) continue;
+    const section = precedingHeadingText(doc, el) ?? "Authorization";
+    for (const sentence of sentencesOf(text)) {
+      const partial = writtenConsentException(sentence);
+      if (partial === null) continue;
+      const quote = normalizeText(sentence);
+      if (seenExceptions.has(quote)) continue;
+      seenExceptions.add(quote);
+      exceptions.push({ ...partial, quote });
+      if (!data.authorizationStatements.includes(sentence)) {
+        data.authorizationStatements.push(sentence);
+      }
+      emit(
+        "authorization",
+        `consent-${slugify(sentence)}`,
+        sentence,
+        {
+          applies_to: partial.applies_to,
+          condition: partial.condition,
+          effect: partial.effect,
+        },
+        "explicit_program_rule",
+        "exact",
+        { section },
+      );
+    }
+  }
+  if (exceptions.length > 0) {
+    if (data.scopeAuthorization === null) {
+      // An exception without a baseline statement: keep both sides honest
+      // `unspecified` rather than dropping the machine-readable carve-out.
+      data.scopeAuthorization = {
+        listedTargets: { status: "unspecified", conditions: [] },
+        unlistedTargets: { status: "unspecified" },
+        exceptions,
+        quote: exceptions[0]!.quote,
+      };
+    } else {
+      data.scopeAuthorization.exceptions = exceptions;
+    }
+  }
+
+  // Program/submission operational state ("temporarily pausing", "stop
+  // accepting new bounty submissions") is its own axis — never an account
+  // rule, never a testing authorization. Blocks that produced state
+  // evidence are tracked so the account/data sinks skip them below.
+  const programStateBlocks = new Set<string>();
+  const programSentences: {
+    quote: string;
+    submission: "open" | "paused" | "closed" | null;
+    reward: "ineligible" | null;
+    effectiveText: string | null;
+  }[] = [];
+  const seenProgramSentences = new Set<string>();
+  for (const { el, text } of eachTextBlock(doc)) {
+    if (el.matches(HEADING_SEL)) continue;
+    const section = precedingHeadingText(doc, el) ?? "Program Rules";
+    for (const sentence of sentencesOf(text)) {
+      const op = programSentenceOf(sentence);
+      if (op === null) continue;
+      programStateBlocks.add(normalizeText(text));
+      const quote = normalizeText(sentence);
+      if (seenProgramSentences.has(quote)) continue;
+      seenProgramSentences.add(quote);
+      programSentences.push({ quote, ...op });
+      emit(
+        "program-state",
+        `state-${slugify(sentence)}`,
+        sentence,
+        op,
+        "explicit_program_rule",
+        "exact",
+        { section },
+      );
+    }
+  }
+  {
+    // Last state assertion in document order wins — within one brief, later
+    // statements supersede earlier ones deterministically.
+    let submissionState: "open" | "paused" | "closed" | null = null;
+    let rewardState: ProgramRewardState = "unknown";
+    let effectiveAtText: string | null = null;
+    for (const s of programSentences) {
+      if (s.submission !== null) submissionState = s.submission;
+      if (s.reward === "ineligible") rewardState = "ineligible";
+      if (s.effectiveText !== null && effectiveAtText === null) {
+        effectiveAtText = s.effectiveText;
+      }
+    }
+    if (submissionState !== null) {
+      data.programState = {
+        submissionState,
+        rewardState,
+        effectiveAtText,
+        resumeAt: null,
+        quotes: programSentences.map((s) => s.quote),
+      };
     }
   }
 
@@ -605,10 +762,13 @@ export function collectPolicies(
         // Rule line stating no permission fact — whether it names a known
         // technique or not. A mention without a normative predicate is still
         // evidence worth keeping, just never as a technique assertion.
-        const bucket = FALLBACK_BUCKETS.find((b) => {
-          b.re.lastIndex = 0;
-          return b.re.test(item.text);
-        });
+        // Program-state text belongs to its own axis, never a rule bucket.
+        const bucket = programStateBlocks.has(normalizeText(item.text))
+          ? undefined
+          : FALLBACK_BUCKETS.find((b) => {
+              b.re.lastIndex = 0;
+              return b.re.test(item.text);
+            });
         if (bucket !== undefined && Array.isArray(data[bucket.bucket])) {
           const list = data[bucket.bucket] as string[];
           if (!list.includes(item.text)) list.push(item.text);
@@ -770,6 +930,9 @@ export function collectPolicies(
 
   for (const { el, text } of eachTextBlock(doc)) {
     if (el.matches(HEADING_SEL)) continue;
+    // Operational state ("program temporarily paused") is not an account or
+    // data rule no matter which heading it sits under.
+    if (programStateBlocks.has(normalizeText(text))) continue;
     const isAccount = CORPUS_ACCOUNT_RE.test(text);
     const isData = CORPUS_DATA_RE.test(text);
     if (!isAccount && !isData) continue;
@@ -788,6 +951,24 @@ export function collectPolicies(
         section,
       });
     }
+  }
+
+  // Heading-bounded collection may have claimed program-state text before
+  // the operational pass ran — drop it from every prose sink; the sentences
+  // are operational announcements, not rules.
+  if (programStateBlocks.size > 0) {
+    const isOp = (t: string) => programStateBlocks.has(normalizeText(t));
+    data.accountRules = data.accountRules.filter((t) => !isOp(t));
+    data.dataRules = data.dataRules.filter((t) => !isOp(t));
+    data.safeHarborStatements = data.safeHarborStatements.filter(
+      (t) => !isOp(t),
+    );
+    data.reportingRequirements = data.reportingRequirements.filter(
+      (t) => !isOp(t),
+    );
+    data.focusAreas = data.focusAreas.filter((t) => !isOp(t));
+    data.nonFocusAreas = data.nonFocusAreas.filter((t) => !isOp(t));
+    data.exclusions = data.exclusions.filter((e) => !isOp(e.text));
   }
 
   return { records, data };

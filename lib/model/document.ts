@@ -118,7 +118,43 @@ export interface DocumentModel {
   scopeAuthorization: {
     listed_targets: { status: PermissionStatus; conditions: string[] };
     unlisted_targets: { status: PermissionStatus };
+    /**
+     * Written-consent carve-outs for otherwise unlisted/OOS targets.
+     * Metadata for downstream evaluation — never a permission itself.
+     */
+    exceptions: {
+      applies_to:
+        | "unlisted_targets"
+        | "out_of_scope_targets"
+        | "target_ids"
+        | "target_group_ids";
+      ids?: string[];
+      condition:
+        | {
+            kind: "prior_written_consent";
+            issuer: "program_security_team";
+            verification_required: true;
+          }
+        | { kind: "source_text"; text: string };
+      effect: "permit_evaluation";
+      evidence_refs: string[];
+    }[];
     quote: string;
+    evidence_refs: string[];
+  } | null;
+  /**
+   * Program/submission operational state — a separate axis from testing
+   * authorization. A paused program stops submissions and rewards; it does
+   * not, by itself, permit or prohibit testing.
+   */
+  programState: {
+    submission_state: "open" | "paused" | "closed" | "unknown";
+    /** Always "unspecified" — a pause is not a testing prohibition. */
+    testing_state: PermissionStatus;
+    reward_state: "eligible" | "ineligible" | "conditional" | "unknown";
+    /** Verbatim effective-time text — never a computed timestamp. */
+    effective_at_text: string | null;
+    resume_at: string | null;
     evidence_refs: string[];
   } | null;
   reportingRequirements: string[];
@@ -553,8 +589,33 @@ export function assembleDocument(args: AssembleArgs): DocumentModel {
           unlisted_targets: {
             status: policy.scopeAuthorization.unlistedTargets.status,
           },
+          exceptions: policy.scopeAuthorization.exceptions.map((e) => ({
+            applies_to: e.applies_to,
+            ...(e.ids === undefined ? {} : { ids: [...e.ids].sort() }),
+            condition: e.condition,
+            effect: e.effect,
+            evidence_refs: refsForQuote(e.quote),
+          })),
           quote: policy.scopeAuthorization.quote,
           evidence_refs: refsForQuote(policy.scopeAuthorization.quote),
+        };
+  const programState: DocumentModel["programState"] =
+    policy?.programState == null
+      ? null
+      : {
+          submission_state: policy.programState.submissionState,
+          // A submission pause is never a testing prohibition — the
+          // authorization axis stays unspecified until a real testing rule
+          // speaks.
+          testing_state: "unspecified",
+          reward_state: policy.programState.rewardState,
+          effective_at_text: policy.programState.effectiveAtText,
+          resume_at: policy.programState.resumeAt,
+          evidence_refs: [
+            ...new Set(
+              policy.programState.quotes.flatMap((q) => refsForQuote(q)),
+            ),
+          ].sort(),
         };
   const vrt: DocumentModel["vrt"] = {
     version: policy?.vrt.version ?? null,
@@ -638,6 +699,7 @@ export function assembleDocument(args: AssembleArgs): DocumentModel {
     nonFocusAreas: [...(policy?.nonFocusAreas ?? [])],
     submissionExclusions,
     scopeAuthorization,
+    programState,
     reportingRequirements: [...(policy?.reportingRequirements ?? [])],
     vrt,
     knownIssues,

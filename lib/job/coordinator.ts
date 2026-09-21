@@ -398,6 +398,7 @@ export class JobCoordinator {
                 nonFocusAreas: [],
                 exclusions: [],
                 scopeAuthorization: null,
+                programState: null,
                 reportingRequirements: [],
                 vrt: {
                   version: null,

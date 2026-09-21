@@ -268,6 +268,7 @@ describe("collectPolicies heading-bounded current Bugcrowd content", () => {
         conditions: ["the targets listed as in scope"],
       },
       unlistedTargets: { status: "prohibited" },
+      exceptions: [],
       quote:
         "Testing is only authorized on the targets listed as in scope. All other assets are out of scope.",
     });

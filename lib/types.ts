@@ -78,6 +78,36 @@ export interface Applicability {
   conditions?: PolicyContextCondition[];
 }
 
+/**
+ * A machine-readable carve-out to the scope-authorization baseline. The
+ * exception is never a permission itself — `permit_evaluation` only tells a
+ * downstream evaluator which authorization gate it may verify. A Barracuda
+ * "must have prior written consent from the Security team" compiles to the
+ * typed `prior_written_consent` condition; any other recognized exception
+ * phrasing keeps the verbatim sentence as `source_text` so it stays narrow
+ * and reviewable instead of widening into an automatic grant.
+ */
+export type AuthorizationExceptionCondition =
+  | {
+      kind: "prior_written_consent";
+      issuer: "program_security_team";
+      verification_required: true;
+    }
+  | { kind: "source_text"; text: string };
+
+export interface ScopeAuthorizationException {
+  applies_to:
+    | "unlisted_targets"
+    | "out_of_scope_targets"
+    | "target_ids"
+    | "target_group_ids";
+  ids?: string[];
+  condition: AuthorizationExceptionCondition;
+  effect: "permit_evaluation";
+  /** The verbatim sentence the exception was compiled from. */
+  quote: string;
+}
+
 export interface Condition {
   id: string;
   text: string;

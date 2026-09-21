@@ -68,8 +68,12 @@ export function renderAgentFacts(model: DocumentModel): string {
     // for a forbidden activity: the two axes are named separately (§11).
     submission_exclusions: model.submissionExclusions,
     // Named `authorized_scope` so the key can never read as an HTTP
-    // Authorization header in a scan of the output (§19).
+    // Authorization header in a scan of the output (§19). Its `exceptions`
+    // carry consent carve-outs — metadata, never permission.
     authorized_scope: model.scopeAuthorization,
+    // Program operational state is its own axis: a submission pause changes
+    // what the program accepts, never what testing is authorized.
+    program_state: model.programState,
     // A deterministic target inventory so a Scope Guard resolves a proposed
     // URL against the program's listed targets without scraping Markdown.
     scope_inventory: {
@@ -263,6 +267,11 @@ export function renderMarkdown(model: DocumentModel): string {
           ]),
         );
   const scope = model.scopeAuthorization;
+  const exceptionLines = (scope?.exceptions ?? []).map((e) =>
+    e.condition.kind === "prior_written_consent"
+      ? `- Exception (${escapeMd(e.applies_to)}): verified prior written consent from the program security team — re-opens evaluation only, never an automatic permission${evidenceRefs(e.evidence_refs)}`
+      : `- Exception (${escapeMd(e.applies_to)}): ${escapeMd(e.condition.text)}${evidenceRefs(e.evidence_refs)}`,
+  );
   const scopeAuthorization =
     scope === null
       ? ""
@@ -272,8 +281,19 @@ export function renderMarkdown(model: DocumentModel): string {
             (condition) => `  - ${escapeMd(condition)}`,
           ),
           `- Unlisted targets: ${scope.unlisted_targets.status}`,
+          ...exceptionLines,
           `- Source: ${quoted(scope.quote)}${evidenceRefs(scope.evidence_refs)}`,
         ].join("\n")}\n\n`;
+  const programState =
+    model.programState === null
+      ? ""
+      : `### Program state\n\n${[
+          `- Submissions: ${model.programState.submission_state}`,
+          `- Testing authorization: ${model.programState.testing_state}`,
+          `- Rewards: ${model.programState.reward_state}`,
+          `- Effective: ${value(model.programState.effective_at_text)}`,
+          `- Resume date: ${value(model.programState.resume_at)}`,
+        ].join("\n")}${evidenceRefs(model.programState.evidence_refs)}\n\n`;
 
   const authStatements = authorizationEvidence(model).map(
     (item) => `${item.quote}${evidenceRefs([item.id])}`,
@@ -405,7 +425,7 @@ export function renderMarkdown(model: DocumentModel): string {
     ],
     [
       "Authorization and Safe Harbor",
-      `- Status: ${model.engagement.safeHarbor.status}\n- Level: ${value(model.engagement.safeHarbor.level)}\n- Disclosure policy: ${value(model.engagement.disclosurePolicy)}\n\n${scopeAuthorization}${bulletLines(authStatements)}`,
+      `- Status: ${model.engagement.safeHarbor.status}\n- Level: ${value(model.engagement.safeHarbor.level)}\n- Disclosure policy: ${value(model.engagement.disclosurePolicy)}\n\n${programState}${scopeAuthorization}${bulletLines(authStatements)}`,
     ],
     [
       "Scope Inventory",

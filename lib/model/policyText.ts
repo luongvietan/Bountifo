@@ -1,8 +1,10 @@
 import { normalizeText } from "../canonical";
 import type {
   Applicability,
+  AuthorizationExceptionCondition,
   PermissionStatus,
   PolicyContextCondition,
+  ScopeAuthorizationException,
 } from "../types";
 
 /**
@@ -948,6 +950,13 @@ interface Span {
   end: number;
   text: string;
   modifier?: string;
+  /**
+   * Noun-phrase words a bare modifier adjective crossed to reach this span —
+   * "vulnerability" in "automated vulnerability scans". They belong to the
+   * merged identity, so the fact is "automated vulnerability scanning" and
+   * the truncated "automated vulnerability" is never emitted.
+   */
+  bridge?: string;
 }
 
 function techniqueSpans(sentence: string): Span[] {
@@ -1128,6 +1137,27 @@ const MODIFIER_WORD_RE = /^(?:automated|automatic|manual)$/i;
 const COORD_GAP_RE = /^(?:\s*[\w-]+\s*(?:\/|,|and\b|or\b)\s*)+$/i;
 
 /**
+ * A noun-phrase bridge between a bare modifier adjective and the activity it
+ * qualifies — " vulnerability " in "automated vulnerability scans". One or
+ * two noun-ish non-stop words with no punctuation or connector: anything
+ * longer or coordinated is a separate claim, not a modifier chain.
+ */
+function isModifierBridge(gap: string): boolean {
+  const t = gap.trim();
+  if (t === "" || /[^a-zA-Z0-9' -]/.test(t)) return false;
+  const words = t.split(/\s+/);
+  return (
+    words.length <= 2 &&
+    words.every(
+      (w) =>
+        NOUNISH_RE.test(w) &&
+        !PREFIX_STOP.has(w.toLowerCase()) &&
+        !SUFFIX_STOP.has(w.toLowerCase()),
+    )
+  );
+}
+
+/**
  * Narrow a matched span to what the sentence rules on:
  * - adjacent modifier merge: "automated scanning" drops "automation", the
  *   modifier prefixes the activity;
@@ -1139,7 +1169,12 @@ function narrowedName(span: Span, sentence: string, spans: Span[]): string {
   let base: string;
   let nameEnd = span.end;
   if (span.modifier !== undefined) {
-    base = normalizeText(`${span.modifier} ${span.text}`).toLowerCase();
+    // A bridged modifier owns the noun phrase it crossed — "automated
+    // vulnerability scanning", canonicalized to the technique name.
+    base =
+      span.bridge === undefined
+        ? normalizeText(`${span.modifier} ${span.text}`).toLowerCase()
+        : `${span.modifier} ${span.bridge} ${span.def.name}`.toLowerCase();
   } else if (/^(?:automated|automatic|manual)$/i.test(span.text)) {
     const m = /^\s+([a-zA-Z][\w-]*)/.exec(sentence.slice(span.end));
     base =
@@ -1228,18 +1263,33 @@ export function techniqueFindingsIn(text: string): TechniqueFinding[] {
     // "automated tools/scanners" narrows the scanning fact to "automated
     // scanners" — the maximal specific span wins, and the bare parent is
     // never emitted beside its narrowed child.
+    const absorbed = new Set<Span>();
     for (let i = 0; i < survivors.length; i++) {
       const source = survivors[i]!;
       if (!MODIFIER_WORD_RE.test(source.text)) continue;
       for (let j = i + 1; j < survivors.length; j++) {
         const gap = sentence.slice(source.end, survivors[j]!.start);
+        // A bare noun bridge belongs to the activity's identity —
+        // "automated vulnerability scans" folds "automated" into the
+        // scanning span, so no truncated "automated vulnerability" fact
+        // survives as a sibling.
+        if (isModifierBridge(gap)) {
+          const target = survivors[j]!;
+          target.modifier = normalizeText(
+            `${source.text} ${target.modifier ?? ""}`,
+          ).toLowerCase();
+          target.bridge = normalizeText(gap).toLowerCase();
+          absorbed.add(source);
+          break;
+        }
         if (!COORD_GAP_RE.test(gap)) break;
         survivors[j]!.modifier = normalizeText(
           `${source.text} ${survivors[j]!.modifier ?? ""}`,
         ).toLowerCase();
       }
     }
-    for (const span of survivors) {
+    const governed = survivors.filter((s) => !absorbed.has(s));
+    for (const span of governed) {
       // Status is read from the clause governing the span, not the whole
       // sentence: a restrictive "only X" clause conditions only its own
       // span and must not downgrade an explicit "do not V Y" prohibition
@@ -1360,3 +1410,135 @@ export const SCOPE_BOUNDARY_RES = [
   // "All other assets are out of scope."
   /\ball\s+other\s+(?:targets?|assets?|domains?|properties|hosts?|urls?|uris|services?|systems?|applications?|sites?|subdomains?|infrastructure|endpoints?|resources?)\b[^.;]*?\b(?:is|are|be|should\s+be\s+considered|considered|deemed|treated\s+as|remains?)\s+[^.;]*?\b(?:out[\s-]?of[\s-]?scope|outside\s+(?:the\s+|this\s+|our\s+|their\s+)?(?:scope|program|engagement)|not\s+authorized|not\s+authorised|excluded)\b/i,
 ];
+
+/**
+ * Boundary statements that speak only about the unlisted side — "Active
+ * testing on all out-of-scope targets is expressly prohibited." They prove
+ * the OOS baseline without implying anything about listed targets, so the
+ * listed side stays `unspecified` rather than `conditional`.
+ */
+export const OOS_ONLY_BOUNDARY_RES = [
+  /\btesting\b[^.;]*?\b(?:on|against|of|upon|targeting)\b[^.;]*?\bout[- ]?of[- ]?scope\b[^.;]*?\b(?:is|are|be|remains?|stays?)\b[^.;]*?\b(?:expressly|strictly|explicitly|absolutely)?\s*(?:prohibited|forbidden|disallowed|banned|not\s+(?:authorized|authorised|permitted|allowed)|off[- ]?limits)\b/i,
+];
+
+/**
+ * Authorization exceptions: a consent/permission gate that re-opens
+ * *evaluation* of otherwise out-of-scope targets — never a permission by
+ * itself. Only explicit written-authorization phrasing compiles; generic
+ * "contact us / request permission" language deliberately does not match.
+ */
+const WRITTEN_CONSENT_RE =
+  /\b(?:prior\s+)?written\s+(?:consent|permission|authoriz(?:ation|ation)|approval)\b/i;
+/** The sentence must actually concern testing or non-listed systems. */
+const CONSENT_ACTIVITY_RE =
+  /\b(?:test|testing|vulnerabilit|excluded|out[- ]?of[- ]?scope|unlisted|target|asset|system|research|assess)\w*/i;
+/** A recognizable program-side issuer types the consent condition. */
+const SECURITY_ISSUER_RE =
+  /\b(?:security|program|engagement|bounty|bugcrowd|ops?|operations)\s+team\b|\b(?:program|engagement)\s+(?:staff|owners?|operators?|administrators?)\b/i;
+const UNLISTED_TARGETS_RE = /\bunlisted\b|\bnot\s+(?:\w+ly\s+)?listed\b/i;
+const OUT_OF_SCOPE_TARGETS_RE =
+  /\bout[- ]?of[- ]?scope\b|\bexcluded\b|\boutside\s+(?:the\s+|this\s+|our\s+|their\s+)?scope\b/i;
+
+/**
+ * Compile one sentence into an authorization exception, or null when it is
+ * not written-authorization language. The result is scope metadata only —
+ * downstream evaluation still applies the baseline prohibition unless the
+ * consent is verified.
+ */
+export function writtenConsentException(
+  sentence: string,
+): Omit<ScopeAuthorizationException, "quote"> | null {
+  const text = normalizeText(sentence);
+  if (!WRITTEN_CONSENT_RE.test(text)) return null;
+  if (!CONSENT_ACTIVITY_RE.test(text)) return null;
+  const appliesTo = UNLISTED_TARGETS_RE.test(text)
+    ? "unlisted_targets"
+    : OUT_OF_SCOPE_TARGETS_RE.test(text)
+      ? "out_of_scope_targets"
+      : "unlisted_targets";
+  const condition: AuthorizationExceptionCondition = SECURITY_ISSUER_RE.test(
+    text,
+  )
+    ? {
+        kind: "prior_written_consent",
+        issuer: "program_security_team",
+        verification_required: true,
+      }
+    : { kind: "source_text", text };
+  return { applies_to: appliesTo, condition, effect: "permit_evaluation" };
+}
+
+// ---------------------------------------------------------------------------
+// Program operational state (submission acceptance / reward eligibility) —
+// its own axis beside testing authorization. A pause stops submissions and
+// rewards; it never, by itself, prohibits or permits testing.
+// ---------------------------------------------------------------------------
+
+/** The sentence must concern the program/engagement/submission lifecycle. */
+const PROGRAM_OP_SUBJECT_RE =
+  /\b(?:program|engagement|bounty|submi\w+|reports?|invitations?)\b/i;
+const PAUSE_ASSERT_RE =
+  /\bpaus(?:e|ed|es|ing)\b|\bstop(?:s|ped|ping)?\s+accepting\b|\bnot\s+(?:currently\s+)?accepting\b|\bsuspend(?:ed|s|ing)\b|\bon\s+hold\b/i;
+const CLOSE_ASSERT_RE =
+  /\bno\s+longer\s+accepting\b|\b(?:has|have|is|was|will\s+be)\s+(?:ended|closed|concluded|sunset\w*|retired)\b|\bpermanent(?:ly)?\s+(?:closed|paused|suspended|ending)\b/i;
+const RESUME_ASSERT_RE =
+  /\bresum(?:e|ed|es|ing)\b|\breopen(?:ed|s|ing)?\b|\b(?:now|again|once\s+more)\s+accepting\b|\baccepting\s+(?:new\s+)?(?:bounty\s+|vulnerability\s+)?submissions\b/i;
+/**
+ * A resume mention that asserts nothing about current state — "we do not
+ * yet have a date for resuming", "the program will resume on Sep 1".
+ * Operational context, never a state flip.
+ */
+const RESUME_NONASSERT_RE =
+  /\b(?:do|does|did)\s+not\b|\bnot\s+yet\b|\bno\s+(?:date|timeline|eta|plans?|set\s+date|announcement)\b|\bwithout\s+(?:a\s+)?(?:date|timeline)\b|\bwill\s+(?:be\s+)?resum|\b(?:plan|plans|planned|planning|expect|expected|expecting|intend\w*)\s+to\s+resum|\buntil\s+(?:the\s+)?program\s+resumes\b/i;
+const PROGRAM_REWARD_INELIGIBLE_RE =
+  /\bnot\s+eligible\b|\bineligible\b|\bno\s+(?:monetary\s+|cash\s+|bounty\s+)?rewards?\b|\bwithout\s+(?:a\s+)?(?:monetary\s+)?rewards?\b|\bwill\s+not\s+(?:be\s+)?(?:eligible|receive|earn)\b/i;
+/**
+ * "Effective Aug 1 at 12:00am Pacific Time" — verbatim effective-time text.
+ * The optional trailing `, YYYY` keeps full dates ("Aug 1, 2025") intact.
+ */
+const EFFECTIVE_RE =
+  /\beffective\s+([a-z0-9][a-z0-9 :.'()/-]*?)(\s*,\s*\d{4})?(?=\s*[,;.]|\s*$)/im;
+
+export type SubmissionState = "open" | "paused" | "closed" | "unknown";
+export type ProgramRewardState =
+  | "eligible"
+  | "ineligible"
+  | "conditional"
+  | "unknown";
+
+export interface ProgramSentenceInfo {
+  /** State the sentence asserts; null for operational context only. */
+  submission: "open" | "paused" | "closed" | null;
+  reward: "ineligible" | null;
+  /** Verbatim effective-time text when the sentence carries one. */
+  effectiveText: string | null;
+}
+
+/**
+ * Classify one sentence as program-operational or not. Returns null when
+ * the sentence does not speak about the program/submission lifecycle at
+ * all — such sentences stay eligible for every other policy lane.
+ */
+export function programSentenceOf(sentence: string): ProgramSentenceInfo | null {
+  const text = normalizeText(sentence);
+  if (!PROGRAM_OP_SUBJECT_RE.test(text)) return null;
+  const closed = CLOSE_ASSERT_RE.test(text);
+  const paused = PAUSE_ASSERT_RE.test(text);
+  const resumed =
+    RESUME_ASSERT_RE.test(text) && !RESUME_NONASSERT_RE.test(text);
+  const reward = PROGRAM_REWARD_INELIGIBLE_RE.test(text)
+    ? "ineligible"
+    : null;
+  const eff = EFFECTIVE_RE.exec(text);
+  const effectiveText =
+    eff === null ? null : normalizeText(`${eff[1]}${eff[2] ?? ""}`);
+  const operational =
+    closed || paused || RESUME_ASSERT_RE.test(text) || reward !== null ||
+    effectiveText !== null;
+  if (!operational) return null;
+  return {
+    submission: closed ? "closed" : paused ? "paused" : resumed ? "open" : null,
+    reward,
+    effectiveText,
+  };
+}

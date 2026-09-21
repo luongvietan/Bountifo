@@ -157,8 +157,10 @@ function policy(overrides: Partial<PolicyData> = {}): PolicyData {
         conditions: ["the targets listed as in scope"],
       },
       unlistedTargets: { status: "prohibited" as const },
+      exceptions: [],
       quote: "Testing is only authorized on the targets listed as in scope.",
     },
+    programState: null,
     reportingRequirements: ["Include a PoC"],
     vrt: {
       version: "2.0",

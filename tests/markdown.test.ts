@@ -147,9 +147,11 @@ function model(): DocumentModel {
         conditions: ["the targets listed as in scope"],
       },
       unlisted_targets: { status: "prohibited" as const },
+      exceptions: [],
       quote: "Testing is only authorized on the targets listed as in scope.",
       evidence_refs: ["ev_scope_auth"],
     },
+    programState: null,
     reportingRequirements: ["Include a reproducible PoC"],
     vrt: {
       version: "2.0",

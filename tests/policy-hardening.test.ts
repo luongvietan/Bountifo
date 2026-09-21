@@ -731,3 +731,201 @@ describe("LastPass golden control", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// P1: a bare modifier adjective reaches across a short noun bridge to the
+// activity it qualifies — "automated vulnerability scans" is one scanning
+// rule, never a truncated "automated vulnerability" fact.
+// ---------------------------------------------------------------------------
+describe("Bitdefender maximal-span modifier bridge", () => {
+  it("merges 'automated' into the scanning span — no truncated fact", () => {
+    const findings = techniqueFindingsIn(
+      "Automated vulnerability scans are strictly prohibited.",
+    );
+    const scanning = findings.filter((f) => f.name.includes("scanning"));
+    expect(scanning.length).toBe(1);
+    expect(scanning[0]!.name).toBe("automated vulnerability scanning");
+    expect(scanning[0]!.status).toBe("prohibited");
+    expect(scanning[0]!.quote).toContain("Automated vulnerability scans");
+    for (const malformed of [
+      "automated vulnerability",
+      "automation",
+      "vulnerability",
+      "scanning",
+      "vulnerability scanning",
+    ]) {
+      expect(
+        findings.some((f) => f.name === malformed),
+        malformed,
+      ).toBe(false);
+    }
+  });
+
+  it("keeps independently-stated coordinated techniques separate", () => {
+    const findings = techniqueFindingsIn(
+      "Automated tools and vulnerability scanning are prohibited.",
+    );
+    expect(findings.some((f) => f.name === "automated tools")).toBe(true);
+    expect(findings.some((f) => f.name === "vulnerability scanning")).toBe(
+      true,
+    );
+    expect(findings.some((f) => f.name === "automated vulnerability")).toBe(
+      false,
+    );
+  });
+
+  it("never emits a modifier+domain-word truncation", () => {
+    const findings = techniqueFindingsIn(
+      "Automated security scanners are prohibited.",
+    );
+    expect(findings.some((f) => f.name === "automated security")).toBe(false);
+    expect(findings.length).toBe(1);
+    expect(findings[0]!.name).toBe("automated security scanning");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P0: prior-written-consent exceptions are scope-authorization metadata —
+// machine-readable, evidence-backed, and never a testing permission.
+// ---------------------------------------------------------------------------
+describe("Barracuda live-shape authorization exception", () => {
+  const { records, data } = collectPolicies(
+    doc(`
+      <h1>Barracuda-like Bug Bounty</h1>
+      <section aria-labelledby="scope">
+        <h2 id="scope">Scope</h2>
+        <p>Any domain/property of Barracuda not listed here in the targets section is out of scope.</p>
+        <p>Any researcher seeking to perform vulnerability testing upon excluded systems must have prior written consent from the Security team at Barracuda Networks, Inc.</p>
+        <p>Active testing on all out-of-scope targets is expressly prohibited.</p>
+      </section>
+      <section aria-labelledby="rules">
+        <h2 id="rules">Program Rules</h2>
+        <ul>
+          <li>Denial of Service testing is strictly prohibited on any Barracuda Asset.</li>
+        </ul>
+      </section>
+    `),
+    PAGE_URL,
+  );
+
+  it("keeps the baseline OOS prohibition with a machine-readable exception", () => {
+    const scope = data.scopeAuthorization;
+    expect(scope).not.toBeNull();
+    expect(scope!.listedTargets.status).toBe("conditional");
+    expect(scope!.unlistedTargets.status).toBe("prohibited");
+    expect(scope!.exceptions.length).toBe(1);
+    const ex = scope!.exceptions[0]!;
+    expect(ex.applies_to).toBe("out_of_scope_targets");
+    expect(ex.effect).toBe("permit_evaluation");
+    expect(ex.condition).toEqual({
+      kind: "prior_written_consent",
+      issuer: "program_security_team",
+      verification_required: true,
+    });
+    expect(ex.quote).toContain("prior written consent");
+  });
+
+  it("never turns consent into a testing permission", () => {
+    expect(data.techniques.every((t) => t.status !== "allowed")).toBe(true);
+    const dos = data.techniques.find((t) => /denial of service/i.test(t.name));
+    expect(dos).toBeDefined();
+    expect(dos!.status).toBe("prohibited");
+    expect(dos!.applicability.type).toBe("engagement");
+  });
+
+  it("emits only well-formed records", () => {
+    assertRecordsWellFormed(records);
+  });
+
+  it("proves the OOS baseline without a listed-side statement", () => {
+    const { data: bare } = collectPolicies(
+      doc(`
+        <h1>Brief</h1>
+        <p>Active testing on all out-of-scope targets is expressly prohibited.</p>
+      `),
+      PAGE_URL,
+    );
+    expect(bare.scopeAuthorization).not.toBeNull();
+    expect(bare.scopeAuthorization!.unlistedTargets.status).toBe("prohibited");
+    expect(bare.scopeAuthorization!.listedTargets.status).toBe("unspecified");
+  });
+
+  it("does not compile exceptions from generic contact language", () => {
+    const { data: generic } = collectPolicies(
+      doc(`
+        <h1>Brief</h1>
+        <p>Contact us if you are unsure whether a host is in scope.</p>
+        <p>Please request permission before testing staging systems.</p>
+      `),
+      PAGE_URL,
+    );
+    expect(
+      generic.scopeAuthorization === null ||
+        generic.scopeAuthorization.exceptions.length === 0,
+    ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P0: program operational state is its own axis — a submission pause is
+// neither a testing prohibition nor an account rule.
+// ---------------------------------------------------------------------------
+describe("Code.org/CodeAI operational program state", () => {
+  const { records, data } = collectPolicies(
+    doc(`
+      <h1>CodeAI Bug Bounty</h1>
+      <section aria-labelledby="acct">
+        <h2 id="acct">Program Account</h2>
+        <p>Program temporarily paused.</p>
+        <p>We are temporarily pausing the CodeAI bug bounty program. We do not yet have a date for resuming the program.</p>
+        <p>Effective Aug 1 at 12:00am Pacific Time, the engagement will stop accepting new bounty submissions.</p>
+        <p>Reports submitted before the pause takes effect will continue to be reviewed.</p>
+        <p>Reports submitted while the program is paused are not eligible for monetary rewards.</p>
+      </section>
+    `),
+    PAGE_URL,
+  );
+
+  it("emits machine-readable program state", () => {
+    expect(data.programState).not.toBeNull();
+    expect(data.programState!.submissionState).toBe("paused");
+    expect(data.programState!.rewardState).toBe("ineligible");
+    expect(data.programState!.resumeAt).toBeNull();
+    expect(data.programState!.effectiveAtText).toBe(
+      "Aug 1 at 12:00am Pacific Time",
+    );
+    expect(data.programState!.quotes.length).toBeGreaterThan(0);
+  });
+
+  it("never turns a submission pause into testing or account policy", () => {
+    expect(
+      data.accountRules.every(
+        (t) => !/paus|stop accepting|resuming/i.test(t),
+      ),
+    ).toBe(true);
+    expect(
+      data.dataRules.every((t) => !/paus|stop accepting|resuming/i.test(t)),
+    ).toBe(true);
+    expect(data.techniques.every((t) => t.status !== "allowed")).toBe(true);
+    expect(
+      data.techniques.every(
+        (t) => !/accepting|paused|resuming/i.test(t.quote),
+      ),
+    ).toBe(true);
+  });
+
+  it("emits no program state from unrelated rule text", () => {
+    const { data: plain } = collectPolicies(
+      doc(`
+        <h1>Brief</h1>
+        <p>Denial of Service testing is strictly prohibited.</p>
+      `),
+      PAGE_URL,
+    );
+    expect(plain.programState).toBeNull();
+  });
+
+  it("emits only well-formed records", () => {
+    assertRecordsWellFormed(records);
+  });
+});

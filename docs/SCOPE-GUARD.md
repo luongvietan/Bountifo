@@ -85,6 +85,59 @@ account_rules: [{ text, evidence_refs }]
 data_rules: [{ text, evidence_refs }]
 ```
 
+`authorized_scope` additionally carries `exceptions` — written-consent
+carve-outs that re-open *evaluation* of otherwise unlisted/out-of-scope
+targets:
+
+```yaml
+authorized_scope:
+  listed_targets: { status: conditional, conditions: [...] }
+  unlisted_targets: { status: prohibited }
+  exceptions:
+    - applies_to: out_of_scope_targets
+      condition:
+        kind: prior_written_consent        # or source_text (verbatim, review-only)
+        issuer: program_security_team
+        verification_required: true
+      effect: permit_evaluation            # never a permission
+      evidence_refs: [ev_...]
+```
+
+An exception is metadata, not an ALLOW: the baseline prohibition still
+applies until a gate verifies the consent claim, and technique/data/account
+prohibitions continue to apply after it. The exporter compiles exceptions
+only from explicit written-authorization phrasing ("prior written
+consent/permission/authorization/approval") with testing or excluded-system
+context — never from generic "contact us / request permission" language.
+When no program-side issuer is recognizable the condition stays verbatim
+`source_text`. Missing `exceptions` on an old dossier means "no exceptions",
+not "unverified permission".
+
+`program_state` is the operational axis, separate from testing
+authorization:
+
+```yaml
+program_state:
+  submission_state: open | paused | closed | unknown
+  testing_state: unspecified   # a submission pause is not a testing rule
+  reward_state: eligible | ineligible | conditional | unknown
+  effective_at_text: "Aug 1 at 12:00am Pacific Time"   # verbatim, never computed
+  resume_at: null
+  evidence_refs: [ev_...]
+```
+
+The exporter asserts a state only on explicit operational language
+("pausing the program", "stop accepting new bounty submissions",
+"no longer accepting", "resumed/reopened"). A negated or future resume
+("we do not yet have a date for resuming") is evidence, not a state flip.
+Within one brief, the last state assertion in document order wins; the
+exporter never derives state from the announcements feed or from the
+absence of a resume notice. `program_state: null` (or absent on an old
+dossier) means unknown — never inferred. Submission availability, reward
+eligibility, and testing permission stay three separate axes: `paused`
+submissions + `ineligible` rewards + `unspecified` testing is the honest
+normalization of a pause announcement.
+
 The inventory is generated from already-normalized `DocumentModel.targets` /
 `targetGroups` — no new inference. Old dossiers lacking `scope_inventory`
 parse fine; the compiler emits `SCOPE_INVENTORY_UNAVAILABLE` and the
@@ -369,6 +422,13 @@ prohibited technique: `["TECHNIQUE_PROHIBITED"]`.
   `unknown` → REVIEW.
 - `{placeholder}` labels match exactly one DNS label; targets expressed only
   as names (no URL/host) cannot resolve a proposed URL → `unlisted`.
+- `authorized_scope.exceptions` and `program_state` compile into the hashed
+  IR but are not yet consumed by the evaluator — the baseline prohibition
+  still DENYs an out-of-scope action, and a `paused` program_state does not
+  yet DENY submissions (there is no submission action kind). Wiring both
+  into decisions is Scope Guard work, intentionally deferred.
+- Exception coverage is limited to explicit written-authorization phrasing;
+  other consent forms compile to verbatim `source_text` or nothing.
 - Trusted context provenance is modeled by `source`/`verification`; the gate
   does not verify signatures — authenticating the runtime channel is the
   harness's job.

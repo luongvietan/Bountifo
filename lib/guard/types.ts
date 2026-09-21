@@ -177,7 +177,42 @@ export interface AgentFacts {
   authorized_scope?: {
     listed_targets: { status: string; conditions?: string[] };
     unlisted_targets: { status: string };
+    /**
+     * Consent carve-outs for otherwise unlisted/OOS targets. Metadata for
+     * evaluation — an exception never asserts permission by itself.
+     */
+    exceptions?: {
+      applies_to:
+        | "unlisted_targets"
+        | "out_of_scope_targets"
+        | "target_ids"
+        | "target_group_ids"
+        | string;
+      ids?: string[];
+      condition:
+        | {
+            kind: "prior_written_consent";
+            issuer?: string;
+            verification_required?: boolean;
+          }
+        | { kind: "source_text"; text: string }
+        | { kind: string };
+      effect: string;
+      evidence_refs?: string[];
+    }[];
     quote?: string;
+    evidence_refs?: string[];
+  } | null;
+  /**
+   * Program/submission operational state, separate from testing
+   * authorization. Missing on old dossiers → unknown, never inferred.
+   */
+  program_state?: {
+    submission_state?: string;
+    testing_state?: string;
+    reward_state?: string;
+    effective_at_text?: string | null;
+    resume_at?: string | null;
     evidence_refs?: string[];
   } | null;
   scope_inventory?: {
