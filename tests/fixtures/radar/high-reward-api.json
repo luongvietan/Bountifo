@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "uuid": "a1100000-0000-4000-8000-000000000001",
+  "code": "high-reward-api",
+  "catalog": {
+    "uuid": "a1100000-0000-4000-8000-000000000001",
+    "code": "high-reward-api",
+    "name": "High Reward API Program",
+    "lifecycle_status": "running",
+    "engagement_type": "bug_bounty",
+    "discovered_at": "2026-09-21T00:00:00.000Z"
+  },
+  "detail": {
+    "uuid": "a1100000-0000-4000-8000-000000000001",
+    "name": "High Reward API Program",
+    "code": "high-reward-api",
+    "engagementType": "bug_bounty",
+    "managedBounty": true,
+    "lifecycleStatus": "running",
+    "testingStart": "2026-01-01T00:00:00.000Z",
+    "testingEnd": null,
+    "testingPeriodLabel": "year_round",
+    "lastStatusTransition": "2026-08-20T00:00:00.000Z",
+    "lastBriefUpdate": "2026-09-10T00:00:00.000Z",
+    "safeHarborLevel": "full_safe_harbor",
+    "statistics": {
+      "researchers_participating": {
+        "value": "300",
+        "window": null
+      },
+      "vulnerabilities_rewarded": {
+        "value": "120",
+        "window": "last_90_days"
+      },
+      "average_payout": {
+        "value": "$1,200.00",
+        "window": "last_90_days"
+      }
+    },
+    "targetGroups": [
+      {
+        "id": "a11g0001",
+        "name": "API Endpoints",
+        "inScope": true,
+        "description": "Production API surface.",
+        "rewards": {
+          "p1": 20000,
+          "p2": 8000,
+          "p3": 2000,
+          "p4": 500,
+          "p5": 200
+        }
+      },
+      {
+        "id": "a11g0002",
+        "name": "Web Applications",
+        "inScope": true,
+        "description": null,
+        "rewards": {
+          "p1": 15000,
+          "p2": 5000,
+          "p3": 1000,
+          "p4": null,
+          "p5": null
+        }
+      }
+    ],
+    "targets": [
+      {
+        "id": "a11t0001",
+        "groupId": "a11g0001",
+        "location": "https://api.acme-radar.example.com/v2",
+        "name": "Public REST API",
+        "category": "api",
+        "tags": [
+          "api",
+          "rest"
+        ],
+        "inScope": true
+      },
+      {
+        "id": "a11t0002",
+        "groupId": "a11g0001",
+        "location": "https://api.acme-radar.example.com/graphql",
+        "name": "GraphQL endpoint",
+        "category": "api",
+        "tags": [
+          "graphql",
+          "api"
+        ],
+        "inScope": true
+      },
+      {
+        "id": "a11t0003",
+        "groupId": "a11g0001",
+        "location": "https://services.acme-radar.example.com",
+        "name": "Partner webservice",
+        "category": "webservice",
+        "tags": [
+          "api"
+        ],
+        "inScope": true
+      },
+      {
+        "id": "a11t0004",
+        "groupId": "a11g0001",
+        "location": "https://internal-api.acme-radar.example.com",
+        "name": "Internal API",
+        "category": "api",
+        "tags": [],
+        "inScope": true
+      },
+      {
+        "id": "a11t0005",
+        "groupId": "a11g0002",
+        "location": "https://www.acme-radar.example.com",
+        "name": "Marketing site",
+        "category": "website",
+        "tags": [
+          "web"
+        ],
+        "inScope": true
+      },
+      {
+        "id": "a11t0006",
+        "groupId": "a11g0002",
+        "location": "10.20.30.0/24",
+        "name": "Sensor hub firmware",
+        "category": "hardware",
+        "tags": [],
+        "inScope": true
+      },
+      {
+        "id": "a11t0007",
+        "groupId": "a11g0001",
+        "location": "https://staging-api.acme-radar.example.com",
+        "name": "Staging API (out of scope)",
+        "category": "api",
+        "tags": [
+          "api"
+        ],
+        "inScope": false
+      }
+    ],
+    "observedApiVersion": "2026-09-20"
+  },
+  "enrichment": {
+    "status": "complete"
+  },
+  "source_hash": "sha256:5fb8035fff5206f60cac449901e078ce2e62f9fe71ac55d48aa57ec294e0c7d8"
+}

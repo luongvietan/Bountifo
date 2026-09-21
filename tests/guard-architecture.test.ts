@@ -152,6 +152,96 @@ describe("architecture: closed side-effect registry", () => {
   });
 });
 
+describe("architecture: radar collection-plane closure", () => {
+  /**
+   * Task 20 — Engagement Radar introduces no new raw network primitive.
+   * All HTTP goes through apiRequest(); raw primitives (fetch, XHR, axios,
+   * undici, got, http(s).request, WebSocket, sendBeacon) must never appear
+   * under lib/radar. Only catalog.ts and enrichment.ts may call apiRequest
+   * (their delegated:network registry entries), and only store.ts touches
+   * IndexedDB. Every other radar file must be provably sink-free — the
+   * coordinator included (its IDB handle and network functions are injected).
+   */
+  const RADAR_FILE = /^lib\/radar\//;
+  const RAW_NETWORK =
+    /\bfetch\s*\(|XMLHttpRequest|\baxios\b|\bundici\b|\bgot\s*\(|\bhttps?\.request\s*\(|\bnew\s+WebSocket|navigator\.sendBeacon/;
+  const API_REQUEST_CALL = /\bapiRequest\s*(?:<[^>]*>)?\s*\(/;
+
+  /** Radar files permitted to invoke the delegated apiRequest sink. */
+  const RADAR_DELEGATED_NETWORK = new Set([
+    "lib/radar/catalog.ts",
+    "lib/radar/enrichment.ts",
+  ]);
+
+  /** Exact radar registry expectation — mirrors SINK_REGISTRY entries. */
+  const RADAR_REGISTRY: Record<string, string[]> = {
+    "lib/radar/catalog.ts": ["delegated:network"],
+    "lib/radar/enrichment.ts": ["delegated:network"],
+    "lib/radar/store.ts": ["idb"],
+  };
+
+  function radarSources(): Map<string, string> {
+    const out = new Map<string, string>();
+    for (const [file, src] of files()) {
+      if (RADAR_FILE.test(file)) out.set(file, src);
+    }
+    return out;
+  }
+
+  it("no lib/radar file touches a raw network primitive", () => {
+    const offenders: string[] = [];
+    for (const [file, src] of radarSources()) {
+      if (RAW_NETWORK.test(src)) offenders.push(file);
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("apiRequest is only called from catalog.ts and enrichment.ts", () => {
+    const offenders: string[] = [];
+    for (const [file, src] of radarSources()) {
+      if (RADAR_DELEGATED_NETWORK.has(file)) continue;
+      if (API_REQUEST_CALL.test(src)) offenders.push(file);
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("every lib/radar file either declares its sinks or provably has none", () => {
+    const offenders: string[] = [];
+    const seen = new Set<string>();
+    for (const [file, src] of radarSources()) {
+      seen.add(file);
+      const found = Object.entries(SINK_PATTERNS)
+        .filter(([, re]) => re.test(src))
+        .map(([id]) => id)
+        .sort();
+      const declared = [...(SINK_REGISTRY[file] ?? [])].sort();
+      if (found.join(",") !== declared.join(",")) {
+        offenders.push(
+          `${file}: sinks [${found.join(", ")}] vs registry [${declared.join(", ")}]`,
+        );
+      }
+    }
+    // The registry entries must also point at real files — no stale rows.
+    for (const file of Object.keys(RADAR_REGISTRY)) {
+      if (!seen.has(file)) {
+        offenders.push(`${file}: registered but file is gone`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("the radar registry stays exactly: catalog/enrichment network, store idb", () => {
+    for (const [file, sinks] of Object.entries(RADAR_REGISTRY)) {
+      expect(
+        SINK_REGISTRY[file],
+        `${file} missing or changed in SINK_REGISTRY`,
+      ).toEqual(sinks);
+    }
+    // coordinator.ts must need NO entry — its effects are injected deps.
+    expect(SINK_REGISTRY["lib/radar/coordinator.ts"]).toBeUndefined();
+  });
+});
+
 describe("architecture: single canonical gate", () => {
   const GATE_INTERNALS = /^lib\/guard\//;
 

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "uuid": "e5500000-0000-4000-8000-000000000001",
+  "code": "partial-program",
+  "catalog": {
+    "uuid": "e5500000-0000-4000-8000-000000000001",
+    "code": "partial-program",
+    "name": "Locked Vault Program",
+    "lifecycle_status": "running",
+    "engagement_type": "bug_bounty",
+    "discovered_at": "2026-09-21T00:00:00.000Z"
+  },
+  "detail": null,
+  "enrichment": {
+    "status": "unavailable",
+    "error_kind": "forbidden"
+  },
+  "source_hash": "sha256:e429279f6538d3d39e3798f9814612061961b46217c5c276032d3377c7aad307"
+}

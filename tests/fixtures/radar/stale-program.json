@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "uuid": "c3300000-0000-4000-8000-000000000002",
+  "code": "stale-program",
+  "catalog": {
+    "uuid": "c3300000-0000-4000-8000-000000000002",
+    "code": "stale-program",
+    "name": "Baseline Duo Program (stale)",
+    "lifecycle_status": "running",
+    "engagement_type": "bug_bounty",
+    "discovered_at": "2026-09-21T00:00:00.000Z"
+  },
+  "detail": {
+    "uuid": "c3300000-0000-4000-8000-000000000002",
+    "name": "Baseline Duo Program (stale)",
+    "code": "stale-program",
+    "engagementType": "bug_bounty",
+    "managedBounty": true,
+    "lifecycleStatus": "running",
+    "testingStart": "2026-01-15T00:00:00.000Z",
+    "testingEnd": null,
+    "testingPeriodLabel": null,
+    "lastStatusTransition": "2025-02-01T00:00:00.000Z",
+    "lastBriefUpdate": "2025-01-15T00:00:00.000Z",
+    "safeHarborLevel": "full_safe_harbor",
+    "statistics": {
+      "researchers_participating": {
+        "value": "100",
+        "window": null
+      },
+      "vulnerabilities_rewarded": {
+        "value": "40",
+        "window": "last_90_days"
+      }
+    },
+    "targetGroups": [
+      {
+        "id": "c33g0002",
+        "name": "Web scope",
+        "inScope": true,
+        "description": null,
+        "rewards": {
+          "p1": 3000,
+          "p2": 1000,
+          "p3": 500,
+          "p4": null,
+          "p5": null
+        }
+      }
+    ],
+    "targets": [
+      {
+        "id": "c33t0003",
+        "groupId": "c33g0002",
+        "location": "https://www.duo-radar.example.com",
+        "name": "Main site",
+        "category": "website",
+        "tags": [
+          "web"
+        ],
+        "inScope": true
+      },
+      {
+        "id": "c33t0004",
+        "groupId": "c33g0002",
+        "location": "https://portal.duo-radar.example.com",
+        "name": "Customer portal",
+        "category": "website",
+        "tags": [],
+        "inScope": true
+      }
+    ],
+    "observedApiVersion": "2026-09-20"
+  },
+  "enrichment": {
+    "status": "complete"
+  },
+  "source_hash": "sha256:9ecf106f63938fefc50ed7e92cfc1605c7d1eb5e6425bd2681038d37cb34136f"
+}

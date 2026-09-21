@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "uuid": "f6600000-0000-4000-8000-000000000001",
+  "code": "mixed-target-program",
+  "catalog": {
+    "uuid": "f6600000-0000-4000-8000-000000000001",
+    "code": "mixed-target-program",
+    "name": "Mixed Surface Program",
+    "lifecycle_status": "running",
+    "engagement_type": "bug_bounty",
+    "discovered_at": "2026-09-21T00:00:00.000Z"
+  },
+  "detail": {
+    "uuid": "f6600000-0000-4000-8000-000000000001",
+    "name": "Mixed Surface Program",
+    "code": "mixed-target-program",
+    "engagementType": "bug_bounty",
+    "managedBounty": true,
+    "lifecycleStatus": "running",
+    "testingStart": "2025-11-01T00:00:00.000Z",
+    "testingEnd": null,
+    "testingPeriodLabel": null,
+    "lastStatusTransition": "2026-05-15T00:00:00.000Z",
+    "lastBriefUpdate": "2026-06-01T00:00:00.000Z",
+    "safeHarborLevel": "full_safe_harbor",
+    "statistics": {
+      "researchers_participating": {
+        "value": "450",
+        "window": null
+      },
+      "vulnerabilities_rewarded": {
+        "value": "60",
+        "window": "last_90_days"
+      }
+    },
+    "targetGroups": [
+      {
+        "id": "f66g0001",
+        "name": "Mixed scope",
+        "inScope": true,
+        "description": null,
+        "rewards": {
+          "p1": 3000,
+          "p2": 1000,
+          "p3": 500,
+          "p4": null,
+          "p5": null
+        }
+      },
+      {
+        "id": "f66g0002",
+        "name": "Out of scope lab",
+        "inScope": false,
+        "description": null,
+        "rewards": {
+          "p1": null,
+          "p2": null,
+          "p3": null,
+          "p4": null,
+          "p5": null
+        }
+      }
+    ],
+    "targets": [
+      {
+        "id": "f66t0001",
+        "groupId": "f66g0001",
+        "location": "https://api.mixed-radar.example.com",
+        "name": "Public API",
+        "category": "api",
+        "tags": [
+          "api"
+        ],
+        "inScope": true
+      },
+      {
+        "id": "f66t0002",
+        "groupId": "f66g0001",
+        "location": "https://www.mixed-radar.example.com",
+        "name": "Marketing site",
+        "category": "website",
+        "tags": [
+          "web"
+        ],
+        "inScope": true
+      },
+      {
+        "id": "f66t0003",
+        "groupId": "f66g0001",
+        "location": "com.mixed-radar.android",
+        "name": "Android application",
+        "category": "mobile_application",
+        "tags": [
+          "mobile",
+          "android"
+        ],
+        "inScope": true
+      },
+      {
+        "id": "f66t0004",
+        "groupId": "f66g0001",
+        "location": null,
+        "name": "Smart device firmware",
+        "category": "hardware",
+        "tags": [
+          "iot"
+        ],
+        "inScope": true
+      },
+      {
+        "id": "f66t0005",
+        "groupId": "f66g0002",
+        "location": "https://lab.mixed-radar.example.com",
+        "name": "Lab web property (out of scope)",
+        "category": "website",
+        "tags": [
+          "web"
+        ],
+        "inScope": false
+      }
+    ],
+    "observedApiVersion": "2026-09-20"
+  },
+  "enrichment": {
+    "status": "complete"
+  },
+  "source_hash": "sha256:6680dfe323e4525b50f38475c4a65c8b1bb020650e4b7906278a37d17fea0e26"
+}

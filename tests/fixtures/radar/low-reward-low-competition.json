@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "uuid": "b2200000-0000-4000-8000-000000000001",
+  "code": "low-reward-low-competition",
+  "catalog": {
+    "uuid": "b2200000-0000-4000-8000-000000000001",
+    "code": "low-reward-low-competition",
+    "name": "Quiet Web Program",
+    "lifecycle_status": "running",
+    "engagement_type": "bug_bounty",
+    "discovered_at": "2026-09-21T00:00:00.000Z"
+  },
+  "detail": {
+    "uuid": "b2200000-0000-4000-8000-000000000001",
+    "name": "Quiet Web Program",
+    "code": "low-reward-low-competition",
+    "engagementType": "bug_bounty",
+    "managedBounty": true,
+    "lifecycleStatus": "running",
+    "testingStart": "2025-06-01T00:00:00.000Z",
+    "testingEnd": null,
+    "testingPeriodLabel": null,
+    "lastStatusTransition": "2026-03-01T00:00:00.000Z",
+    "lastBriefUpdate": "2026-09-05T00:00:00.000Z",
+    "safeHarborLevel": "partial_safe_harbor",
+    "statistics": {
+      "researchers_participating": {
+        "value": "25",
+        "window": null
+      },
+      "vulnerabilities_rewarded": {
+        "value": "8",
+        "window": "last_90_days"
+      }
+    },
+    "targetGroups": [
+      {
+        "id": "b22g0001",
+        "name": "Marketing web",
+        "inScope": true,
+        "description": null,
+        "rewards": {
+          "p1": 400,
+          "p2": 200,
+          "p3": 100,
+          "p4": 50,
+          "p5": 25
+        }
+      }
+    ],
+    "targets": [
+      {
+        "id": "b22t0001",
+        "groupId": "b22g0001",
+        "location": "https://shop.quiet-radar.example.com",
+        "name": "Shop storefront",
+        "category": "website",
+        "tags": [
+          "web"
+        ],
+        "inScope": true
+      },
+      {
+        "id": "b22t0002",
+        "groupId": "b22g0001",
+        "location": "https://blog.quiet-radar.example.com",
+        "name": "Company blog",
+        "category": "website",
+        "tags": [],
+        "inScope": true
+      },
+      {
+        "id": "b22t0003",
+        "groupId": "b22g0001",
+        "location": "https://app.quiet-radar.example.com",
+        "name": "Customer portal",
+        "category": "webapp",
+        "tags": [
+          "web"
+        ],
+        "inScope": true
+      }
+    ],
+    "observedApiVersion": "2026-09-20"
+  },
+  "enrichment": {
+    "status": "complete"
+  },
+  "source_hash": "sha256:f5ee8c82c0b82acfb537f0a8ef081956443d66ca0fb16f3857765fc28a60f5dc"
+}
