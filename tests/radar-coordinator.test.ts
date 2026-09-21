@@ -502,6 +502,51 @@ describe("RadarCoordinator resume", () => {
     db.close();
   });
 
+  it("start() kicks off an executor for a run adopted without one", async () => {
+    // Regression: getState() adopts a persisted active run into memory
+    // WITHOUT starting an executor; a subsequent start() must not just return
+    // the run — it must kick off the work (models resume() having failed,
+    // e.g. a transient IDB open error under `void radar.resume()`).
+    const db = await store.openRadarStore();
+    const itX = item("u-exec1");
+    await store.putCatalogItems(db, [itX]);
+    await store.putRun(db, {
+      run_id: "run-seeded-active",
+      phase: "enriching",
+      discovered: 1,
+      enriched: 0,
+      scored: 0,
+      pending_uuids: ["u-exec1"],
+      completed_uuids: [],
+      warnings: 0,
+      started_at: T0,
+      updated_at: T0,
+      catalog_complete: true,
+      enrichment_failed: 0,
+      warning_details: [],
+      cancel_requested: false,
+    });
+    await store.setLatestRunId(db, "run-seeded-active");
+
+    const { deps, enumerate, hydrate } = makeDeps([itX]);
+    const coord = new coordinator.RadarCoordinator(deps);
+    // Read-only path adopts the run — no executor may start here.
+    const state = await coord.getState();
+    expect(state?.run_id).toBe("run-seeded-active");
+    expect(state?.phase).toBe("enriching");
+    expect(hydrate).not.toHaveBeenCalled();
+
+    const run = await coord.start();
+    expect(run.run_id).toBe("run-seeded-active");
+    await coord.waitForIdle();
+    expect(enumerate).not.toHaveBeenCalled();
+    expect(hydrate).toHaveBeenCalledTimes(1);
+    expect(hydrate.mock.calls[0]![0].uuid).toBe("u-exec1");
+    const rec = await store.getRun(db, "run-seeded-active");
+    expect(rec?.phase).toBe("done");
+    db.close();
+  });
+
   it("resume() is a no-op for terminal runs", async () => {
     const db = await store.openRadarStore();
     await store.putRun(db, {

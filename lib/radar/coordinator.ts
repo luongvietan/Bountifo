@@ -264,10 +264,13 @@ export class RadarCoordinator {
   /**
    * Starts a scan. Idempotent: if an active run exists (in memory or
    * persisted by a previous worker) it is adopted/continued and returned —
-   * a second start never spawns a parallel scan.
+   * a second start never spawns a parallel scan. `kickoff()` is a no-op when
+   * an executor already owns the run, and covers the adopted-without-executor
+   * case (e.g. getState() loaded the persisted run after resume() failed).
    */
   async start(): Promise<RadarRunState> {
     if (this.run !== null && ACTIVE_PHASES.has(this.run.phase)) {
+      this.kickoff();
       return this.run;
     }
     this.starting ??= this.doStart().finally(() => {
@@ -344,7 +347,12 @@ export class RadarCoordinator {
     return run;
   }
 
-  /** Current run state — in-memory fast path, then the persisted latest run. */
+  /**
+   * Current run state — in-memory fast path, then the persisted latest run.
+   * Read-only by contract: adopting a persisted active run here does NOT
+   * start work (execution is resume()'s job at SW startup, and start()
+   * guarantees an executor whenever it returns an active run).
+   */
   async getState(): Promise<RadarRunState | null> {
     if (this.run !== null) return this.run;
     this.run = await this.loadLatestRun(await this.database());
