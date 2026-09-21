@@ -14,13 +14,14 @@ type JsonObject = Record<string, unknown>;
 const MAX_INDEX_PAGES = 20;
 const INDEX_PAGE_SIZE = 25;
 
-function asObject(value: unknown): JsonObject | null {
+/** Shared with lib/radar/catalog.ts — same row-level guards for index pages. */
+export function asObject(value: unknown): JsonObject | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as JsonObject)
     : null;
 }
 
-function asString(value: unknown): string | null {
+export function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
@@ -55,7 +56,12 @@ export function parseEngagementsIndex(
   return out;
 }
 
-function indexItemCode(item: JsonObject): string | null {
+/**
+ * `code` for one LIST_ENGAGEMENTS row: `attributes.code` when present, else
+ * the slug of the first parseable engagement URL (attributes.url /
+ * bugcrowd_url / engagement_url / links.self). Shared with the radar catalog.
+ */
+export function indexItemCode(item: JsonObject): string | null {
   const attrs = asObject(item.attributes);
   const direct = asString(attrs?.code);
   if (direct !== null) return direct;
