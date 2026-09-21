@@ -143,16 +143,21 @@ describe("parseCatalogPage", () => {
     expect(items.map((i) => i.uuid)).toEqual(["uuid-1"]);
   });
 
-  it("returns empty items and rawCount 0 for malformed documents", () => {
-    for (const bad of [null, {}, { data: {} }, 42, "x"]) {
+  it("flags missing/non-array data and non-object bodies as malformed", () => {
+    for (const bad of [null, {}, { data: {} }, 42, "x", { meta: {} }]) {
       expect(catalog.parseCatalogPage(bad, TS)).toEqual({
         items: [],
         rawCount: 0,
+        malformed: true,
       });
     }
+  });
+
+  it("treats data: [] as a valid empty page, not malformed", () => {
     expect(catalog.parseCatalogPage({ data: [] }, TS)).toEqual({
       items: [],
       rawCount: 0,
+      malformed: false,
     });
   });
 });
@@ -292,6 +297,58 @@ describe("enumerateEngagementCatalog", () => {
       "a-second-page-dup",
       "z-last",
     ]);
+  });
+
+  it("reports failed with malformed_page when a 200 page lacks data", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ meta: { page: 1 } }));
+    const res = await catalog.enumerateEngagementCatalog(TS);
+    expect(res.status).toBe("failed");
+    expect(res.warnings).toContain("malformed_page");
+    expect(res.pages_fetched).toBe(0);
+    expect(res.items).toEqual([]);
+    expect(JSON.stringify(res)).not.toContain(CREDENTIAL);
+  });
+
+  it("reports failed with malformed_page when data is not an array", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ data: { not: "an-array" } }),
+    );
+    const res = await catalog.enumerateEngagementCatalog(TS);
+    expect(res.status).toBe("failed");
+    expect(res.warnings).toContain("malformed_page");
+    expect(res.items).toEqual([]);
+  });
+
+  it("reports failed with malformed_page for a non-object body", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(42));
+    const res = await catalog.enumerateEngagementCatalog(TS);
+    expect(res.status).toBe("failed");
+    expect(res.warnings).toContain("malformed_page");
+  });
+
+  it("reports partial — never complete — when a later page is malformed", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      const u = String(url);
+      if (u.includes("page[number]=1")) return jsonResponse(fullPage(0));
+      if (u.includes("page[number]=2")) return jsonResponse(fullPage(25));
+      return jsonResponse({ unexpected: "shape" });
+    });
+    const res = await catalog.enumerateEngagementCatalog(TS);
+    expect(res.status).toBe("partial");
+    expect(res.warnings).toContain("malformed_page");
+    // Pages 1–2 were fetched and parsed cleanly; their 50 items survive.
+    expect(res.pages_fetched).toBe(2);
+    expect(res.items).toHaveLength(50);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("treats a first-page data: [] as a legitimately complete empty catalog", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
+    const res = await catalog.enumerateEngagementCatalog(TS);
+    expect(res.status).toBe("complete");
+    expect(res.pages_fetched).toBe(1);
+    expect(res.warnings).toEqual([]);
+    expect(res.items).toEqual([]);
   });
 
   it("reports failed with items collected so far when the API errors", async () => {

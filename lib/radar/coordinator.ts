@@ -360,10 +360,29 @@ export class RadarCoordinator {
   }
 
   /**
+   * The discovered set of the run `meta.latestRunId` points at:
+   * completed ∪ pending uuids. Result queries are always scoped to it —
+   * a program absent from the latest run stops ranking (non-destructively:
+   * its catalog/snapshot/score rows stay cached for future runs), and a
+   * missing run or empty discovery honestly yields an empty set.
+   */
+  private async latestRunScope(db: RadarDb): Promise<Set<string> | null> {
+    const runId = await getLatestRunId(db);
+    if (runId === null) return null;
+    const record = await getRun(db, runId);
+    if (record === null) return null;
+    const scope = new Set<string>();
+    for (const uuid of asStringList(record.completed_uuids)) scope.add(uuid);
+    for (const uuid of asStringList(record.pending_uuids)) scope.add(uuid);
+    return scope;
+  }
+
+  /**
    * Ranked results rows for one profile: latest score per engagement at the
-   * profile's current version, joined with catalog identity and the stored
-   * feature vector's six display signals. `rankPrograms` supplies ordering;
-   * `minConfidence` is an optional extra filter; `limit` clamps to ≤200.
+   * profile's current version, scoped to the latest run's discovered set,
+   * joined with catalog identity and the stored feature vector's six
+   * display signals. `rankPrograms` supplies ordering; `minConfidence` is an
+   * optional extra filter; `limit` clamps to ≤200.
    */
   async getResults(
     profileId: RadarProfileId,
@@ -371,12 +390,12 @@ export class RadarCoordinator {
     minConfidence?: number,
   ): Promise<RadarResultRow[]> {
     const db = await this.database();
+    const scope = await this.latestRunScope(db);
+    if (scope === null) return [];
     const profile = getRadarProfile(profileId);
-    const rows = await getLatestScoreRowsForProfile(
-      db,
-      profile.id,
-      profile.version,
-    );
+    const rows = (
+      await getLatestScoreRowsForProfile(db, profile.id, profile.version)
+    ).filter((row) => scope.has(row.uuid));
     const byUuid = new Map(rows.map((row) => [row.uuid, row]));
     const ranked = rankPrograms(
       rows.map((row) => row.score),
@@ -419,13 +438,16 @@ export class RadarCoordinator {
   /**
    * Per-program drill-down: latest snapshot, latest score for `profileId`
    * (defaults to best_ev) at the profile's current version, its rendered
-   * explanation, and the catalog row. Null envelope when nothing is stored.
+   * explanation, and the catalog row. Null envelope when nothing is stored —
+   * or when no latest run exists / the uuid sits outside its discovered set.
    */
   async getProgram(
     uuid: string,
     profileId: RadarProfileId = "best_ev",
   ): Promise<RadarProgramDetail | null> {
     const db = await this.database();
+    const scope = await this.latestRunScope(db);
+    if (scope === null || !scope.has(uuid)) return null;
     const profile = getRadarProfile(profileId);
     const [snapshot, scoreRow, catalogItem] = await Promise.all([
       getLatestSnapshot(db, uuid),

@@ -465,6 +465,10 @@ describe("RadarCoordinator resume", () => {
     expect((rec?.summary as { status?: string } | undefined)?.status).toBe(
       "complete",
     );
+    // The resumed uuid was scored, not merely hydrated.
+    expect(
+      await store.getLatestScoreRow(db, "u-g2", "best_ev", "1.0.0"),
+    ).not.toBeNull();
     db.close();
     // coordA is intentionally left hung on `stuck` — it models the dead worker.
   });
@@ -666,5 +670,104 @@ describe("RadarCoordinator queries", () => {
     expect(defaulted?.score?.profile).toBe("best_ev");
     // Unknown uuid → null envelope.
     expect(await coord.getProgram("u-p-absent")).toBeNull();
+  });
+});
+
+describe("RadarCoordinator latest-run scoping", () => {
+  it("a program absent from the latest run stops ranking, rows kept", async () => {
+    const first = [item("u-s-old"), item("u-s-keep")];
+    const second = [item("u-s-keep"), item("u-s-new")];
+    const { deps } = makeDeps([]);
+    deps.enumerate = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: "complete",
+        items: first,
+        pages_fetched: 1,
+        warnings: [],
+      } satisfies CatalogScanResult)
+      .mockResolvedValueOnce({
+        status: "complete",
+        items: second,
+        pages_fetched: 1,
+        warnings: [],
+      } satisfies CatalogScanResult);
+    const coord = new coordinator.RadarCoordinator(deps);
+
+    const run1 = await coord.start();
+    await coord.waitForIdle();
+    expect(run1.phase).toBe("done");
+    const rows1 = (await coord.getResults("best_ev", 50)).map((r) => r.uuid);
+    expect(rows1).toEqual(expect.arrayContaining(["u-s-old", "u-s-keep"]));
+    expect(rows1).not.toContain("u-s-new");
+
+    // Second scan: u-s-old disappeared from the catalog.
+    const run2 = await coord.start();
+    await coord.waitForIdle();
+    expect(run2.phase).toBe("done");
+    const rows2 = (await coord.getResults("best_ev", 50)).map((r) => r.uuid);
+    expect(rows2).toEqual(expect.arrayContaining(["u-s-keep", "u-s-new"]));
+    expect(rows2).not.toContain("u-s-old");
+
+    const db = await store.openRadarStore();
+    // Non-destructive: the dropped program's cache rows are still stored…
+    expect(await store.getCatalogItem(db, "u-s-old")).not.toBeNull();
+    expect(
+      await store.getLatestScoreRow(db, "u-s-old", "best_ev", "1.0.0"),
+    ).not.toBeNull();
+    db.close();
+    // …but neither results nor drill-down surface it anymore.
+    expect(await coord.getProgram("u-s-old", "best_ev")).toBeNull();
+    expect(await coord.getProgram("u-s-keep", "best_ev")).not.toBeNull();
+  });
+
+  it("returns empty results when no latest run exists but scores persist", async () => {
+    const { deps } = makeDeps([item("u-norun1")]);
+    const coord = new coordinator.RadarCoordinator(deps);
+    await coord.start();
+    await coord.waitForIdle();
+    const db = await store.openRadarStore();
+    // Score rows really are in the DB…
+    expect(
+      (await store.getLatestScoreRowsForProfile(db, "best_ev", "1.0.0"))
+        .length,
+    ).toBeGreaterThan(0);
+    // …but with no run to scope them to, nothing ranks.
+    await db.delete("meta", "latestRunId");
+    expect(await store.getLatestRunId(db)).toBeNull();
+    expect(await coord.getResults("best_ev", 50)).toEqual([]);
+    expect(await coord.getProgram("u-norun1", "best_ev")).toBeNull();
+    db.close();
+  });
+
+  it("a latest run that discovered zero uuids yields zero results", async () => {
+    // Seed a real score row first so the empty result is attributable to
+    // scoping, not an empty store.
+    const seeded = makeDeps([item("u-empty-seed")]);
+    const seedCoord = new coordinator.RadarCoordinator(seeded.deps);
+    await seedCoord.start();
+    await seedCoord.waitForIdle();
+    const db = await store.openRadarStore();
+    expect(
+      await store.getLatestScoreRow(db, "u-empty-seed", "best_ev", "1.0.0"),
+    ).not.toBeNull();
+
+    // The new latest run fails catalog discovery with zero uuids.
+    const { deps } = makeDeps([]);
+    deps.enumerate = vi.fn(
+      async (): Promise<CatalogScanResult> => ({
+        status: "failed",
+        items: [],
+        pages_fetched: 0,
+        warnings: ["forbidden"],
+      }),
+    );
+    const coord = new coordinator.RadarCoordinator(deps);
+    const run = await coord.start();
+    await coord.waitForIdle();
+    expect(run.phase).toBe("failed");
+    expect(await coord.getResults("best_ev", 50)).toEqual([]);
+    expect(await coord.getProgram("u-empty-seed", "best_ev")).toBeNull();
+    db.close();
   });
 });

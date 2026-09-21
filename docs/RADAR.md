@@ -59,8 +59,9 @@ message responses.
 
 | Condition | Status | Notes |
 |---|---|---|
-| Raw page < 25 rows | `complete` | First short page is the last page. Fullness is measured on the raw row count — skipped malformed/non-`engagement` rows still count toward it. |
+| Raw page < 25 rows | `complete` | First short page is the last page. Fullness is measured on the raw row count — skipped malformed/non-`engagement` rows still count toward it. `data: []` is a valid empty final page. |
 | Page 100 returns full (`MAX_CATALOG_PAGES`) | `partial` | `page_limit_reached` warning. The cap is a safety bound, not an assumption — never reported `complete`. |
+| `data` absent/non-array, or a non-object body, on a 200 page | `failed` (first page) / `partial` (after ≥1 clean page) | `malformed_page` warning — a malformed envelope is never a short page, so it can never report `complete`. Items from earlier clean pages are kept. |
 | `ApiError` from the client | `failed` | Items collected so far are kept; a warning names the error kind verbatim (`rate_limited`, `forbidden`, …) or `unknown` for a non-ApiError throw. |
 
 Dedupe is by `uuid`, first occurrence wins; item order is first-seen page
@@ -275,10 +276,23 @@ order. The three always-null signals emit no threshold codes, only
    always rank identically.
 
 `getResults` returns the latest score row per engagement at the profile's
-*current* version, joined with catalog identity and the vector's six
-display signals; an optional `minConfidence` argument filters further, and
-`limit` is clamped to 1–200 (default 50). Ineligible rows rank after all
-eligible ones — dimmed in the UI, never hidden.
+*current* version, **scoped to the discovered set of the run
+`meta.latestRunId` points at** — its `completed_uuids ∪ pending_uuids` —
+joined with catalog identity and the vector's six display signals; an
+optional `minConfidence` argument filters further, and `limit` is clamped
+to 1–200 (default 50). Ineligible rows rank after all eligible ones —
+dimmed in the UI, never hidden.
+
+Result scoping is staleness-honest but non-destructive:
+
+- A program absent from the latest run's discovery stops ranking and
+  `getProgram` returns `null` for it — yet its catalog/snapshot/score rows
+  remain cached, so a later run that re-encounters it reuses them (same
+  `source_hash` → same score). Radar never deletes cache rows to make
+  results look fresh.
+- A latest run that discovered zero programs (e.g. a failed catalog phase
+  before any uuid was found) yields zero results, and no latest run at all
+  yields empty results / `null` programs — never rows from older runs.
 
 ## Scan lifecycle and resume
 
