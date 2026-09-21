@@ -434,9 +434,15 @@ import {
   compilePolicy,        // compile once
   evaluateAction,       // evaluate many actions against a CompiledPolicy
   evaluateCondition,    // evaluate a single compiled condition (tri-state)
-  runWithGuard,         // decision-gated executor
-  guardWrap,            // executor wrapper that throws ScopeGuardBlocked
-  ScopeGuardBlocked,
+
+  // canonical execution gate — the ONLY sanctioned path to a side effect
+  runWithGuard,         // validate → evaluate → audit → execute iff ALLOW
+  guardWrap,            // adapter → prepared plan → gate, one call shape
+  executeAdapter,       // one-shot form of guardWrap
+  prepareExecution,     // adapter → validated, deep-frozen PreparedExecution
+  runPrepared,          // run a prepared plan through the gate
+  ScopeGuardBlocked,    // thrown on REVIEW/DENY — carries the GuardDecision
+  ScopeGuardEvaluationError,  // guard-side failure — also fail-closed
   ScopeGuardInputError,
   // deterministic helpers + aliases
   canonicalTechniqueId, // also exported as canonicalizeTechnique
@@ -452,15 +458,46 @@ const decision = await evaluateScopeGuard({ agentFacts, action, trustedContext }
 const policy = await compilePolicy(agentFacts);
 const d2 = await evaluateAction(policy, action, { trustedContext });
 
-// execution gate — executor runs only on ALLOW
-const res = await runWithGuard(() => decision, () => executor.run(action));
-// or throw on block:
-const guarded = guardWrap(decision, () => executor.run(action));
-await guarded(); // throws ScopeGuardBlocked unless ALLOW
+// canonical gate — the executor closure is invoked only when
+// decision === "ALLOW" && execution_allowed === true
+const res = await runWithGuard({
+  policy,
+  action,
+  trustedContext,
+  execute: () => executor.run(action),
+  metadata: { executor_id: "http-executor", correlation_id, audit: sink.write },
+});
+// res = { decision, executed: true, result, execution: { executor_id,
+//         correlation_id, started_at, completed_at } }
+// throws ScopeGuardBlocked on REVIEW/DENY — never returns "not executed"
+
+// adapter path — the adapter owns the deterministic input→ProposedAction
+// mapping; prepareExecution validates the action and deep-freezes it, so
+// the evaluated action IS the executed action (no TOCTOU)
+const adapter: ExecutionAdapter<Req, Resp> = {
+  prepare: (input) => ({
+    proposedAction: toProposedAction(input),
+    execute: () => rawExecutor(input),
+  }),
+};
+const env: GuardEnvironment = { policy, trustedContext, executor_id: "http" };
+const guarded = guardWrap(adapter, env);
+await guarded(req);          // throws ScopeGuardBlocked unless ALLOW
+await runPrepared(prepareExecution(adapter, req), env);  // equivalent
 ```
 
-Invalid `ProposedAction` input throws `ScopeGuardInputError` (CLI exit 2) —
-it is never coerced into a decision.
+Blocking semantics: `REVIEW` and `DENY` throw `ScopeGuardBlocked` (which
+carries the full `GuardDecision` — hashes, reason codes, evidence refs).
+Guard-side failures — malformed `ProposedAction`, evaluation throw, adapter
+that cannot map deterministically, audit-hook failure — throw
+`ScopeGuardEvaluationError`. Every failure mode fails closed: the executor
+closure is never invoked. The audit hook fires exactly once per decision,
+before the executor, with hashes + reason codes only — never action bodies
+or payloads.
+
+Invalid `ProposedAction` input throws `ScopeGuardInputError` at the
+`evaluateScopeGuard` boundary (CLI exit 2) and `ScopeGuardEvaluationError`
+inside the gate — it is never coerced into a decision.
 
 ## Shadow mode
 

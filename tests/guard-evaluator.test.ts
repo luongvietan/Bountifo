@@ -545,60 +545,78 @@ describe("determinism + hashing — §24", () => {
 describe("execution gate — §27", () => {
   it("runWithGuard executes only on ALLOW", async () => {
     let ran = false;
-    const allow = await runWithGuard(
-      () => decide(makeFacts(), makeAction(), VERIFIED_OWNED),
-      () => {
+    const policy = await compilePolicy(makeFacts());
+    const allow = await runWithGuard({
+      policy,
+      action: makeAction(),
+      trustedContext: VERIFIED_OWNED,
+      now: "2026-01-01T00:00:00.000Z",
+      execute: () => {
         ran = true;
         return "ok";
       },
-    );
+    });
     expect(ran).toBe(true);
     expect(allow.executed).toBe(true);
-    expect(allow.value).toBe("ok");
+    expect(allow.result).toBe("ok");
+    expect(allow.decision.decision).toBe("ALLOW");
 
     ran = false;
-    const deny = await runWithGuard(
-      () =>
-        decide(
-          makeFacts(),
-          makeAction({ technique: { id: "denial_of_service" } }),
-          VERIFIED_OWNED,
-        ),
-      () => {
-        ran = true;
-        return "bad";
-      },
+    await expect(
+      runWithGuard({
+        policy,
+        action: makeAction({ technique: { id: "denial_of_service" } }),
+        trustedContext: VERIFIED_OWNED,
+        now: "2026-01-01T00:00:00.000Z",
+        execute: () => {
+          ran = true;
+          return "bad";
+        },
+      }),
+    ).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ScopeGuardBlocked && e.decision.decision === "DENY",
     );
     expect(ran).toBe(false);
-    expect(deny.executed).toBe(false);
-    expect(deny.decision.decision).toBe("DENY");
   });
 
   it("REVIEW blocks execution — never `!== DENY`", async () => {
     let ran = false;
-    const res = await runWithGuard(
-      () => decide(makeFacts({ collection: { status: "partial" } }), makeAction()),
-      () => {
-        ran = true;
-      },
-      { throwOnBlock: true },
-    ).then(
-      () => null,
-      (err: unknown) => err,
+    const policy = await compilePolicy(
+      makeFacts({ collection: { status: "partial" } }),
     );
-    expect(res).toBeInstanceOf(ScopeGuardBlocked);
+    await expect(
+      runWithGuard({
+        policy,
+        action: makeAction(),
+        execute: () => {
+          ran = true;
+        },
+      }),
+    ).rejects.toBeInstanceOf(ScopeGuardBlocked);
     expect(ran).toBe(false);
   });
 
   it("guardWrap throws ScopeGuardBlocked carrying the decision", async () => {
-    const review = await decide(
-      makeFacts({ collection: { status: "partial" } }),
-      makeAction(),
+    const env = {
+      policy: await compilePolicy(
+        makeFacts({ collection: { status: "partial" } }),
+      ),
+    };
+    const guarded = guardWrap(
+      {
+        prepare: (input: ProposedAction) => ({
+          proposedAction: input,
+          execute: () => "never",
+        }),
+      },
+      env,
     );
-    const guarded = guardWrap(review, () => "never");
-    await expect(guarded()).rejects.toBeInstanceOf(ScopeGuardBlocked);
+    await expect(guarded(makeAction())).rejects.toBeInstanceOf(
+      ScopeGuardBlocked,
+    );
     try {
-      await guarded();
+      await guarded(makeAction());
     } catch (err) {
       expect((err as ScopeGuardBlocked).decision.decision).toBe("REVIEW");
     }

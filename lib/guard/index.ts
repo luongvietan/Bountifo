@@ -35,7 +35,21 @@ export {
   decisionHash as hashDecision,
   decisionPreimage,
 } from "./hash.ts";
-export { runWithGuard, guardWrap, ScopeGuardBlocked } from "./harness.ts";
+export {
+  runWithGuard,
+  guardWrap,
+  executeAdapter,
+  prepareExecution,
+  runPrepared,
+  ScopeGuardBlocked,
+  ScopeGuardEvaluationError,
+  type ExecutionAdapter,
+  type GuardAuditRecord,
+  type GuardedExecutionResult,
+  type GuardEnvironment,
+  type PreparedExecution,
+  type RunWithGuardParams,
+} from "./harness.ts";
 export {
   GUARD_SCHEMA_VERSION,
   GUARD_ENGINE_VERSION,
