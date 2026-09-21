@@ -867,6 +867,52 @@ function contextsOf(sentence: string): string[] {
   return [ctx];
 }
 
+/** Token comparison for context text: lowercase, punctuation-free,
+ * possessive-stripped, trailing-s folded so trivial plurals match. */
+function contextTokens(text: string): string[] {
+  return normalizeText(text)
+    .toLowerCase()
+    .replace(/[^a-z0-9'\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w !== "")
+    .map((w) => {
+      const bare = w.replace(/'s$/, "");
+      return bare.length > 3 && bare.endsWith("s") ? bare.slice(0, -1) : bare;
+    });
+}
+
+/**
+ * An antecedent that only restates the technique the rule governs is not a
+ * context — "when using automated tools" on the automated-tools rule adds
+ * nothing; the technique match already decides when the rule applies, and a
+ * `conditional_context` would just strand the real conditions behind an
+ * unverifiable clause. Every antecedent token must be generic framing or
+ * part of the finding's (unqualified) name, and at least one must be a
+ * distinctive technique token. Anything else — extra scope ("on production
+ * systems"), a different technique — is a real narrowing and stays
+ * conditional.
+ */
+function selfReferentialAntecedent(
+  ctx: string,
+  name: string,
+  baseName: string,
+): boolean {
+  const unqualified = name.replace(/\s*\([^)]*\)\s*$/, "");
+  const cover = new Set([
+    ...contextTokens(unqualified),
+    ...contextTokens(baseName),
+  ]);
+  const distinctive = new Set(
+    [...cover].filter((t) => !GENERIC_CONTEXT_WORDS.has(t)),
+  );
+  const toks = contextTokens(ctx);
+  return (
+    distinctive.size > 0 &&
+    toks.some((t) => distinctive.has(t)) &&
+    toks.every((t) => GENERIC_CONTEXT_WORDS.has(t) || cover.has(t))
+  );
+}
+
 /**
  * Antecedents the exporter can type deterministically: a compromise or
  * first foothold on program infrastructure — "you have managed to
@@ -1319,14 +1365,19 @@ export function techniqueFindingsIn(text: string): TechniqueFinding[] {
         if (split !== null) {
           for (const obj of split.objects) {
             const name = `${obj} ${split.verb}`;
+            const selfRef =
+              contexts.length > 0 &&
+              contexts.every((c) =>
+                selfReferentialAntecedent(c, name, span.def.name),
+              );
             out.push({
               name,
               slug: slugifyName(name),
               baseName: span.def.name,
               status: status!,
               conditions,
-              contexts,
-              applicability,
+              contexts: selfRef ? [] : contexts,
+              applicability: selfRef ? { type: "engagement" } : applicability,
               quote: sentence,
               ambiguous,
             });
@@ -1335,14 +1386,19 @@ export function techniqueFindingsIn(text: string): TechniqueFinding[] {
         }
       }
       const name = narrowedName(span, sentence, survivors);
+      const selfRef =
+        contexts.length > 0 &&
+        contexts.every((c) =>
+          selfReferentialAntecedent(c, name, span.def.name),
+        );
       out.push({
         name,
         slug: slugifyName(name),
         baseName: span.def.name,
         status: ambiguous ? "unspecified" : status!,
         conditions,
-        contexts,
-        applicability,
+        contexts: selfRef ? [] : contexts,
+        applicability: selfRef ? { type: "engagement" } : applicability,
         quote: sentence,
         ambiguous,
       });

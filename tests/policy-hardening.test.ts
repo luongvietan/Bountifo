@@ -297,6 +297,61 @@ describe("technique identity specificity", () => {
     });
   });
 
+  it("drops an antecedent that only restates the governed technique", () => {
+    // Live LastPass phrasing: "when using automated tools" names the
+    // technique itself — technique matching already decides when the rule
+    // applies, so a conditional_context here would just strand the rate
+    // limit behind an unverifiable context.
+    const findings = techniqueFindingsIn(
+      "When using automated tools, the requests should be limited to " +
+        "a maximum of 5 requests per second.",
+    );
+    const tools = findings.find((f) => f.name === "automated tools");
+    expect(tools).toBeDefined();
+    expect(tools!.status).toBe("conditional");
+    expect(tools!.conditions.join(" ")).toContain("requests per second");
+    expect(tools!.applicability).toEqual({ type: "engagement" });
+    expect(tools!.contexts).toEqual([]);
+  });
+
+  it("keeps the same antecedent when it scopes a different technique", () => {
+    // "When using automated tools" conditions the *port scanning* rule —
+    // it is a real context for a technique the sentence does not name.
+    const findings = techniqueFindingsIn(
+      "When using automated tools, do not run port scans.",
+    );
+    const scan = findings.find(
+      (f) => f.baseName === "scanning",
+    );
+    expect(scan).toBeDefined();
+    expect(scan!.applicability).toEqual({
+      type: "conditional_context",
+      conditions: [{ kind: "antecedent_text", text: "using automated tools" }],
+    });
+  });
+
+  it("keeps a self-referential lead that carries extra scope", () => {
+    // "on production systems" is a real narrowing, not filler — the
+    // antecedent is not a bare restatement of the technique.
+    const findings = techniqueFindingsIn(
+      "When using automated tools on production systems, the requests " +
+        "should be limited to a maximum of 5 requests per second.",
+    );
+    const tools = findings.find((f) =>
+      f.name.startsWith("automated tools"),
+    );
+    expect(tools).toBeDefined();
+    expect(tools!.applicability).toEqual({
+      type: "conditional_context",
+      conditions: [
+        {
+          kind: "antecedent_text",
+          text: "using automated tools on production systems",
+        },
+      ],
+    });
+  });
+
   it("keeps earlier narrowed forms stable", () => {
     expect(
       techniqueFindingsIn("Automated scanning is prohibited.").map((f) => f.name),
@@ -729,6 +784,10 @@ describe("LastPass golden control", () => {
     expect(tools!.conditions.join(" ")).toContain(
       "a maximum of 5 requests per second",
     );
+    // "When using automated tools" restates the governed technique — it is
+    // not a conditional_context; the technique match already decides when
+    // the rule applies.
+    expect(tools!.applicability).toEqual({ type: "engagement" });
   });
 });
 
