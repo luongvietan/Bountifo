@@ -194,7 +194,7 @@ function renderRows(rows: RadarResultRow[]): void {
   if (views.length === 0) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 8;
+    td.colSpan = 10;
     td.className = "empty";
     td.textContent =
       rows.length === 0
@@ -216,6 +216,8 @@ function renderRows(rows: RadarResultRow[]): void {
     cell(tr, view.saturation);
     signalCell(tr, view.kiPressure, view.kiAnalyzed);
     signalCell(tr, view.opportunity, view.opportunityAnalyzed);
+    cell(tr, view.access);
+    cell(tr, view.authz);
     tr.addEventListener("click", () => void selectProgram(view.uuid));
     resultsBody.append(tr);
   }

@@ -7,6 +7,7 @@ import type {
   RadarRunState,
   RadarScanSummary,
 } from "../lib/radar/coordinator";
+import { explainScore } from "../lib/radar/scoring";
 import type { ProgramFeatureVector, ProgramScore } from "../lib/radar/types";
 import {
   API_HEAVY_MIN,
@@ -347,11 +348,28 @@ describe("buildRow / buildRows", () => {
       saturation: "0.25 · Moderate-low",
       kiPressure: "—",
       opportunity: "—",
+      access: "—",
+      authz: "—",
       kiAnalyzed: false,
       opportunityAnalyzed: false,
       eligible: true,
       provisional: false,
     });
+  });
+
+  it("renders the V1.4 access/authz signals as plain values", () => {
+    const row = resultRow();
+    row.signals.accessibility = 0.9;
+    row.signals.authz_opportunity = 0.1;
+    const view = buildRow(row, 1);
+    expect(view.access).toBe("0.90");
+    expect(view.authz).toBe("0.10");
+  });
+
+  it("dashes the V1.4 signals when unknown — never 0.00", () => {
+    const view = buildRow(resultRow(), 1);
+    expect(view.access).toBe("—");
+    expect(view.authz).toBe("—");
   });
 
   it("renders the V1.3 deep signals with bands when analyzed", () => {
@@ -841,6 +859,7 @@ describe("detailRows", () => {
     expect(groups.map((g) => g.title)).toEqual([
       "Known-issue intelligence",
       "Opportunity changes",
+      "Access & authorization",
     ]);
     expect(groups[0]!.rows).toEqual([
       { label: "Unique known issues", value: "90" },
@@ -859,6 +878,34 @@ describe("detailRows", () => {
       { label: "Safe harbor change", value: "no" },
       { label: "Opportunity change", value: "0.30 · Moderate" },
       { label: "Source status", value: "complete" },
+    ]);
+    // The V1.4 metadata signals read from the embedded vector — the
+    // fixture omits them, so they render as honest dashes.
+    expect(groups[2]!.rows).toEqual([
+      { label: "Accessibility", value: "—" },
+      { label: "AuthZ opportunity", value: "—" },
+    ]);
+  });
+
+  it("renders the access/authz readings when the vector carries them", () => {
+    const detail = programDetail();
+    detail.vector = {
+      ...detail.vector,
+      accessibility: { value: 0.8 },
+      authz_opportunity: { value: 0.1 },
+    } as unknown as ProgramFeatureVector;
+    const groups = detailRows(detail);
+    expect(groups[2]!.rows).toEqual([
+      { label: "Accessibility", value: "0.80" },
+      { label: "AuthZ opportunity", value: "0.10" },
+    ]);
+  });
+
+  it("dashes the access/authz rows when no vector is embedded", () => {
+    const groups = detailRows(programDetail({ vector: null }));
+    expect(groups[2]!.rows).toEqual([
+      { label: "Accessibility", value: "—" },
+      { label: "AuthZ opportunity", value: "—" },
     ]);
   });
 
@@ -1172,6 +1219,16 @@ describe("results table markup", () => {
     expect(RADAR_HTML).toContain("Deep ranking");
     expect(RADAR_HTML).toContain("All candidates (metadata)");
   });
+
+  it("adds V1.4 Access and AuthZ columns after Opportunity", () => {
+    const access = RADAR_HTML.search(/>\s*Access\s*</);
+    const authz = RADAR_HTML.search(/>\s*AuthZ\s*</);
+    const opportunity = RADAR_HTML.search(/>\s*Opportunity\s*</);
+    expect(access).toBeGreaterThan(-1);
+    expect(authz).toBeGreaterThan(-1);
+    expect(authz).toBeGreaterThan(access);
+    expect(access).toBeGreaterThan(opportunity);
+  });
 });
 
 describe("filterRows null semantics (V1.3.1)", () => {
@@ -1194,6 +1251,48 @@ describe("filterRows null semantics (V1.3.1)", () => {
     expect(filterRows([deep], { maxKiPressure: 0.6 })).toHaveLength(1);
     expect(filterRows([deep], { minOpportunity: 0.8 })).toHaveLength(0);
     expect(filterRows([deep], { minOpportunity: 0.7 })).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V1.4 — Access/AuthZ columns + the reason codes the detail pane's
+// explanation list renders verbatim (explainScore lines land in
+// detail.explanation via the coordinator).
+// ---------------------------------------------------------------------------
+
+describe("V1.4 access/authz explanation lines", () => {
+  const scoreWith = (reasons: string[]): ProgramScore => ({
+    schema_version: 1,
+    engagement_uuid: UUID,
+    profile: "easy_entry",
+    scoring_version: "1.4.0",
+    score: 60,
+    confidence: 0.5,
+    provisional: false,
+    components: {},
+    reasons,
+    source_hash: "x",
+  });
+
+  it("renders ACCESS_OPEN as a positive line", () => {
+    expect(explainScore(scoreWith(["ACCESS_OPEN"]))).toEqual([
+      "+ open access program",
+    ]);
+  });
+
+  it("renders AUTHZ_PROHIBITED as a caution line", () => {
+    expect(explainScore(scoreWith(["AUTHZ_PROHIBITED"]))).toEqual([
+      "- cross-account testing prohibited",
+    ]);
+  });
+
+  it("renders ACCESS_GATED and AUTHZ_SURFACE through their pinned text", () => {
+    expect(
+      explainScore(scoreWith(["ACCESS_GATED", "AUTHZ_SURFACE"])),
+    ).toEqual([
+      "- restricted or gated access",
+      "+ authenticated authz test surface",
+    ]);
   });
 });
 

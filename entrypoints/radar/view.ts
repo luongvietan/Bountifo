@@ -365,10 +365,10 @@ export function surfaceText(signals: RadarResultSignals): string {
 
 /**
  * One rendered row of the ranked results table (all display strings).
- * Eight cells: Rank, Program, Score (evidence badge + Δ + coverage folded
- * in), Reward, Surface, Saturation, KI Pressure, Opportunity — the
- * Freshness column was dropped for V1.3 (freshness stays in `signals` and
- * shows in the detail meta line).
+ * Ten cells: Rank, Program, Score (evidence badge + Δ + coverage folded
+ * in), Reward, Surface, Saturation, KI Pressure, Opportunity, Access,
+ * AuthZ — the Freshness column was dropped for V1.3 (freshness stays in
+ * `signals` and shows in the detail meta line).
  */
 export interface RowView {
   uuid: string;
@@ -389,6 +389,10 @@ export interface RowView {
   kiPressure: string;
   /** opportunity_change — "0.30 · Moderate"; "—" when not deep-analyzed. */
   opportunity: string;
+  /** accessibility — "0.80"; "—" when the brief carried no access evidence. */
+  access: string;
+  /** authz_opportunity — "0.10"; "—" when the brief carried no authz evidence. */
+  authz: string;
   /** false → the KI Pressure cell renders "—" with an `unanalyzed` marker. */
   kiAnalyzed: boolean;
   /** false → the opportunity cell renders "—" with an `unanalyzed` marker. */
@@ -420,6 +424,8 @@ export function buildRow(row: RadarResultRow, rank: number): RowView {
     saturation: saturationText(row.signals.research_saturation),
     kiPressure: densityText(row.signals.known_issue_density),
     opportunity: opportunityText(row.signals.opportunity_change),
+    access: formatSignal(row.signals.accessibility),
+    authz: formatSignal(row.signals.authz_opportunity),
     kiAnalyzed: row.signals.known_issue_density !== null,
     opportunityAnalyzed: row.signals.opportunity_change !== null,
     eligible: row.eligible,
@@ -637,10 +643,11 @@ function diffStatus(diff: RadarSemanticDiff | null): string {
 }
 
 /**
- * Deep-enrichment diagnostics for the detail pane — the evidence behind the
- * KI Pressure and Opportunity columns, always rendered honestly: counts /
- * version ids that never arrived show "—", and a missing deep pass reads
- * "not analyzed" rather than fabricating zeros.
+ * Per-signal diagnostics for the detail pane — the evidence behind the
+ * KI Pressure, Opportunity, Access, and AuthZ columns, always rendered
+ * honestly: counts / version ids that never arrived show "—", a missing
+ * deep pass reads "not analyzed", and a metadata-stage signal with no
+ * brief evidence shows "—" rather than fabricating a zero.
  */
 export function detailRows(detail: RadarProgramDetail): DetailRowGroup[] {
   const deep: RadarDeepEnrichment | null = detail.snapshot?.deep ?? null;
@@ -698,6 +705,32 @@ export function detailRows(detail: RadarProgramDetail): DetailRowGroup[] {
           ),
         },
         { label: "Source status", value: diffStatus(diff) },
+      ],
+    },
+    {
+      title: "Access & authorization",
+      rows: [
+        {
+          label: "Accessibility",
+          // Defensive read — a vector stored before V1.4 may lack the key.
+          value: formatSignal(
+            (
+              detail.vector?.accessibility as
+                | { value: number | null }
+                | undefined
+            )?.value ?? null,
+          ),
+        },
+        {
+          label: "AuthZ opportunity",
+          value: formatSignal(
+            (
+              detail.vector?.authz_opportunity as
+                | { value: number | null }
+                | undefined
+            )?.value ?? null,
+          ),
+        },
       ],
     },
   ];
