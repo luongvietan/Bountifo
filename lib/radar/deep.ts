@@ -7,6 +7,7 @@ import { parseChangelogList, selectDiffBaseline } from "./history";
 import { fetchKnownIssueSummary } from "./knownIssues";
 import type {
   RadarDeepEnrichment,
+  RadarKnownIssueSummary,
   RadarSemanticDiff,
 } from "./deepTypes";
 import type { RadarCatalogItem, RadarProgramSnapshot } from "./types";
@@ -59,7 +60,7 @@ function nullDiff(
  * complete-ki + no_baseline-diff still yields a complete envelope.
  */
 function envelopeStatus(
-  ki: RadarDeepEnrichment["status"] | "no_baseline",
+  ki: RadarKnownIssueSummary["status"],
   diff: RadarSemanticDiff["status"],
 ): RadarDeepEnrichment["status"] {
   const kiDone = ki === "complete";
