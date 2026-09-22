@@ -1,6 +1,7 @@
 import { BUGCROWD_SITE } from "../../lib/constants";
 import type {
   RadarProgramDetail,
+  RadarResultMode,
   RadarResultRow,
   RadarResultSignals,
   RadarRunPhase,
@@ -13,8 +14,13 @@ import type {
   RadarSemanticDiff,
 } from "../../lib/radar/deepTypes";
 import { RADAR_PROFILES } from "../../lib/radar/profiles";
-import { RADAR_PROFILE_IDS } from "../../lib/radar/types";
+import {
+  DEEP_PROFILE_IDS,
+  RADAR_PROFILE_IDS,
+  STABLE_TOP_K,
+} from "../../lib/radar/types";
 import type {
+  DeepStabilization,
   ProgramFeatureVector,
   ProgramScore,
   RadarProfileId,
@@ -108,6 +114,18 @@ export function formatCoverage(confidence: number): string {
 }
 
 /**
+ * A score delta (deep − metadata) always signed, rounded to one decimal:
+ * "+3.2", "−11.4", "+0.0". The minus is U+2212 so it doesn't read as a
+ * hyphen/dash; −0 collapses to "+0.0" rather than showing a sign lie.
+ * Callers handle the null case — a delta is never fabricated from one side.
+ */
+export function formatDelta(delta: number): string {
+  // Same rounding as the coordinator's score_delta (round1 = toFixed(1)).
+  const rounded = Number(delta.toFixed(1));
+  return rounded < 0 ? `−${(-rounded).toFixed(1)}` : `+${rounded.toFixed(1)}`;
+}
+
+/**
  * Weight display: "+3", "+1.5". Cost-direction weights stay positive in
  * V1.1 scoring — the "(cost)" suffix flags that contribution rises as the
  * raw signal falls.
@@ -159,8 +177,57 @@ function countsText(state: RadarRunState): string {
 }
 
 /**
+ * Human label for the run's deep-stage stabilization verdict:
+ * "Top-20 stable" / "budget-limited" / "incomplete"; null when the run has
+ * no verdict — a missing verdict is omitted, never worded as "stable".
+ */
+export function stabilizationLabel(
+  stabilization: DeepStabilization | null | undefined,
+): string | null {
+  switch (stabilization) {
+    case "stable":
+      return `Top-${STABLE_TOP_K} stable`;
+    case "budget_limited":
+      return "budget-limited";
+    case "incomplete":
+      return "incomplete";
+    default:
+      return null;
+  }
+}
+
+/**
+ * The deep-stage segment of a terminal summary, e.g.
+ * "Deep: 44 analyzed · 2 rounds · Top-20 stable" — or "44 of 60 analyzed"
+ * when the deep budget cut the candidate union short. Returns null when the
+ * summary carries no deep fields (a run whose deep stage never ran).
+ */
+export function deepSummaryText(summary: RadarScanSummary): string | null {
+  if (
+    summary.deep_analyzed === undefined &&
+    summary.deep_candidates === undefined
+  ) {
+    return null;
+  }
+  const analyzed = summary.deep_analyzed ?? 0;
+  const candidates = summary.deep_candidates ?? 0;
+  const counts =
+    candidates > analyzed
+      ? `${analyzed} of ${candidates} analyzed`
+      : `${analyzed} analyzed`;
+  const rounds = plural(summary.deep_rounds ?? 0, "round");
+  const stabilization = stabilizationLabel(summary.deep_stabilization);
+  return (
+    `Deep: ${counts} · ${rounds}` +
+    (stabilization === null ? "" : ` · ${stabilization}`)
+  );
+}
+
+/**
  * Terminal verdict line. `warningCount` is the run's total warning count —
- * `summary.warnings` is only the capped detail list, not the count.
+ * `summary.warnings` is only the capped detail list, not the count. When
+ * the run had a deep stage its outcome joins the line ("Deep: 44 analyzed ·
+ * 2 rounds · Top-20 stable").
  */
 export function summaryText(
   summary: RadarScanSummary,
@@ -170,10 +237,32 @@ export function summaryText(
     summary.enrichment_failed > 0
       ? ` · ${plural(summary.enrichment_failed, "enrichment failure")}`
       : "";
+  const deep = deepSummaryText(summary);
   return (
     `Scan ${summary.status}: ${summary.discovered} discovered · ` +
-    `${summary.enriched} enriched · ${summary.scored} scored${failed} · ` +
+    `${summary.enriched} enriched · ${summary.scored} scored${failed}` +
+    `${deep === null ? "" : ` · ${deep}`} · ` +
     plural(warningCount, "warning")
+  );
+}
+
+/**
+ * While the run is in a deep phase, progress is "12/20 analyzed" (completed
+ * of shortlisted) plus the stabilization round once it advances past 0 —
+ * round 0 is the first pass and isn't numbered rather than fabricating a
+ * "round 1" the coordinator never declared.
+ */
+function deepProgressText(state: RadarRunState): string {
+  if (
+    (state.phase !== "deep_enriching" && state.phase !== "deep_scoring") ||
+    state.deep_candidates.length === 0
+  ) {
+    return "";
+  }
+  const round = state.deep_round > 0 ? ` · round ${state.deep_round}` : "";
+  return (
+    `${state.deep_completed_uuids.length}/${state.deep_candidates.length} ` +
+    `analyzed${round} · `
   );
 }
 
@@ -183,7 +272,12 @@ export function summaryText(
  */
 export function statusText(state: RadarRunState | null): string {
   if (state === null) return "No scan yet — press Scan programs.";
-  if (isActive(state)) return `${phaseLabel(state.phase)} — ${countsText(state)}`;
+  if (isActive(state)) {
+    return (
+      `${phaseLabel(state.phase)} — ` +
+      `${deepProgressText(state)}${countsText(state)}`
+    );
+  }
   if (state.phase === "cancelled") return `Cancelled — ${countsText(state)}`;
   if (state.summary === undefined) {
     return `${phaseLabel(state.phase)} — ${countsText(state)}`;
@@ -270,9 +364,10 @@ export function surfaceText(signals: RadarResultSignals): string {
 
 /**
  * One rendered row of the ranked results table (all display strings).
- * Eight cells: Rank, Program, Score (coverage folded in), Reward, Surface,
- * Saturation, Dup, Opportunity — the Freshness column was dropped for V1.3
- * (freshness stays in `signals` and shows in the detail meta line).
+ * Eight cells: Rank, Program, Score (evidence badge + Δ + coverage folded
+ * in), Reward, Surface, Saturation, KI Pressure, Opportunity — the
+ * Freshness column was dropped for V1.3 (freshness stays in `signals` and
+ * shows in the detail meta line).
  */
 export interface RowView {
   uuid: string;
@@ -280,17 +375,21 @@ export interface RowView {
   program: string;
   /** Canonical engagement URL when the slug is site-safe; null → plain text. */
   programUrl: string | null;
-  /** "82.4 (cov 75%)"; "—" when unscored; " provisional" suffix when flagged. */
+  /** Which stage produced the displayed score — drives the DEEP/META badge. */
+  evidence: "deep" | "metadata";
+  /** "61.4 (Δ −11.4 · cov 80%)"; "82.4 (cov 75%)"; "—" when unscored. */
   score: string;
+  /** "Δ −11.4" when both stage scores exist; null otherwise — never faked. */
+  scoreDelta: string | null;
   reward: string;
   surface: string;
   saturation: string;
   /** known_issue_density — "0.61 · High"; "—" when not deep-analyzed. */
-  dup: string;
+  kiPressure: string;
   /** opportunity_change — "0.30 · Moderate"; "—" when not deep-analyzed. */
   opportunity: string;
-  /** false → the dup cell renders "—" with an `unanalyzed` marker class. */
-  dupAnalyzed: boolean;
+  /** false → the KI Pressure cell renders "—" with an `unanalyzed` marker. */
+  kiAnalyzed: boolean;
   /** false → the opportunity cell renders "—" with an `unanalyzed` marker. */
   opportunityAnalyzed: boolean;
   /** Below the profile's confidence floor — rendered dimmed, never hidden. */
@@ -302,21 +401,25 @@ export interface RowView {
 /** Maps a coordinator row to display cells; `rank` is 1-based. */
 export function buildRow(row: RadarResultRow, rank: number): RowView {
   const base = formatScore(row.score);
+  const delta =
+    row.score_delta === null ? null : `Δ ${formatDelta(row.score_delta)}`;
   return {
     uuid: row.uuid,
     rank: String(rank),
     program: programLabel(row),
     programUrl: engagementUrl(row),
+    evidence: row.evidence_level,
     score:
       base === EMPTY
         ? EMPTY
-        : `${base} (cov ${formatCoverage(row.confidence)})${row.provisional ? " provisional" : ""}`,
+        : `${base} (${delta === null ? "" : `${delta} · `}cov ${formatCoverage(row.confidence)})${row.provisional ? " provisional" : ""}`,
+    scoreDelta: delta,
     reward: formatSignal(row.signals.reward_potential),
     surface: surfaceText(row.signals),
     saturation: saturationText(row.signals.research_saturation),
-    dup: densityText(row.signals.known_issue_density),
+    kiPressure: densityText(row.signals.known_issue_density),
     opportunity: opportunityText(row.signals.opportunity_change),
-    dupAnalyzed: row.signals.known_issue_density !== null,
+    kiAnalyzed: row.signals.known_issue_density !== null,
     opportunityAnalyzed: row.signals.opportunity_change !== null,
     eligible: row.eligible,
     provisional: row.provisional,
@@ -391,24 +494,41 @@ export function saturationRows(
 }
 
 /**
- * Detail meta line — score + coverage verdict, with freshness folded in
- * (the results table dropped its Freshness column for V1.3; the signal
- * stays visible here). Freshness renders only when actually known.
+ * Detail meta line — stage scores + coverage verdict, with freshness folded
+ * in (the results table dropped its Freshness column for V1.3; the signal
+ * stays visible here). Both stage scores show when they exist —
+ * "Meta 72.8 · Deep 61.4 · Δ −11.4" — so a deep re-score never silently
+ * replaces the metadata number. Freshness renders only when actually known.
  */
 export function detailMetaText(detail: RadarProgramDetail): string {
   const freshness = detail.vector?.freshness.value ?? null;
   const fresh =
     freshness === null ? "" : ` · freshness ${formatSignal(freshness)}`;
-  if (detail.score === null) {
+  const meta = detail.metadata_score;
+  const deep = detail.deep_score;
+  // detail.score is already deep ?? metadata per the coordinator contract;
+  // the fallbacks keep odd envelopes (score set, stage fields missing)
+  // honest instead of dropping the number.
+  const best = detail.score ?? deep ?? meta;
+  if (best === null) {
     return freshness === null
       ? "No score stored for this profile."
       : `No score stored for this profile${fresh}`;
   }
-  return (
-    `Score ${formatScore(detail.score.score)} · ` +
-    `coverage ${formatCoverage(detail.score.confidence)}` +
-    `${detail.score.provisional ? " · PROVISIONAL" : ""}${fresh}`
-  );
+  const tail =
+    ` · coverage ${formatCoverage(best.confidence)}` +
+    `${best.provisional ? " · PROVISIONAL" : ""}${fresh}`;
+  const metaScore = meta?.score ?? null;
+  const deepScore = deep?.score ?? null;
+  if (metaScore !== null && deepScore !== null) {
+    return (
+      `Meta ${formatScore(metaScore)} · Deep ${formatScore(deepScore)} · ` +
+      `Δ ${formatDelta(deepScore - metaScore)}${tail}`
+    );
+  }
+  if (deepScore !== null) return `Deep ${formatScore(deepScore)}${tail}`;
+  if (metaScore !== null) return `Meta ${formatScore(metaScore)}${tail}`;
+  return `Score ${formatScore(best.score)}${tail}`;
 }
 
 /**
@@ -420,8 +540,8 @@ export function detailMetaText(detail: RadarProgramDetail): string {
 export interface FilterCriteria {
   /** Keep rows with research_saturation ≤ this (0..1). */
   maxSaturation?: number | null;
-  /** Keep rows with known_issue_density ≤ this (0..1). */
-  maxDup?: number | null;
+  /** Keep rows with known_issue_density (KI Pressure) ≤ this (0..1). */
+  maxKiPressure?: number | null;
   /** Keep rows with opportunity_change ≥ this (0..1). */
   minOpportunity?: number | null;
   /** Keep rows with reward_potential ≥ this (0..1). */
@@ -452,7 +572,7 @@ export function filterRows(
   return rows.filter(
     (row) =>
       passMax(row.signals.research_saturation, criteria.maxSaturation) &&
-      passMax(row.signals.known_issue_density, criteria.maxDup) &&
+      passMax(row.signals.known_issue_density, criteria.maxKiPressure) &&
       passMin(row.signals.opportunity_change, criteria.minOpportunity) &&
       passMin(row.signals.reward_potential, criteria.minReward) &&
       (!criteria.apiHeavy ||
@@ -517,9 +637,9 @@ function diffStatus(diff: RadarSemanticDiff | null): string {
 
 /**
  * Deep-enrichment diagnostics for the detail pane — the evidence behind the
- * Dup and Opportunity columns, always rendered honestly: counts/version ids
- * that never arrived show "—", and a missing deep pass reads "not analyzed"
- * rather than fabricating zeros.
+ * KI Pressure and Opportunity columns, always rendered honestly: counts /
+ * version ids that never arrived show "—", and a missing deep pass reads
+ * "not analyzed" rather than fabricating zeros.
  */
 export function detailRows(detail: RadarProgramDetail): DetailRowGroup[] {
   const deep: RadarDeepEnrichment | null = detail.snapshot?.deep ?? null;
@@ -527,7 +647,7 @@ export function detailRows(detail: RadarProgramDetail): DetailRowGroup[] {
   const diff = deep?.semantic_diff ?? null;
   return [
     {
-      title: "Duplicate intelligence",
+      title: "Known-issue intelligence",
       rows: [
         { label: "Unique known issues", value: countText(ki?.unique_count) },
         {
@@ -588,6 +708,130 @@ export function profileOptions(): { id: RadarProfileId; label: string }[] {
     id,
     label: RADAR_PROFILES[id].label,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Evidence-level view mode (V1.3.1). The results table can rank by
+// metadata-stage scores (every program) or deep-stage scores (deep-analyzed
+// programs only). The toggle is only offered where a deep stage can exist —
+// DEEP_PROFILE_IDS — and defaults to deep only when the latest run
+// plausibly wrote deep scores.
+// ---------------------------------------------------------------------------
+
+/**
+ * The two modes the control offers, in display order. Labels stay honest:
+ * "deep" ranks only programs with deep-stage evidence; "metadata" ranks all
+ * candidates by their metadata score (deep-analyzed rows keep their DEEP
+ * badge there).
+ */
+export const RESULTS_MODE_OPTIONS: readonly {
+  value: RadarResultMode;
+  label: string;
+}[] = [
+  { value: "deep", label: "Deep ranking" },
+  { value: "metadata", label: "All candidates (metadata)" },
+];
+
+/**
+ * Whether the profile weights any deep signal — deep scores are only ever
+ * written for DEEP_PROFILE_IDS, so for high_reward/easy_entry the deep view
+ * is empty by design and the toggle is hidden entirely.
+ */
+export function profileHasDeepStage(profile: RadarProfileId): boolean {
+  return (DEEP_PROFILE_IDS as readonly RadarProfileId[]).includes(profile);
+}
+
+/**
+ * Whether the run plausibly produced deep-stage scores: the terminal
+ * summary's deep_analyzed when present, else completed deep enrichments
+ * (covers a run still inside its deep stage, where no summary exists yet).
+ */
+export function runHasDeepEvidence(state: RadarRunState | null): boolean {
+  if (state === null) return false;
+  if (state.summary?.deep_analyzed !== undefined) {
+    return state.summary.deep_analyzed > 0;
+  }
+  return state.deep_completed_uuids.length > 0;
+}
+
+/** How the mode control should render and what to query. */
+export interface ResultsModeResolution {
+  /** false → hide the toggle: the profile has no deep stage at all. */
+  offered: boolean;
+  /** The mode to request — the user's choice, else the honest default. */
+  requested: RadarResultMode;
+  /** Explanatory note for the control, or null when nothing needs saying. */
+  note: string | null;
+}
+
+/**
+ * Resolves which mode to request and what the control shows.
+ * `choice` is the user's explicit pick (null = no pick yet → default).
+ *
+ * Defaults: a deep-capable profile defaults to "deep" only when the latest
+ * run plausibly wrote deep scores; otherwise it defaults to metadata WITH a
+ * note saying why — defaulting to an empty deep table would look broken.
+ * Metadata-only profiles never offer the toggle; their note says the deep
+ * view is empty by design, not broken.
+ */
+export function resolveResultsMode(
+  profile: RadarProfileId,
+  state: RadarRunState | null,
+  choice: RadarResultMode | null,
+): ResultsModeResolution {
+  if (!profileHasDeepStage(profile)) {
+    return {
+      offered: false,
+      requested: "metadata",
+      note: `${RADAR_PROFILES[profile].label} has no deep signals — metadata view.`,
+    };
+  }
+  if (choice !== null) return { offered: true, requested: choice, note: null };
+  if (runHasDeepEvidence(state)) {
+    return { offered: true, requested: "deep", note: null };
+  }
+  const note =
+    state === null
+      ? "No scan yet — metadata view."
+      : isActive(state)
+        ? "Deep analysis pending — metadata view."
+        : "Latest run produced no deep-stage scores — metadata view.";
+  return { offered: true, requested: "metadata", note };
+}
+
+/** Post-fetch outcome when a "deep" request came back empty. */
+export interface ModeFallback {
+  /** The rows to render (metadata rows when the deep ranking was empty). */
+  rows: RadarResultRow[];
+  /** The mode the rendered rows were actually fetched under. */
+  mode: RadarResultMode;
+  /** Honest note when the view fell back; null otherwise. */
+  note: string | null;
+}
+
+/**
+ * An empty deep ranking falls back to the metadata rows — with a note —
+ * when metadata has rows to show. When both are empty there is nothing to
+ * fall back to: the view stays "deep" and the table's generic empty text
+ * ("No scored programs yet") tells the truth without inventing a cause.
+ */
+export function deepFallback(
+  deepRows: RadarResultRow[],
+  metadataRows: RadarResultRow[],
+): ModeFallback {
+  if (deepRows.length > 0) {
+    return { rows: deepRows, mode: "deep", note: null };
+  }
+  if (metadataRows.length > 0) {
+    return {
+      rows: metadataRows,
+      mode: "metadata",
+      note:
+        "Deep ranking is empty — no deep-stage scores yet; " +
+        "showing all candidates (metadata).",
+    };
+  }
+  return { rows: deepRows, mode: "deep", note: null };
 }
 
 /**

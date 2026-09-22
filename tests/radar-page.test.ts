@@ -1,8 +1,11 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type {
   RadarProgramDetail,
   RadarResultRow,
   RadarRunState,
+  RadarScanSummary,
 } from "../lib/radar/coordinator";
 import type { ProgramFeatureVector, ProgramScore } from "../lib/radar/types";
 import {
@@ -10,6 +13,8 @@ import {
   buildRow,
   buildRows,
   componentRows,
+  deepFallback,
+  deepSummaryText,
   densityBand,
   densityText,
   detailMetaText,
@@ -20,6 +25,7 @@ import {
   errorText,
   filterRows,
   formatCoverage,
+  formatDelta,
   formatScore,
   formatSignal,
   formatWeight,
@@ -28,10 +34,16 @@ import {
   opportunityText,
   phaseLabel,
   programLabel,
+  profileHasDeepStage,
   profileOptions,
+  resolveResultsMode,
+  RESULTS_MODE_OPTIONS,
+  runHasDeepEvidence,
   saturationRows,
   saturationText,
+  stabilizationLabel,
   statusText,
+  summaryText,
   surfaceText,
 } from "../entrypoints/radar/view";
 
@@ -325,13 +337,15 @@ describe("buildRow / buildRows", () => {
       rank: "1",
       program: "Acme Corp",
       programUrl: "https://bugcrowd.com/engagements/acme",
+      evidence: "metadata",
       score: "82.4 (cov 75%)",
+      scoreDelta: null,
       reward: "0.82",
       surface: "0.60 (api 0.40 · web 0.30)",
       saturation: "0.25 · Moderate-low",
-      dup: "—",
+      kiPressure: "—",
       opportunity: "—",
-      dupAnalyzed: false,
+      kiAnalyzed: false,
       opportunityAnalyzed: false,
       eligible: true,
       provisional: false,
@@ -343,10 +357,46 @@ describe("buildRow / buildRows", () => {
     row.signals.known_issue_density = 0.61;
     row.signals.opportunity_change = 0.3;
     const view = buildRow(row, 1);
-    expect(view.dup).toBe("0.61 · High");
+    expect(view.kiPressure).toBe("0.61 · High");
     expect(view.opportunity).toBe("0.30 · Moderate");
-    expect(view.dupAnalyzed).toBe(true);
+    expect(view.kiAnalyzed).toBe(true);
     expect(view.opportunityAnalyzed).toBe(true);
+  });
+
+  it("carries the evidence level through to the badge field", () => {
+    expect(buildRow(resultRow(), 1).evidence).toBe("metadata");
+    expect(
+      buildRow(
+        resultRow({ evidence_level: "deep", deep_score: 71 }),
+        1,
+      ).evidence,
+    ).toBe("deep");
+  });
+
+  it("shows the score delta when both stage scores exist", () => {
+    const row = resultRow({
+      score: 61.4,
+      confidence: 0.8,
+      evidence_level: "deep",
+      metadata_score: 72.8,
+      deep_score: 61.4,
+      score_delta: -11.4,
+    });
+    const view = buildRow(row, 1);
+    expect(view.score).toBe("61.4 (Δ −11.4 · cov 80%)");
+    expect(view.scoreDelta).toBe("Δ −11.4");
+  });
+
+  it("renders a positive delta with a + sign, never fabricated when null", () => {
+    const up = buildRow(
+      resultRow({ score_delta: 3.25, deep_score: 85.6, evidence_level: "deep" }),
+      1,
+    );
+    expect(up.score).toBe("82.4 (Δ +3.3 · cov 75%)");
+    expect(up.scoreDelta).toBe("Δ +3.3");
+    const none = buildRow(resultRow({ score_delta: null }), 1);
+    expect(none.score).toBe("82.4 (cov 75%)");
+    expect(none.scoreDelta).toBeNull();
   });
 
   it("flags provisional scores in the score cell", () => {
@@ -630,22 +680,65 @@ describe("detailSlugSource / detailTitleText", () => {
 });
 
 describe("detailMetaText", () => {
-  it("keeps freshness visible in the detail pane", () => {
-    const score: ProgramScore = {
-      schema_version: 1,
-      engagement_uuid: UUID,
-      profile: "best_ev",
-      scoring_version: "1.0.0",
-      score: 82.4,
-      confidence: 0.75,
-      provisional: false,
-      components: {},
-      reasons: [],
-      source_hash: "x",
-    };
-    expect(detailMetaText(programDetail({ score }))).toBe(
+  const score = (n: number, over: Partial<ProgramScore> = {}): ProgramScore => ({
+    schema_version: 1,
+    engagement_uuid: UUID,
+    profile: "best_ev",
+    scoring_version: "1.0.0",
+    score: n,
+    confidence: 0.75,
+    provisional: false,
+    components: {},
+    reasons: [],
+    source_hash: "x",
+    ...over,
+  });
+
+  it("labels a metadata-only score as Meta, keeping freshness visible", () => {
+    const s = score(82.4);
+    expect(
+      detailMetaText(programDetail({ score: s, metadata_score: s })),
+    ).toBe("Meta 82.4 · coverage 75% · freshness 0.90");
+  });
+
+  it("shows both stage scores plus the delta when deep-analyzed", () => {
+    const meta = score(72.8);
+    const deep = score(61.4, { confidence: 0.8 });
+    expect(
+      detailMetaText(
+        programDetail({ score: deep, metadata_score: meta, deep_score: deep }),
+      ),
+    ).toBe("Meta 72.8 · Deep 61.4 · Δ −11.4 · coverage 80% · freshness 0.90");
+  });
+
+  it("shows a positive delta honestly", () => {
+    const meta = score(50);
+    const deep = score(53.3);
+    expect(
+      detailMetaText(
+        programDetail({ score: deep, metadata_score: meta, deep_score: deep }),
+      ),
+    ).toContain("Meta 50.0 · Deep 53.3 · Δ +3.3");
+  });
+
+  it("labels a deep-only score as Deep", () => {
+    const deep = score(61.4);
+    expect(
+      detailMetaText(programDetail({ score: deep, deep_score: deep })),
+    ).toBe("Deep 61.4 · coverage 75% · freshness 0.90");
+  });
+
+  it("falls back to a bare Score when stage fields are missing", () => {
+    expect(detailMetaText(programDetail({ score: score(82.4) }))).toBe(
       "Score 82.4 · coverage 75% · freshness 0.90",
     );
+  });
+
+  it("marks provisional scores", () => {
+    const s = score(82.4, { provisional: true });
+    expect(
+      detailMetaText(programDetail({ score: s, metadata_score: s })),
+    ).toBe("Meta 82.4 · coverage 75% · PROVISIONAL · freshness 0.90");
   });
 
   it("omits freshness when unknown and reports an unscored profile", () => {
@@ -681,7 +774,7 @@ describe("filterRows", () => {
     expect(
       filterRows(rows, {
         maxSaturation: null,
-        maxDup: null,
+        maxKiPressure: null,
         minOpportunity: null,
         minReward: null,
         apiHeavy: false,
@@ -691,7 +784,7 @@ describe("filterRows", () => {
 
   it("applies each numeric criterion honestly", () => {
     expect(filterRows(rows, { maxSaturation: 0.5 })).toEqual([rows[0]]);
-    expect(filterRows(rows, { maxDup: 0.3 })).toEqual([rows[0]]);
+    expect(filterRows(rows, { maxKiPressure: 0.3 })).toEqual([rows[0]]);
     expect(filterRows(rows, { minOpportunity: 0.5 })).toEqual([rows[0]]);
     expect(filterRows(rows, { minReward: 0.8 })).toEqual([rows[0]]);
   });
@@ -708,7 +801,7 @@ describe("filterRows", () => {
     unknown.signals.research_saturation = null;
     unknown.signals.reward_potential = null;
     const all = [...rows, unknown];
-    expect(filterRows(all, { maxDup: 0.9 })).toHaveLength(2);
+    expect(filterRows(all, { maxKiPressure: 0.9 })).toHaveLength(2);
     expect(filterRows(all, { minOpportunity: 0 })).toHaveLength(2);
     expect(filterRows(all, { maxSaturation: 1 })).toHaveLength(2);
     expect(filterRows(all, { minReward: 0 })).toHaveLength(2);
@@ -728,7 +821,7 @@ describe("filterRows", () => {
     expect(
       filterRows(rows, {
         maxSaturation: 0.5,
-        maxDup: 0.3,
+        maxKiPressure: 0.3,
         minOpportunity: 0.5,
         minReward: 0.8,
         apiHeavy: true,
@@ -744,7 +837,7 @@ describe("detailRows", () => {
   it("renders both diagnostic groups from a deep-analyzed snapshot", () => {
     const groups = detailRows(programDetail());
     expect(groups.map((g) => g.title)).toEqual([
-      "Duplicate intelligence",
+      "Known-issue intelligence",
       "Opportunity changes",
     ]);
     expect(groups[0]!.rows).toEqual([
@@ -818,3 +911,298 @@ describe("detailRows", () => {
     expect(groups[1]!.rows[9]!.value).toBe("no baseline");
   });
 });
+
+// ---------------------------------------------------------------------------
+// V1.3.1 — evidence levels: mode toggle, badges, deltas, stabilization.
+// ---------------------------------------------------------------------------
+
+const RADAR_HTML = readFileSync(
+  join(process.cwd(), "entrypoints/radar/index.html"),
+  "utf8",
+);
+
+function deepSummary(over: Partial<RadarScanSummary> = {}): RadarScanSummary {
+  return {
+    status: "complete",
+    catalog_complete: true,
+    discovered: 40,
+    enriched: 38,
+    enrichment_failed: 0,
+    scored: 228,
+    warnings: [],
+    deep_candidates: 44,
+    deep_analyzed: 44,
+    deep_rounds: 2,
+    deep_budget: 60,
+    deep_stabilization: "stable",
+    ...over,
+  };
+}
+
+describe("formatDelta", () => {
+  it("renders negative deltas with a U+2212 minus", () => {
+    expect(formatDelta(-11.4)).toBe("−11.4");
+    expect(formatDelta(-0.05)).toBe("−0.1");
+  });
+
+  it("renders positive and zero deltas with a + sign", () => {
+    expect(formatDelta(3.25)).toBe("+3.3");
+    expect(formatDelta(0)).toBe("+0.0");
+    expect(formatDelta(-0.01)).toBe("+0.0"); // −0 is not a sign lie
+  });
+});
+
+describe("results mode toggle", () => {
+  it("offers honest labels: Deep ranking / All candidates (metadata)", () => {
+    expect(RESULTS_MODE_OPTIONS).toEqual([
+      { value: "deep", label: "Deep ranking" },
+      { value: "metadata", label: "All candidates (metadata)" },
+    ]);
+  });
+
+  it("knows which profiles have a deep stage", () => {
+    for (const id of [
+      "best_ev",
+      "fresh_programs",
+      "low_competition",
+      "authz_api",
+    ] as const) {
+      expect(profileHasDeepStage(id)).toBe(true);
+    }
+    expect(profileHasDeepStage("high_reward")).toBe(false);
+    expect(profileHasDeepStage("easy_entry")).toBe(false);
+  });
+
+  it("detects deep evidence from the summary or live counters", () => {
+    expect(runHasDeepEvidence(null)).toBe(false);
+    expect(runHasDeepEvidence(runState())).toBe(false);
+    expect(
+      runHasDeepEvidence(
+        runState({ deep_completed_uuids: ["a", "b"] }),
+      ),
+    ).toBe(true);
+    expect(
+      runHasDeepEvidence(
+        runState({ phase: "done", summary: deepSummary() }),
+      ),
+    ).toBe(true);
+    expect(
+      runHasDeepEvidence(
+        runState({ phase: "done", summary: deepSummary({ deep_analyzed: 0 }) }),
+      ),
+    ).toBe(false);
+  });
+
+  it("defaults a deep profile to deep when deep scores plausibly exist", () => {
+    const state = runState({ deep_completed_uuids: ["a"] });
+    expect(resolveResultsMode("best_ev", state, null)).toEqual({
+      offered: true,
+      requested: "deep",
+      note: null,
+    });
+  });
+
+  it("defaults to metadata with an honest note when no deep stage ran", () => {
+    const state = runState({ phase: "done", summary: deepSummaryAbsent() });
+    const res = resolveResultsMode("best_ev", state, null);
+    expect(res.requested).toBe("metadata");
+    expect(res.note).toBe(
+      "Latest run produced no deep-stage scores — metadata view.",
+    );
+  });
+
+  it("says pending while a run is still in an early phase", () => {
+    const res = resolveResultsMode("best_ev", runState(), null);
+    expect(res.requested).toBe("metadata");
+    expect(res.note).toBe("Deep analysis pending — metadata view.");
+    expect(resolveResultsMode("best_ev", null, null).note).toBe(
+      "No scan yet — metadata view.",
+    );
+  });
+
+  it("respects an explicit choice without second-guessing it", () => {
+    const state = runState({ phase: "done", summary: deepSummaryAbsent() });
+    expect(resolveResultsMode("best_ev", state, "deep")).toEqual({
+      offered: true,
+      requested: "deep",
+      note: null,
+    });
+    expect(
+      resolveResultsMode("best_ev", runState({ deep_completed_uuids: ["a"] }), "metadata"),
+    ).toEqual({ offered: true, requested: "metadata", note: null });
+  });
+
+  it("hides the toggle for metadata-only profiles with an honest note", () => {
+    const res = resolveResultsMode("high_reward", null, null);
+    expect(res.offered).toBe(false);
+    expect(res.requested).toBe("metadata");
+    expect(res.note).toBe(
+      "High Reward has no deep signals — metadata view.",
+    );
+    expect(resolveResultsMode("easy_entry", null, "deep").requested).toBe(
+      "metadata",
+    );
+    expect(resolveResultsMode("easy_entry", null, "deep").note).toBe(
+      "Easy Entry has no deep signals — metadata view.",
+    );
+  });
+});
+
+describe("deepFallback", () => {
+  it("keeps deep rows when the deep ranking is non-empty", () => {
+    const deep = [resultRow({ evidence_level: "deep", deep_score: 61 })];
+    expect(deepFallback(deep, [resultRow()])).toEqual({
+      rows: deep,
+      mode: "deep",
+      note: null,
+    });
+  });
+
+  it("falls back to metadata rows with an honest note when deep is empty", () => {
+    const meta = [resultRow()];
+    const fb = deepFallback([], meta);
+    expect(fb.mode).toBe("metadata");
+    expect(fb.rows).toBe(meta);
+    expect(fb.note).toBe(
+      "Deep ranking is empty — no deep-stage scores yet; " +
+        "showing all candidates (metadata).",
+    );
+  });
+
+  it("stays deep with no note when both rankings are empty", () => {
+    expect(deepFallback([], [])).toEqual({ rows: [], mode: "deep", note: null });
+  });
+});
+
+describe("stabilization status", () => {
+  it("labels each verdict, null included", () => {
+    expect(stabilizationLabel("stable")).toBe("Top-20 stable");
+    expect(stabilizationLabel("budget_limited")).toBe("budget-limited");
+    expect(stabilizationLabel("incomplete")).toBe("incomplete");
+    expect(stabilizationLabel(null)).toBeNull();
+    expect(stabilizationLabel(undefined)).toBeNull();
+  });
+
+  it("renders the deep segment of a terminal summary", () => {
+    expect(deepSummaryText(deepSummary())).toBe(
+      "Deep: 44 analyzed · 2 rounds · Top-20 stable",
+    );
+    expect(
+      deepSummaryText(
+        deepSummary({
+          deep_analyzed: 44,
+          deep_candidates: 60,
+          deep_stabilization: "budget_limited",
+        }),
+      ),
+    ).toBe("Deep: 44 of 60 analyzed · 2 rounds · budget-limited");
+  });
+
+  it("omits the verdict word when stabilization is null", () => {
+    expect(
+      deepSummaryText(
+        deepSummary({ deep_stabilization: null, deep_rounds: 1 }),
+      ),
+    ).toBe("Deep: 44 analyzed · 1 round");
+  });
+
+  it("returns null when the summary carries no deep fields", () => {
+    expect(deepSummaryText(deepSummaryAbsent())).toBeNull();
+  });
+
+  it("joins the deep segment into the scan verdict line", () => {
+    const state = runState({
+      phase: "done",
+      scored: 228,
+      enriched: 38,
+      warnings: 2,
+      summary: deepSummary(),
+    });
+    expect(statusText(state)).toBe(
+      "Scan complete: 40 discovered · 38 enriched · 228 scored · " +
+        "Deep: 44 analyzed · 2 rounds · Top-20 stable · 2 warnings",
+    );
+  });
+
+  it("shows deep progress with the round number during deep phases", () => {
+    const state = runState({
+      phase: "deep_scoring",
+      deep_candidates: [
+        { uuid: "a", reasons: [] },
+        { uuid: "b", reasons: [] },
+      ],
+      deep_completed_uuids: ["a"],
+      deep_round: 2,
+    });
+    expect(statusText(state)).toBe(
+      "Deep scoring — 1/2 analyzed · round 2 · " +
+        "40 discovered · 12 enriched · 0 scored · 1 warning",
+    );
+  });
+
+  it("omits the deep fragment until a shortlist exists", () => {
+    expect(statusText(runState({ phase: "deep_enriching" }))).toBe(
+      "Deep analysis of shortlist — 40 discovered · 12 enriched · 0 scored · 1 warning",
+    );
+  });
+});
+
+describe("results table markup", () => {
+  it("labels the column KI Pressure, never Dup", () => {
+    expect(RADAR_HTML).toContain("KI Pressure");
+    expect(RADAR_HTML).not.toContain(">Dup<");
+    expect(RADAR_HTML).not.toContain('id="f-dup"');
+  });
+
+  it("carries honest tooltips on the deep-signal columns", () => {
+    expect(RADAR_HTML).toContain(
+      "Known-Issue pressure proxy from unique known issues and meaningful " +
+        "target surface — not duplicate probability.",
+    );
+    expect(RADAR_HTML).toContain(
+      "Semantic changelog expansion score — latest vs previous brief; " +
+        "not a bug-finding probability.",
+    );
+  });
+
+  it("ships the mode toggle with both honest labels", () => {
+    expect(RADAR_HTML).toContain('id="mode"');
+    expect(RADAR_HTML).toContain("Deep ranking");
+    expect(RADAR_HTML).toContain("All candidates (metadata)");
+  });
+});
+
+describe("filterRows null semantics (V1.3.1)", () => {
+  it("a META row never passes a KI Pressure or Opportunity threshold", () => {
+    const meta = resultRow({ uuid: "m", evidence_level: "metadata" });
+    meta.signals.known_issue_density = null;
+    meta.signals.opportunity_change = null;
+    expect(filterRows([meta], { maxKiPressure: 1 })).toHaveLength(0);
+    expect(filterRows([meta], { minOpportunity: 0 })).toHaveLength(0);
+    // …but with no criterion set the row still shows — null is unknown,
+    // not a hidden failure.
+    expect(filterRows([meta], {})).toHaveLength(1);
+  });
+
+  it("a DEEP row is judged on its real deep-signal values", () => {
+    const deep = resultRow({ uuid: "d", evidence_level: "deep" });
+    deep.signals.known_issue_density = 0.5;
+    deep.signals.opportunity_change = 0.7;
+    expect(filterRows([deep], { maxKiPressure: 0.4 })).toHaveLength(0);
+    expect(filterRows([deep], { maxKiPressure: 0.6 })).toHaveLength(1);
+    expect(filterRows([deep], { minOpportunity: 0.8 })).toHaveLength(0);
+    expect(filterRows([deep], { minOpportunity: 0.7 })).toHaveLength(1);
+  });
+});
+
+function deepSummaryAbsent(): RadarScanSummary {
+  return {
+    status: "complete",
+    catalog_complete: true,
+    discovered: 40,
+    enriched: 38,
+    enrichment_failed: 0,
+    scored: 228,
+    warnings: [],
+  };
+}
