@@ -23,9 +23,15 @@ import {
   type ScoreRow,
 } from "./store";
 import { annotateEvidence } from "./stage";
+import { selectDeepCandidates } from "./shortlist";
+import { evaluateFrontier } from "./stabilize";
 import {
+  DEEP_BATCH_SIZE,
   DEEP_PROFILE_IDS,
   MAX_DEEP_PROGRAMS,
+  PROFILE_CANDIDATE_DEPTH,
+  STABILITY_BUFFER,
+  STABLE_TOP_K,
   RADAR_PROFILE_IDS,
   type DeepCandidate,
   type DeepStabilization,
@@ -253,9 +259,11 @@ const MAX_RESULT_LIMIT = 200;
 
 /**
  * V1.3 request budget: the deep stage costs 3 site requests per program
- * (changelog list + previous brief doc + known-issues aggregate). Limiting
- * it to the top of the best_ev metadata ranking keeps a full-catalog scan
- * at ~4·N + 3·30 requests instead of ~7·N.
+ * (changelog list + previous brief doc + known-issues aggregate).
+ *
+ * @deprecated V1.3.1 replaced the single-profile cap with the profile-aware
+ * candidate union (PROFILE_CANDIDATE_DEPTH × DEEP_PROFILE_IDS) bounded by
+ * MAX_DEEP_PROGRAMS. Kept exported for the V1.3 budget test's pin.
  */
 export const DEEP_ANALYSIS_LIMIT = 30;
 
@@ -723,18 +731,30 @@ export class RadarCoordinator {
     const run = this.run!;
     const db = await this.database();
     try {
-      if (run.phase === "catalog") await this.catalogPhase(db, run);
-      if (run.phase === "enriching") await this.enrichPhase(db, run);
-      if (run.phase === "scoring") await this.scorePhase(db, run);
-      if (run.phase === "deep_enriching") await this.deepEnrichPhase(db, run);
-      if (run.phase === "deep_scoring") await this.deepScorePhase(db, run);
-      if (ACTIVE_PHASES.has(run.phase)) {
-        // Unreachable by construction — a phase handler returned without
-        // producing a terminal/next phase. Fail closed rather than hang.
-        this.addWarnings(run, ["internal_error"]);
-        run.phase = "failed";
-        this.buildSummary(run);
-        await this.checkpoint(db, run);
+      // Phase loop: V1.3.1's stabilization frontier can loop
+      // deep_scoring → deep_enriching for another batch, so dispatch runs
+      // until a terminal phase. A handler that returns without transitioning
+      // fails closed rather than spinning.
+      for (;;) {
+        const before = run.phase;
+        if (before === "catalog") await this.catalogPhase(db, run);
+        else if (before === "enriching") await this.enrichPhase(db, run);
+        else if (before === "scoring") await this.scorePhase(db, run);
+        else if (before === "deep_enriching") {
+          await this.deepEnrichPhase(db, run);
+        } else if (before === "deep_scoring") {
+          await this.deepScorePhase(db, run);
+        }
+        if (!ACTIVE_PHASES.has(run.phase)) break;
+        if (run.phase === before) {
+          // Phase handler returned without producing a next phase — fail
+          // closed rather than hang or spin.
+          this.addWarnings(run, ["internal_error"]);
+          run.phase = "failed";
+          this.buildSummary(run);
+          await this.checkpoint(db, run);
+          break;
+        }
       }
     } catch (err) {
       this.addWarnings(run, [
@@ -944,19 +964,18 @@ export class RadarCoordinator {
   }
 
   /**
-   * Top-N pick for deep enrichment: rank this run's best_ev metadata-stage
-   * scores and take the first `deepLimit` eligible programs. Eligibility
-   * already encodes the profile's minConfidence floor; only uuids completed
-   * by THIS run qualify (latest-run scoping — stale rows from older runs
-   * can't sneak into the deep queue). Selection provenance is persisted on
-   * run.deep_candidates for diagnostics.
+   * This run's eligible metadata-stage ranking for one profile, as ordered
+   * uuids (rankPrograms order). Both the candidate union and the
+   * stabilization frontier are built from these lists — eligible-only
+   * (profile minConfidence), latest-run-scoped (run.completed_uuids), and
+   * metadata-stage (a deep re-score must never feed the frontier).
    */
-  private async buildDeepShortlist(
+  private async metadataRanking(
     db: RadarDb,
     run: PersistedRadarRun,
-  ): Promise<void> {
-    if (this.deps.deepHydrate === undefined) return;
-    const profile = getRadarProfile("best_ev");
+    profileId: RadarProfileId,
+  ): Promise<string[]> {
+    const profile = getRadarProfile(profileId);
     const staged = await getLatestScoreRowsByStage(
       db,
       profile.id,
@@ -969,16 +988,120 @@ export class RadarCoordinator {
         .map((row) => row.score),
       profile,
     );
-    const limit = this.deps.deepLimit ?? DEEP_ANALYSIS_LIMIT;
-    const eligible = ranked.filter((entry) => entry.eligible);
-    run.deep_candidates = eligible
-      .slice(0, limit)
-      .map((entry, index) => ({
-        uuid: entry.score.engagement_uuid,
-        reasons: [{ profile: "best_ev", metadata_rank: index + 1 }],
-      }));
-    run.deep_budget = limit;
-    run.deep_pending_uuids = run.deep_candidates.map((c) => c.uuid);
+    return ranked
+      .filter((entry) => entry.eligible)
+      .map((entry) => entry.score.engagement_uuid);
+  }
+
+  /**
+   * V1.3.1 candidate selection: the deterministic UNION of every
+   * deep-dependent profile's metadata Top-N (selectDeepCandidates), capped
+   * by the run's deep budget. Provenance (which profile windows demanded
+   * each uuid) is persisted on run.deep_candidates for diagnostics.
+   */
+  private async buildDeepShortlist(
+    db: RadarDb,
+    run: PersistedRadarRun,
+  ): Promise<void> {
+    if (this.deps.deepHydrate === undefined) return;
+    const perProfile = new Map<RadarProfileId, string[]>();
+    for (const profileId of DEEP_PROFILE_IDS) {
+      perProfile.set(
+        profileId,
+        await this.metadataRanking(db, run, profileId),
+      );
+    }
+    const budget = this.deps.deepLimit ?? MAX_DEEP_PROGRAMS;
+    const { candidates } = selectDeepCandidates({
+      perProfile,
+      depth: this.deps.deepCandidateDepth ?? PROFILE_CANDIDATE_DEPTH,
+      maxCandidates: budget,
+    });
+    run.deep_candidates = candidates;
+    run.deep_budget = budget;
+    run.deep_pending_uuids = candidates.map((c) => c.uuid);
+    if (candidates.length > 0) run.deep_round = 1;
+  }
+
+  /**
+   * Merge frontier-batch provenance into run.deep_candidates: a uuid the
+   * union already selected gains the new reasons; a genuinely new uuid is
+   * appended. Reasons stay sorted by DEEP_PROFILE_IDS priority.
+   */
+  private mergeCandidateProvenance(
+    run: PersistedRadarRun,
+    added: readonly DeepCandidate[],
+  ): void {
+    const byUuid = new Map(run.deep_candidates.map((c) => [c.uuid, c]));
+    for (const cand of added) {
+      const existing = byUuid.get(cand.uuid);
+      if (existing === undefined) {
+        const fresh: DeepCandidate = {
+          uuid: cand.uuid,
+          reasons: [...cand.reasons],
+        };
+        run.deep_candidates.push(fresh);
+        byUuid.set(cand.uuid, fresh);
+        continue;
+      }
+      for (const reason of cand.reasons) {
+        if (!existing.reasons.some((r) => r.profile === reason.profile)) {
+          existing.reasons.push(reason);
+        }
+      }
+      existing.reasons.sort(
+        (a, b) =>
+          DEEP_PROFILE_IDS.indexOf(a.profile) -
+          DEEP_PROFILE_IDS.indexOf(b.profile),
+      );
+    }
+  }
+
+  /**
+   * End-of-round stabilization check (V1.3.1): every deep-dependent
+   * profile's metadata Top-(K+buffer) must be fully deep-committed, else
+   * deep-score drops could let an unanalyzed row displace the visible Top-K.
+   * evaluateFrontier returns the next batch — bounded by batchSize and the
+   * remaining budget — or the terminal verdict. A non-empty batch loops the
+   * run back into deep_enriching for another round.
+   */
+  private async evaluateStabilization(
+    db: RadarDb,
+    run: PersistedRadarRun,
+  ): Promise<void> {
+    const perProfileMetadata = new Map<RadarProfileId, string[]>();
+    for (const profileId of DEEP_PROFILE_IDS) {
+      perProfileMetadata.set(
+        profileId,
+        await this.metadataRanking(db, run, profileId),
+      );
+    }
+    const committed = new Set([
+      ...run.deep_completed_uuids,
+      ...run.deep_pending_uuids,
+    ]);
+    const verdict = evaluateFrontier({
+      perProfileMetadata,
+      committed,
+      committedCount: committed.size,
+      maxBudget: run.deep_budget > 0 ? run.deep_budget : MAX_DEEP_PROGRAMS,
+      stableTopK: this.deps.stableTopK ?? STABLE_TOP_K,
+      buffer: this.deps.stabilityBuffer ?? STABILITY_BUFFER,
+      batchSize: this.deps.deepBatchSize ?? DEEP_BATCH_SIZE,
+    });
+    if (verdict.batch.length > 0) {
+      this.mergeCandidateProvenance(run, verdict.batch);
+      run.deep_pending_uuids = verdict.batch.map((c) => c.uuid);
+      run.deep_round += 1;
+      run.phase = "deep_enriching";
+      await this.checkpoint(db, run);
+      return;
+    }
+    run.deep_stabilization = verdict.statusIfStopped;
+    run.phase = "done";
+    this.buildSummary(run);
+    await this.checkpoint(db, run);
+    await setLatestRunId(db, run.run_id);
   }
 
   /**
@@ -1127,14 +1250,10 @@ export class RadarCoordinator {
       await this.checkpoint(db, run);
       return;
     }
-    // Single-pass deep stage: no frontier verdict was evaluated, so the run
-    // cannot honestly claim "stable". The V1.3.1 frontier loop replaces this
-    // tail with evaluateFrontier's verdict.
-    run.deep_stabilization = "incomplete";
-    run.phase = "done";
-    this.buildSummary(run);
-    await this.checkpoint(db, run);
-    await setLatestRunId(db, run.run_id);
+    // Stabilization frontier: pull the next metadata-window batch or record
+    // the terminal verdict (stable / budget_limited). Loops back into
+    // deep_enriching for another round when the frontier still owes work.
+    await this.evaluateStabilization(db, run);
   }
 
   /**
