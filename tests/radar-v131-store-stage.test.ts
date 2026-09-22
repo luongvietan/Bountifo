@@ -390,15 +390,12 @@ describe("score row stage bookkeeping", () => {
     db.close();
   });
 
-  it("AUDIT PROBE: any persisted stage starting with 'deep' lands in the deep bucket", async () => {
-    // CONFIRMED BUG (agent-e-audit.md #S1): getLatestScoreRowsByStage builds
-    // `key = `${stage}${uuid}`` (no separator) and bucket-splits on
-    // `key.startsWith("deep")` — an unterminated prefix match. A persisted
-    // score row whose stage is ANY string beginning with "deep" (corrupt
-    // row, buggy writer, or hand-edited IDB) is classified as deep evidence.
-    // scoreRowStage — the resolver getProgram uses — validates the enum and
-    // resolves the same row via its snapshot → "metadata". The two stage
-    // resolvers DISAGREE on the same stored row.
+  it("non-enum persisted stages resolve via the snapshot — a 'deep*' prefix is never deep evidence (audit S1)", async () => {
+    // FIX (agent-e-audit.md #S1): getLatestScoreRowsByStage validates the
+    // persisted stage against the enum before trusting it, exactly like
+    // scoreRowStage. A stage string that merely STARTS with "deep" falls
+    // through to snapshot resolution — absent snapshot → "metadata". The
+    // two stage resolvers agree on every row.
     const db = await store.openRadarStore();
     const u = `u-st-${crypto.randomUUID()}`;
     for (const [hash, spoofed] of [
@@ -418,21 +415,14 @@ describe("score row stage bookkeeping", () => {
     );
     const mine = (rows: typeof staged.metadata) =>
       rows.filter((r) => r.uuid === u);
-    // All four "deep*" stage strings classify DEEP — the bucket split is a
-    // bare prefix test, so a spoofed stage lands a metadata-computed score
-    // in the deep set. (Four distinct keys → all four survive.)
-    expect(mine(staged.deep).map((r) => r.source_hash)).toEqual([
-      "h-d1",
-      "h-d2",
-      "h-d3",
-      "h-d4",
-    ]);
+    // Only the exact enum lands in the deep bucket.
+    expect(mine(staged.deep).map((r) => r.source_hash)).toEqual(["h-d1"]);
+    // The four spoofed rows all resolve to "metadata" and share the one
+    // metadata slot — latest-by-bookkeeping (hash "h-junk") survives.
     expect(mine(staged.metadata).map((r) => r.source_hash)).toEqual([
       "h-junk",
     ]);
-    // And scoreRowStage — the strict resolver — classifies each spoofed row
-    // by snapshot lookup (absent snapshot → "metadata"), contradicting the
-    // bucket split above.
+    // Both resolvers now agree: every spoofed row is metadata.
     for (const hash of ["h-d2", "h-d3", "h-d4"]) {
       const row = (await store.getScoreRows(db, u, "best_ev")).find(
         (r) => r.source_hash === hash,
@@ -442,12 +432,10 @@ describe("score row stage bookkeeping", () => {
     db.close();
   });
 
-  it("AUDIT PROBE: missing key separator lets a crafted row shadow a legit one", async () => {
-    // key = `${stage}${uuid}` — pairs ("meta","data-x") and
-    // ("metadata","-x") produce the SAME key "metadata-x". Both rows share
-    // one latest-slot; the newer stored_at wins and the loser's row is
-    // dropped from the staged results entirely (denial-of-results by
-    // collision). Requires a non-enum stage — same preconditions as #S1.
+  it("enum-validated stages cannot collide keys — the legit row survives (audit S1 collision)", async () => {
+    // With stage values restricted to the enum, the internal latest-slot key
+    // is unambiguous: "meta" is no longer a valid stage, so ("meta","data-x")
+    // resolves via snapshot → "metadata" → key distinct from ("metadata","-x").
     const db = await store.openRadarStore();
     const legit = rawScoreRow("-x", "h-legit", 10, { stage: "metadata" });
     const crafted = rawScoreRow("data-x", "h-crafted", 99, {
@@ -456,7 +444,7 @@ describe("score row stage bookkeeping", () => {
     await putRawScoreRow(db, legit);
     await putRawScoreRow(db, {
       ...crafted,
-      stored_at: "2026-09-22T00:00:00.000Z", // newer wins the shared slot
+      stored_at: "2026-09-22T00:00:00.000Z", // newer, but a different slot now
     });
     const staged = await store.getLatestScoreRowsByStage(
       db,
@@ -464,9 +452,11 @@ describe("score row stage bookkeeping", () => {
       BEST_EV_VERSION,
     );
     const uuids = [...staged.metadata, ...staged.deep].map((r) => r.uuid);
-    // The legit row's uuid is gone — shadowed by the crafted collision.
-    expect(uuids).not.toContain("-x");
+    // Both rows survive — no denial-of-results by collision.
+    expect(uuids).toContain("-x");
     expect(uuids).toContain("data-x");
+    // The crafted row's invalid stage resolves to metadata, not deep.
+    expect(staged.deep.map((r) => r.uuid)).not.toContain("data-x");
     db.close();
   });
 });
@@ -540,7 +530,7 @@ describe("normalizeRunRecord adversarial inputs", () => {
     expect(state!.deep_stabilization).toBeNull();
   });
 
-  it("malformed deep_candidates: bad entries dropped, valid kept verbatim", async () => {
+  it("malformed deep_candidates: bad entries dropped, strict reasons kept verbatim", async () => {
     await seedRun(
       baseRunRecord({
         deep_candidates: [
@@ -550,7 +540,7 @@ describe("normalizeRunRecord adversarial inputs", () => {
           { uuid: 123, reasons: [] }, // non-string uuid → dropped
           { uuid: "", reasons: [] }, // empty uuid → dropped
           { reasons: [{ profile: "best_ev", metadata_rank: 1 }] }, // no uuid
-          { uuid: "u-ok", reasons: "not-an-array" }, // reasons → []
+          { uuid: "u-ok", reasons: "not-an-array" }, // no valid reasons → dropped
           {
             uuid: "u-mixed",
             reasons: [
@@ -559,32 +549,27 @@ describe("normalizeRunRecord adversarial inputs", () => {
               { profile: "best_ev", metadata_rank: "2" }, // string rank
               { profile: "best_ev", metadata_rank: NaN },
               { profile: "best_ev", metadata_rank: Infinity },
-              { profile: "fresh_programs", metadata_rank: 7.9 }, // floored → 7
-              { profile: "low_competition", metadata_rank: -4 }, // negative kept!
+              { profile: "fresh_programs", metadata_rank: 7.9 }, // non-integer → dropped
+              { profile: "low_competition", metadata_rank: -4 }, // negative → dropped
               null,
               "junk",
             ],
           },
-          { uuid: "u-noReasons" }, // reasons absent → []
+          { uuid: "u-noReasons" }, // reasons absent → no provenance → dropped
         ],
       }),
     );
     const { deps } = makeDeps();
     const coord = new coordinator.RadarCoordinator(deps);
     const state = await coord.getState();
+    // Strict provenance: a candidate only exists because a profile window
+    // demanded it — reasons must be known profiles with non-negative integer
+    // ranks, and an entry with zero valid reasons is dropped entirely.
     expect(state!.deep_candidates).toEqual([
-      { uuid: "u-ok", reasons: [] },
       {
         uuid: "u-mixed",
-        reasons: [
-          { profile: "best_ev", metadata_rank: 3 },
-          { profile: "fresh_programs", metadata_rank: 7 },
-          // AUDIT NOTE: a negative metadata_rank survives normalization —
-          // nonsense provenance is admitted (floored, not rejected).
-          { profile: "low_competition", metadata_rank: -4 },
-        ],
+        reasons: [{ profile: "best_ev", metadata_rank: 3 }],
       },
-      { uuid: "u-noReasons", reasons: [] },
     ]);
   });
 
@@ -655,9 +640,9 @@ describe("normalizeRunRecord adversarial inputs", () => {
     expect(state!.phase).toBe("failed");
   });
 
-  it("summary spoofing: only `status` is validated — extra junk is adopted verbatim", async () => {
-    // AUDIT NOTE: isSummary() checks `status` membership only; a persisted
-    // summary with fabricated/absent fields round-trips into getState().
+  it("summary spoofing: a valid status with garbage counts is rejected whole", async () => {
+    // FIX: isSummary() validates the full shape — a persisted summary whose
+    // counts are fabricated is corrupt data, dropped rather than rendered.
     await seedRun(
       baseRunRecord({
         summary: {
@@ -671,12 +656,7 @@ describe("normalizeRunRecord adversarial inputs", () => {
     const { deps } = makeDeps();
     const coord = new coordinator.RadarCoordinator(deps);
     const state = await coord.getState();
-    // Pinned as-is: the spoofed summary is trusted. Consumers must not rely
-    // on summary field types beyond status.
-    expect(state!.summary).toMatchObject({
-      status: "complete",
-      discovered: "lots",
-    });
+    expect(state!.summary).toBeUndefined();
   });
 
   it("cancel_requested: only literal true is honored (truthy junk → false)", async () => {

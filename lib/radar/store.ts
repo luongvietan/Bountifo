@@ -164,6 +164,32 @@ export async function getLatestSnapshot(
 }
 
 /**
+ * Newest snapshot for `uuid` whose `deep` payload is absent — the metadata
+ * evidence base. Metadata scoring must NEVER read a deep snapshot: the deep
+ * signals would leak into a "metadata" score row, and worse, writing that
+ * score under the deep-joined source_hash would collide with (and clobber)
+ * the existing deep-stage row for the same key. Deep snapshots are always
+ * preceded by a metadata snapshot in the same run, so a null return is
+ * honest "no metadata evidence", never a fallback candidate.
+ */
+export async function getLatestMetadataSnapshot(
+  db: RadarDb,
+  uuid: string,
+): Promise<RadarProgramSnapshot | null> {
+  const rows = (await db.getAllFromIndex(
+    "snapshots",
+    "byUuid",
+    uuid,
+  )) as SnapshotRow[];
+  let latest: SnapshotRow | null = null;
+  for (const row of rows) {
+    if (row.snapshot.deep != null) continue;
+    if (latest === null || compareBookkeeping(row, latest) > 0) latest = row;
+  }
+  return latest?.snapshot ?? null;
+}
+
+/**
  * Stores one score under [uuid, profile, scoring_version, source_hash]; the
  * wrapper lifts ProgramScore's `engagement_uuid` into the `uuid` key field.
  * `vector` embeds the feature vector the score was computed from so result
@@ -247,9 +273,14 @@ export async function getLatestScoreRowsByStage(
     { row: ScoreRow; stage: RadarEvidenceLevel }
   >();
   for (const row of candidates) {
+    // Trust only the enum — a persisted stage that is not exactly "deep" or
+    // "metadata" resolves through the snapshot, same as a missing field.
     const stage: RadarEvidenceLevel =
-      row.stage ??
-      ((await snapshotHasDeep(row)) ? "deep" : "metadata");
+      row.stage === "deep" || row.stage === "metadata"
+        ? row.stage
+        : (await snapshotHasDeep(row))
+          ? "deep"
+          : "metadata";
     const key = `${stage}${row.uuid}`;
     const current = latest.get(key);
     if (
@@ -261,8 +292,6 @@ export async function getLatestScoreRowsByStage(
   }
   const out: StagedScoreRows = { metadata: [], deep: [] };
   for (const { row, stage } of latest.values()) {
-    // Bucket by the resolved stage value, never by key prefix — a stage
-    // must classify through the type, not through string matching.
     out[stage].push(row);
   }
   return out;

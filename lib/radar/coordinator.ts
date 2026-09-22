@@ -9,6 +9,7 @@ import {
   getCatalogItem,
   getLatestRunId,
   getLatestScoreRowsByStage,
+  getLatestMetadataSnapshot,
   getLatestSnapshot,
   getRun,
   getScoreRows,
@@ -850,6 +851,7 @@ export class RadarCoordinator {
     db: RadarDb,
     run: PersistedRadarRun,
     uuids: readonly string[] = run.pending_uuids,
+    reenumerate = true,
   ): Promise<void> {
     if (uuids.every((uuid) => this.itemsByUuid.has(uuid))) {
       return;
@@ -858,6 +860,12 @@ export class RadarCoordinator {
     if (uuids.every((uuid) => this.itemsByUuid.has(uuid))) {
       return;
     }
+    // Re-enumeration rewinds the run to the enriching phase — valid for
+    // metadata pending work, but wrong mid-deep: the deep worker already
+    // completes uncatalogable uuids honestly, and a permanently-missing
+    // uuid would otherwise loop scoring → deep_enriching → re-enumerate
+    // forever.
+    if (!reenumerate) return;
     this.addWarnings(run, ["catalog_store_incomplete"]);
     await this.enumerateCatalog(db, run);
   }
@@ -963,7 +971,10 @@ export class RadarCoordinator {
         await this.checkpoint(db, run);
         return;
       }
-      const snapshot = await getLatestSnapshot(db, uuid);
+      // Metadata stage reads the latest NON-deep snapshot only: scoring a
+      // deep-joined snapshot here would label deep evidence "metadata" and
+      // collide with the deep-stage row under the same source_hash.
+      const snapshot = await getLatestMetadataSnapshot(db, uuid);
       if (snapshot === null) {
         this.addWarnings(run, [`${uuid}: missing_snapshot`]);
         continue;
@@ -1034,6 +1045,16 @@ export class RadarCoordinator {
     db: RadarDb,
     run: PersistedRadarRun,
   ): Promise<void> {
+    // The shortlist is recomputed authoritatively every time scoring
+    // completes — including after a catalog-store wipe rewound the run
+    // through enriching → scoring again. A stale persisted queue must never
+    // resurrect the deep stage on its own, so reset the candidate set and
+    // pending queue first. deep_completed_uuids is kept: those rows are
+    // real current-run deep evidence whatever the new union looks like.
+    run.deep_pending_uuids = [];
+    run.deep_candidates = [];
+    run.deep_round = 0;
+    run.deep_stabilization = null;
     if (this.deps.deepHydrate === undefined) return;
     const perProfile = new Map<RadarProfileId, string[]>();
     for (const profileId of DEEP_PROFILE_IDS) {
@@ -1043,15 +1064,21 @@ export class RadarCoordinator {
       );
     }
     const budget = this.deps.deepLimit ?? MAX_DEEP_PROGRAMS;
+    // The FULL union is recorded for provenance — deep_candidates documents
+    // every profile's demand even when the budget binds; only the first
+    // `budget` candidates enter the pending queue (deep_analyzed vs
+    // deep_candidates in the summary then honestly shows the shortfall).
     const { candidates } = selectDeepCandidates({
       perProfile,
       depth: this.deps.deepCandidateDepth ?? PROFILE_CANDIDATE_DEPTH,
-      maxCandidates: budget,
     });
+
     run.deep_candidates = candidates;
     run.deep_budget = budget;
-    run.deep_pending_uuids = candidates.map((c) => c.uuid);
-    if (candidates.length > 0) run.deep_round = 1;
+    run.deep_pending_uuids = candidates
+      .slice(0, budget)
+      .map((c) => c.uuid);
+    if (run.deep_pending_uuids.length > 0) run.deep_round = 1;
   }
 
   /**
@@ -1157,9 +1184,10 @@ export class RadarCoordinator {
     run: PersistedRadarRun,
   ): Promise<void> {
     if (run.phase !== "deep_enriching") return;
-    await this.ensureCatalogItems(db, run, run.deep_pending_uuids);
-    // ensureCatalogItems may have re-enumerated after a store wipe, which
-    // rewinds the phase — bail out exactly like enrichPhase does.
+    // Deep pending never re-enumerates: an uncatalogable candidate is
+    // completed with a warning by the worker, not a reason to rewind the
+    // whole run (and a permanently-missing uuid would loop forever).
+    await this.ensureCatalogItems(db, run, run.deep_pending_uuids, false);
     if (run.phase !== "deep_enriching") return;
     if (run.cancel_requested) {
       this.markDeepIncomplete(run);

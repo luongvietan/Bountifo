@@ -573,7 +573,7 @@ describe("[CONTRACT] deepHydrate contract violations", () => {
     expect(run.summary?.status).toBe("failed");
   });
 
-  it("AUDIT PROBE: deepHydrate returning another uuid's snapshot silently skews bookkeeping", async () => {
+  it("deepHydrate returning another uuid's snapshot fails the run closed (audit D2)", async () => {
     const items = ["dw-1", "dw-2"].map(item);
     const details = detailsOf({
       "dw-1": { p1: 25000, webTargets: 2 },
@@ -588,59 +588,61 @@ describe("[CONTRACT] deepHydrate contract violations", () => {
     const coord = new coordinator.RadarCoordinator(deps);
     const run = await coord.start();
     await coord.waitForIdle();
-    expect(run.phase).toBe("done");
-    // Bookkeeping marks the REQUESTED uuids deep-completed…
-    expect([...run.deep_completed_uuids].sort()).toEqual(["dw-1", "dw-2"]);
-    // …but no deep score exists for them (their snapshots never gained a
-    // deep payload) — deep_completed ≠ deep-analyzed here.
-    const rows = await coord.getResults("best_ev", 50, undefined, "deep");
-    expect(mine(rows, ["dw-1", "dw-2"])).toEqual([]);
-    // The wrong-uuid snapshot row was persisted verbatim — the worker does
-    // not validate the dep's return shape. (Audit finding D2.)
+    // A mislabeled return is a plumbing bug: the run fails closed, no uuid
+    // is marked deep-completed, and the foreign snapshot never persists.
+    expect(run.phase).toBe("failed");
+    expect(run.summary?.status).toBe("failed");
+    expect(run.deep_stabilization).toBe("incomplete");
+    expect(run.deep_completed_uuids).toEqual([]);
     const db = await store.openRadarStore();
-    const injected = await store.getLatestSnapshot(db, "dw-injected");
-    expect(injected?.deep).not.toBeNull();
+    const rec = await store.getRun(db, run.run_id);
+    expect(rec?.warning_details).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("invalid_deep_snapshot"),
+      ]),
+    );
+    expect(await store.getLatestSnapshot(db, "dw-injected")).toBeNull();
     db.close();
   });
 
-  it("AUDIT PROBE: deepHydrate keeping the same source_hash mutates the metadata snapshot row in place", async () => {
+  it("deepHydrate keeping the same source_hash fails closed — the metadata snapshot/score survive (audit D3)", async () => {
     const items = ["dh-same"].map(item);
     const { deps, deepHydrate } = makeDeps(items, detailsOf({}), {
       deepLimit: 1,
     });
     deepHydrate.mockImplementation(
       async (_it: RadarCatalogItem, s: RadarProgramSnapshot) =>
-        // Contract violation: deep payload set but source_hash unchanged.
+        // Contract violation: deep payload set but source_hash unchanged —
+        // persisting it would overwrite the metadata snapshot row in place.
         ({ ...s, deep: benignDeep() }) as RadarProgramSnapshot,
     );
     const coord = new coordinator.RadarCoordinator(deps);
     const run = await coord.start();
     await coord.waitForIdle();
-    expect(run.phase).toBe("done");
+    expect(run.phase).toBe("failed");
     const db = await store.openRadarStore();
-    // The [uuid, hash] snapshot row was overwritten IN PLACE — the metadata
-    // snapshot is gone (latest now carries deep). Finding D3.
+    const rec = await store.getRun(db, run.run_id);
+    expect(rec?.warning_details).toEqual(
+      expect.arrayContaining(["dh-same: invalid_deep_snapshot"]),
+    );
+    // The [uuid, hash] snapshot row is untouched — no in-place mutation.
     const latest = await store.getLatestSnapshot(db, "dh-same");
-    expect(latest?.deep).not.toBeNull();
-    // CASCADE: the deep re-score writes stage:"deep" under THE SAME
-    // source_hash → same score key [uuid, profile, version, hash] → the
-    // metadata score row is overwritten — the V1.3.1 invariant "metadata
-    // scores are never overwritten" is destroyed by the dep violation.
+    expect(latest?.deep ?? null).toBeNull();
+    // The V1.3.1 invariant holds: the metadata score row is intact, and no
+    // deep evidence was fabricated for the violated return.
     const metaRows = mine(
       await coord.getResults("best_ev", 50, undefined, "metadata"),
       ["dh-same"],
     );
-    expect(metaRows).toEqual([]); // baseline gone from metadata mode
+    expect(metaRows).toHaveLength(1);
     const deepRows = mine(
       await coord.getResults("best_ev", 50, undefined, "deep"),
       ["dh-same"],
     );
-    expect(deepRows).toHaveLength(1);
-    expect(deepRows[0]!.metadata_score).toBeNull(); // nothing to diff against
-    expect(deepRows[0]!.score_delta).toBeNull();
+    expect(deepRows).toEqual([]);
     const prog = await coord.getProgram("dh-same", "best_ev");
-    expect(prog?.metadata_score).toBeNull();
-    expect(prog?.deep_score).not.toBeNull();
+    expect(prog?.metadata_score).not.toBeNull();
+    expect(prog?.deep_score).toBeNull();
     db.close();
   });
 });
@@ -780,27 +782,28 @@ describe("[CONTRACT] deep-stage resume", () => {
     await store.setLatestRunId(db, runId);
     db.close();
 
-    // enumerate returns the missing item — the rewind supplies it.
+    // enumerate WOULD return the missing item — but the deep stage must
+    // never re-enumerate (a permanently-missing uuid would loop forever).
     const { deps, deepHydrate } = makeDeps([item("px-1")], detailsOf({}));
+    const enumerate = vi.fn(deps.enumerate);
+    deps.enumerate = enumerate;
     const coord = new coordinator.RadarCoordinator(deps);
     await coord.resume();
     const db2 = await store.openRadarStore();
     const rec = await store.getRun(db2, runId);
 
-    // PINNED CURRENT BEHAVIOR (bug): the run ends "done" — deepEnrichPhase
-    // ran deep workers and forced "deep_scoring", so px-1 is marked
-    // deep-complete while its metadata enrichment NEVER ran (pending_uuids
-    // still holds it; no snapshot exists). Correct behavior after the fix:
-    // deepEnrichPhase returns once ensureCatalogItems rewinds the phase,
-    // and the resumed enrich pass hydrates px-1 first.
+    // FIXED: no re-enumeration mid-deep → no phase rewind → px-1 is never
+    // re-queued for metadata work. The deep worker completes the
+    // uncatalogable uuid with an honest warning instead.
+    expect(enumerate).not.toHaveBeenCalled();
     expect(rec?.phase).toBe("done");
-    expect(rec?.pending_uuids).toEqual(["px-1"]); // metadata work stranded
+    expect(rec?.pending_uuids).toEqual([]);
+    expect(rec?.warning_details).toEqual(
+      expect.arrayContaining(["px-1: missing_catalog_item"]),
+    );
     expect(await store.getLatestSnapshot(db2, "px-1")).toBeNull();
-    // deepHydrate ran on a program that has no metadata snapshot —
-    // getLatestSnapshot returned null so the worker skipped enrichment,
-    // yet still marked it deep-completed:
     expect(deepHydrate).not.toHaveBeenCalled();
-    expect(rec?.deep_completed_uuids).toEqual(["px-1"]);
+    expect(rec?.deep_completed_uuids).toContain("px-1");
     db2.close();
   });
 
