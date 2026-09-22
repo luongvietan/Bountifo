@@ -943,8 +943,8 @@ describe("target_data_quality composite", () => {
   });
 });
 
-describe("V1.4 contract-stub signals", () => {
-  it("sourced accessibility / stub authz / deep signals stay honest", () => {
+describe("V1.4 sourced signals", () => {
+  it("sourced accessibility / authz / deep signals stay honest", () => {
     const v = vector(
       detail({
         targets: [target({ category: "api", location: "https://a" })],
@@ -965,16 +965,14 @@ describe("V1.4 contract-stub signals", () => {
       source: "engagement_detail",
       reason_code: "participation_access_rubric",
     });
-    // authz_opportunity stays a contract stub (Agent B lands the rubric).
-    for (const key of [
-      "authz_opportunity",
-    ] as const) {
-      expect(v[key]).toEqual({
-        value: null,
-        source: "derived",
-        reason_code: "not_available_v1",
-      });
-    }
+    // authz_opportunity is sourced (Agent B): a detail with no credentials,
+    // no signup marker and no authz-policy sentence reads the honest
+    // no-evidence null — the retired not_available_v1 stub shape is gone.
+    expect(v.authz_opportunity).toEqual({
+      value: null,
+      source: "engagement_detail",
+      reason_code: "no_authz_evidence",
+    });
     // V1.3 deep signals: a snapshot that never received a deep pass reads
     // not_deep_analyzed — never a fabricated 0.
     for (const key of [
