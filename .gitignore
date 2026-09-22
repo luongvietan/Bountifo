@@ -3,3 +3,11 @@ node_modules/
 .wxt/
 dist/
 .worktrees/
+
+# Recon/tool artifacts — live-session captures and agent workspaces must
+# never be committed (may contain authenticated page content).
+.guard-matrix/
+.playwright-mcp/
+chrome-state*.json
+chrome-tree.txt
+.superpowers/
