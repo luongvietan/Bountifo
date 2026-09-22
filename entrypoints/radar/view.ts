@@ -1,10 +1,17 @@
+import { BUGCROWD_SITE } from "../../lib/constants";
 import type {
+  RadarProgramDetail,
   RadarResultRow,
   RadarResultSignals,
   RadarRunPhase,
   RadarRunState,
   RadarScanSummary,
 } from "../../lib/radar/coordinator";
+import type {
+  RadarDeepEnrichment,
+  RadarKnownIssueSummary,
+  RadarSemanticDiff,
+} from "../../lib/radar/deepTypes";
 import { RADAR_PROFILES } from "../../lib/radar/profiles";
 import { RADAR_PROFILE_IDS } from "../../lib/radar/types";
 import type {
@@ -49,6 +56,43 @@ export function saturationText(value: number | null): string {
   return value === null ? EMPTY : `${formatSignal(value)} · ${saturationBand(value)}`;
 }
 
+/**
+ * Display band for known_issue_density — a duplicate-pressure proxy from the
+ * engagement-level Known Issues aggregate (cost direction: higher = more
+ * dup pressure). Heuristic thirds: <0.25 Low, <0.6 Moderate, ≥0.6 High —
+ * chosen so the observed ~0.4–0.6 dup-share range doesn't all read "High".
+ * Display wording only; not a calibrated duplicate probability.
+ */
+export function densityBand(value: number): string {
+  if (value < 0.25) return "Low";
+  if (value < 0.6) return "Moderate";
+  return "High";
+}
+
+/** "0.61 · High"; "—" when the program was not deep-analyzed. */
+export function densityText(value: number | null): string {
+  return value === null ? EMPTY : `${formatSignal(value)} · ${densityBand(value)}`;
+}
+
+/**
+ * Display band for opportunity_change — the semantic-diff opportunity
+ * signal (benefit direction: higher = the latest changelog version added
+ * more opportunity than it removed). Same heuristic thirds as densityBand:
+ * <0.25 Low, <0.6 Moderate, ≥0.6 High.
+ */
+export function opportunityBand(value: number): string {
+  if (value < 0.25) return "Low";
+  if (value < 0.6) return "Moderate";
+  return "High";
+}
+
+/** "0.30 · Moderate"; "—" when the program was not deep-analyzed. */
+export function opportunityText(value: number | null): string {
+  return value === null
+    ? EMPTY
+    : `${formatSignal(value)} · ${opportunityBand(value)}`;
+}
+
 /** Scores arrive on a 0–100 scale (scoring.ts round1); "—" when unscored. */
 export function formatScore(score: number | null): string {
   return score === null ? EMPTY : score.toFixed(1);
@@ -86,7 +130,7 @@ export function phaseLabel(phase: RadarRunPhase): string {
     case "scoring":
       return "Scoring";
     case "deep_enriching":
-      return "Deep analysis";
+      return "Deep analysis of shortlist";
     case "deep_scoring":
       return "Deep scoring";
     case "done":
@@ -157,6 +201,58 @@ export function programLabel(row: {
 }
 
 /**
+ * Slug safety for outbound links — identical allowlist the siteClient uses
+ * for engagement paths. Anything else (spaces, slashes, unicode) refuses a
+ * URL rather than linking somewhere arbitrary.
+ */
+const SLUG_RE = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * Canonical engagement URL for deep-linking a program name:
+ * `BUGCROWD_SITE/engagements/<slug>` where slug = code ?? uuid. Returns null
+ * when the slug fails the allowlist — the caller renders plain text instead.
+ * No other URL shape is ever produced.
+ */
+export function engagementUrl(identity: {
+  uuid: string;
+  code?: string | null;
+}): string | null {
+  const slug = identity.code ?? identity.uuid;
+  return SLUG_RE.test(slug) ? `${BUGCROWD_SITE}/engagements/${slug}` : null;
+}
+
+/**
+ * The slug source for a detail-pane link: catalog code/uuid first, then the
+ * snapshot's code/uuid, then the requested uuid — same `code ?? uuid` rule
+ * as the results rows.
+ */
+export function detailSlugSource(
+  detail: RadarProgramDetail,
+  fallbackUuid: string,
+): { uuid: string; code: string | null } {
+  const catalog = detail.catalog ?? detail.snapshot?.catalog ?? null;
+  return {
+    uuid: catalog?.uuid ?? detail.snapshot?.uuid ?? fallbackUuid,
+    code: catalog?.code ?? detail.snapshot?.code ?? null,
+  };
+}
+
+/** Detail-pane heading: catalog name/code, snapshot fallbacks, then uuid. */
+export function detailTitleText(
+  detail: RadarProgramDetail,
+  uuid: string,
+): string {
+  return (
+    detail.catalog?.name ??
+    detail.catalog?.code ??
+    detail.snapshot?.catalog.name ??
+    detail.snapshot?.catalog.code ??
+    detail.snapshot?.code ??
+    uuid
+  );
+}
+
+/**
  * The single "Surface" column folds the three surface signals together:
  * meaningful surface first, api/web in parentheses when known.
  */
@@ -172,17 +268,31 @@ export function surfaceText(signals: RadarResultSignals): string {
   return extras.length === 0 ? base : `${base} (${extras.join(" · ")})`;
 }
 
-/** One rendered row of the ranked results table (all display strings). */
+/**
+ * One rendered row of the ranked results table (all display strings).
+ * Eight cells: Rank, Program, Score (coverage folded in), Reward, Surface,
+ * Saturation, Dup, Opportunity — the Freshness column was dropped for V1.3
+ * (freshness stays in `signals` and shows in the detail meta line).
+ */
 export interface RowView {
   uuid: string;
   rank: string;
   program: string;
+  /** Canonical engagement URL when the slug is site-safe; null → plain text. */
+  programUrl: string | null;
+  /** "82.4 (cov 75%)"; "—" when unscored; " provisional" suffix when flagged. */
   score: string;
-  coverage: string;
   reward: string;
   surface: string;
   saturation: string;
-  freshness: string;
+  /** known_issue_density — "0.61 · High"; "—" when not deep-analyzed. */
+  dup: string;
+  /** opportunity_change — "0.30 · Moderate"; "—" when not deep-analyzed. */
+  opportunity: string;
+  /** false → the dup cell renders "—" with an `unanalyzed` marker class. */
+  dupAnalyzed: boolean;
+  /** false → the opportunity cell renders "—" with an `unanalyzed` marker. */
+  opportunityAnalyzed: boolean;
   /** Below the profile's confidence floor — rendered dimmed, never hidden. */
   eligible: boolean;
   /** A required signal group was entirely unknown — flagged in the row. */
@@ -196,12 +306,18 @@ export function buildRow(row: RadarResultRow, rank: number): RowView {
     uuid: row.uuid,
     rank: String(rank),
     program: programLabel(row),
-    score: row.provisional && base !== EMPTY ? `${base} provisional` : base,
-    coverage: formatCoverage(row.confidence),
+    programUrl: engagementUrl(row),
+    score:
+      base === EMPTY
+        ? EMPTY
+        : `${base} (cov ${formatCoverage(row.confidence)})${row.provisional ? " provisional" : ""}`,
     reward: formatSignal(row.signals.reward_potential),
     surface: surfaceText(row.signals),
     saturation: saturationText(row.signals.research_saturation),
-    freshness: formatSignal(row.signals.freshness),
+    dup: densityText(row.signals.known_issue_density),
+    opportunity: opportunityText(row.signals.opportunity_change),
+    dupAnalyzed: row.signals.known_issue_density !== null,
+    opportunityAnalyzed: row.signals.opportunity_change !== null,
     eligible: row.eligible,
     provisional: row.provisional,
   };
@@ -272,6 +388,198 @@ export function saturationRows(
               null,
           ),
   }));
+}
+
+/**
+ * Detail meta line — score + coverage verdict, with freshness folded in
+ * (the results table dropped its Freshness column for V1.3; the signal
+ * stays visible here). Freshness renders only when actually known.
+ */
+export function detailMetaText(detail: RadarProgramDetail): string {
+  const freshness = detail.vector?.freshness.value ?? null;
+  const fresh =
+    freshness === null ? "" : ` · freshness ${formatSignal(freshness)}`;
+  if (detail.score === null) {
+    return freshness === null
+      ? "No score stored for this profile."
+      : `No score stored for this profile${fresh}`;
+  }
+  return (
+    `Score ${formatScore(detail.score.score)} · ` +
+    `coverage ${formatCoverage(detail.score.confidence)}` +
+    `${detail.score.provisional ? " · PROVISIONAL" : ""}${fresh}`
+  );
+}
+
+/**
+ * Client-side result filters (V1.3) — applied to fetched rows in main.ts
+ * before buildRows, so rank numbers are post-filter. Semantics: an unset
+ * criterion passes every row; an ACTIVE criterion fails any row whose signal
+ * is null — unknown is not 0 and cannot be verified against a threshold.
+ */
+export interface FilterCriteria {
+  /** Keep rows with research_saturation ≤ this (0..1). */
+  maxSaturation?: number | null;
+  /** Keep rows with known_issue_density ≤ this (0..1). */
+  maxDup?: number | null;
+  /** Keep rows with opportunity_change ≥ this (0..1). */
+  minOpportunity?: number | null;
+  /** Keep rows with reward_potential ≥ this (0..1). */
+  minReward?: number | null;
+  /** Keep rows with api_surface ≥ 0.4 when true. */
+  apiHeavy?: boolean;
+}
+
+/** api_surface floor for the "API-heavy" checkbox. */
+export const API_HEAVY_MIN = 0.4;
+
+function passMax(value: number | null, max: number | null | undefined): boolean {
+  return max === null || max === undefined
+    ? true
+    : value !== null && value <= max;
+}
+
+function passMin(value: number | null, min: number | null | undefined): boolean {
+  return min === null || min === undefined
+    ? true
+    : value !== null && value >= min;
+}
+
+export function filterRows(
+  rows: RadarResultRow[],
+  criteria: FilterCriteria,
+): RadarResultRow[] {
+  return rows.filter(
+    (row) =>
+      passMax(row.signals.research_saturation, criteria.maxSaturation) &&
+      passMax(row.signals.known_issue_density, criteria.maxDup) &&
+      passMin(row.signals.opportunity_change, criteria.minOpportunity) &&
+      passMin(row.signals.reward_potential, criteria.minReward) &&
+      (!criteria.apiHeavy ||
+        (row.signals.api_surface !== null &&
+          row.signals.api_surface >= API_HEAVY_MIN)),
+  );
+}
+
+/** One titled diagnostic group in the detail pane. */
+export interface DetailRowGroup {
+  title: string;
+  rows: { label: string; value: string }[];
+}
+
+function countText(value: number | null | undefined): string {
+  return value === null || value === undefined ? EMPTY : String(value);
+}
+
+/** "5 (3 in scope)"; "5" when in-scope unknown; "—" when total unknown. */
+function scopedCountText(
+  total: number | null | undefined,
+  inScope: number | null | undefined,
+): string {
+  if (total === null || total === undefined) return EMPTY;
+  return inScope === null || inScope === undefined
+    ? String(total)
+    : `${total} (${inScope} in scope)`;
+}
+
+function boolText(value: boolean | null | undefined): string {
+  return value === null || value === undefined
+    ? EMPTY
+    : value
+      ? "yes"
+      : "no";
+}
+
+/** Changelog version ids are long; the first 8 chars identify the version. */
+function shortVersion(value: string | null | undefined): string {
+  return value === null || value === undefined ? EMPTY : value.slice(0, 8);
+}
+
+/** ↑ on increase, ↓ on decrease, both when both fired; "—" otherwise. */
+function rewardChangeText(diff: RadarSemanticDiff | null): string {
+  const up = diff?.reward_increase === true;
+  const down = diff?.reward_decrease === true;
+  if (up && down) return "↑ ↓";
+  if (up) return "↑";
+  if (down) return "↓";
+  return EMPTY;
+}
+
+function knownIssuesStatus(ki: RadarKnownIssueSummary | null): string {
+  if (ki === null) return "not analyzed";
+  return ki.status; // "complete" | "unavailable" | "failed"
+}
+
+function diffStatus(diff: RadarSemanticDiff | null): string {
+  if (diff === null) return "not analyzed";
+  return diff.status === "no_baseline" ? "no baseline" : diff.status;
+}
+
+/**
+ * Deep-enrichment diagnostics for the detail pane — the evidence behind the
+ * Dup and Opportunity columns, always rendered honestly: counts/version ids
+ * that never arrived show "—", and a missing deep pass reads "not analyzed"
+ * rather than fabricating zeros.
+ */
+export function detailRows(detail: RadarProgramDetail): DetailRowGroup[] {
+  const deep: RadarDeepEnrichment | null = detail.snapshot?.deep ?? null;
+  const ki = deep?.known_issues ?? null;
+  const diff = deep?.semantic_diff ?? null;
+  return [
+    {
+      title: "Duplicate intelligence",
+      rows: [
+        { label: "Unique known issues", value: countText(ki?.unique_count) },
+        {
+          label: "Total (incl. duplicates)",
+          value: countText(ki?.total_count),
+        },
+        {
+          label: "Known issue density",
+          value: densityText(detail.vector?.known_issue_density.value ?? null),
+        },
+        { label: "Source status", value: knownIssuesStatus(ki) },
+      ],
+    },
+    {
+      title: "Opportunity changes",
+      rows: [
+        { label: "Current version", value: shortVersion(diff?.to_version) },
+        { label: "Baseline version", value: shortVersion(diff?.from_version) },
+        {
+          label: "Targets added",
+          value: scopedCountText(
+            diff?.added_targets,
+            diff?.added_in_scope_targets,
+          ),
+        },
+        {
+          label: "Targets removed",
+          value: scopedCountText(
+            diff?.removed_targets,
+            diff?.removed_in_scope_targets,
+          ),
+        },
+        {
+          label: "API targets added",
+          value: countText(diff?.added_api_targets),
+        },
+        { label: "Reward change", value: rewardChangeText(diff) },
+        { label: "Status change", value: boolText(diff?.status_changed) },
+        {
+          label: "Safe harbor change",
+          value: boolText(diff?.safe_harbor_changed),
+        },
+        {
+          label: "Opportunity change",
+          value: opportunityText(
+            detail.vector?.opportunity_change.value ?? null,
+          ),
+        },
+        { label: "Source status", value: diffStatus(diff) },
+      ],
+    },
+  ];
 }
 
 /** The six profiles, in pinned declaration order, for the select element. */

@@ -21,17 +21,31 @@
       </div>
       <p id="status" class="muted" aria-live="polite">Loading…</p>
       <p id="feedback" class="feedback" aria-live="polite"></p>
+      <fieldset class="filters">
+        <legend class="muted">Filter results</legend>
+        <label for="f-saturation">Saturation ≤</label>
+        <input id="f-saturation" type="number" min="0" max="1" step="0.05" />
+        <label for="f-dup">Dup ≤</label>
+        <input id="f-dup" type="number" min="0" max="1" step="0.05" />
+        <label for="f-opportunity">Opportunity ≥</label>
+        <input id="f-opportunity" type="number" min="0" max="1" step="0.05" />
+        <label for="f-reward">Reward ≥</label>
+        <input id="f-reward" type="number" min="0" max="1" step="0.05" />
+        <label for="f-apiheavy" class="check">
+          <input id="f-apiheavy" type="checkbox" /> API-heavy
+        </label>
+      </fieldset>
       <table id="results">
         <thead>
           <tr>
             <th>Rank</th>
             <th>Program</th>
             <th>Score</th>
-            <th>Coverage</th>
             <th>Reward</th>
             <th>Surface</th>
             <th>Saturation</th>
-            <th>Freshness</th>
+            <th>Dup</th>
+            <th>Opportunity</th>
           </tr>
         </thead>
         <tbody id="results-body"></tbody>
@@ -54,6 +68,7 @@
         <table id="saturation">
           <tbody id="saturation-body"></tbody>
         </table>
+        <div id="deep-groups"></div>
         <h3>Explanation</h3>
         <ul id="explanation"></ul>
       </section>
