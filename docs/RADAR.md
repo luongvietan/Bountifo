@@ -16,9 +16,10 @@ evidence stages and ranked separately — a metadata-only row never shares
 an ordinal rank with a deep-analyzed one. Deep signals stay `null` for
 programs that were never deep-analyzed — missing data is never coerced
 into a favorable or unfavorable value. This is still a candidate-pool
-ranking, not a true expected-value estimate; the signals that would make
-it EV (duplicate probability, accessibility, real authz opportunity)
-remain partially unsourced.
+ranking, not a true expected-value estimate: `accessibility` and
+`authz_opportunity` are now sourced (V1.4), but as deterministic rubrics
+over stated posture and policy text — not guarantees — and no signal
+estimates duplicate probability.
 
 ```text
 GET /engagements.json?page=N    GET /engagements/<slug>/changelog.json
@@ -85,7 +86,7 @@ instead of aborting the run.
 |---|---|---|
 | Catalog | `GET /engagements.json?page=N` → `{engagements, paginationMeta{limit, totalCount}}` | `RadarCatalogItem` — uuid (the brief-URL slug), code (same slug), name, lifecycle_status (`accessStatus`), engagement_type (`productEngagementType.label`), discovered_at |
 | Version list | `GET /engagements/{slug}/changelog.json` → `{changelogs[]}` | the `changelogState:"Latest"` entry's `id` (fallback: first entry — the list is newest-first) |
-| Detail | `GET /engagements/{slug}/changelog/{version}.json` | `ApiEngagementData` via `lib/radar/detailMap.ts`: identity (`data.engagement.code`), `engagementTypeDetail.productLabel`, `statusLabel`, `data.engagement.startsAt`/`endsAt`, `lastTransitionAt`, `publishedAt` → `lastBriefUpdate`, `brief.safeHarborStatus.status`, scope groups (`inScope`, `rewardRange.pNMaxCents` — cents→dollars), targets (`uri`, `category`, `tags`) |
+| Detail | `GET /engagements/{slug}/changelog/{version}.json` | `ApiEngagementData` via `lib/radar/detailMap.ts`: identity (`data.engagement.code`), `engagementTypeDetail.productLabel`, `statusLabel`, `data.engagement.startsAt`/`endsAt`, `lastTransitionAt`, `publishedAt` → `lastBriefUpdate`, `brief.safeHarborStatus.status`, scope groups (`inScope`, `rewardRange.pNMaxCents` — cents→dollars), targets (`uri`, `category`, `tags`), and the V1.4 brief facts — `engagementConfiguration.participation` (fallback: root `participation`) → `participation`, a non-empty `credentialsUrl` → `credentialsProvided`, and `brief.description` + `brief.targetsOverview` → `briefText` (tag-stripped, entity-decoded plaintext via `lib/radar/briefText.ts`; `null` when both are absent) |
 | Stats | `GET /engagements/{slug}/statistics.json` | `statistics` — `rewardedVulnerabilities` → `vulnerabilities_rewarded`, `averagePayout` → `average_payout`, `validationWithin`, `validSubmissionCount` → `valid_submission_count` (present in the schema but currently `null` on every observed program — consumed honestly when Bugcrowd populates it) |
 | Joined | `GET /engagements/{slug}/recently_joined_users.json` | `statistics.researchers_participating` ← `total` (recent-joiner count — the recent-crowding proxy, NOT lifetime participation). Absent/`total` missing → key omitted, never invented. |
 | Known Issues (deep only) | `GET /engagements/{slug}/engagement_known_issues.json` → `{"unique":int,"total":int}` — verified live | `deep.known_issues` — `total` includes duplicates of the `unique` accepted issues; both exclude out-of-scope and cover P1–P4 in Triaged/Unresolved/Informational. Non-2xx/parse failure → `unavailable`/`failed`, never zero. |
@@ -162,8 +163,11 @@ preimage `"radar-source-v1:" + canonicalJson(projection)`.
 `Date.now()`, or randomness. Every emitted value is rounded to 4 decimals;
 `null` means unknown and is never fabricated. When `snapshot.detail` is
 `null`, the detail-derived signals are `null` with reason code
-`detail_unavailable` — nothing is inferred from the catalog row — and
-`accessibility`/`authz_opportunity` keep `not_available_v1`. The two deep
+`detail_unavailable` — nothing is inferred from the catalog row. The V1.4
+signals keep that honesty on the same path: `accessibility` and
+`authz_opportunity` emit `null` under the surviving stub label
+`not_available_v1` (the sourced rubrics are never reached, so
+`catalog.lifecycle_status` cannot leak in). The two deep
 signals read `snapshot.deep`: absent/null deep data → `not_deep_analyzed`;
 a sub-source status (`unavailable`, `failed`, `no_baseline`) surfaces as
 `ki_<status>` / `diff_<status>`; only `status === "complete"` produces a
@@ -176,9 +180,9 @@ value.
 | `reward_potential` | `engagement_detail` | `reward_curve_p1_p2_p3` | Per tier p1/p2/p3: max reward over in-scope groups → `normReward`; blend 0.5·P1 + 0.3·P2 + 0.2·P3 renormalized over tiers present. `null` when no tier carries a finite value. |
 | `reward_breadth` | `engagement_detail` | `reward_bearing_group_share` | Share of in-scope groups bearing ≥1 positive reward on p1..p5. `null` when zero in-scope groups. |
 | `meaningful_surface` | `engagement_detail` | `in_scope_target_saturation` | `c/(c+25)` where `c` = in-scope targets with non-empty location or name. Always defined (0 targets → 0). |
-| `api_surface` | `engagement_detail` | `api_token_share` | Share of in-scope targets whose token set intersects `{api, rest, graphql, grpc, webservice, endpoint}`. 0 when no in-scope targets. |
-| `api_surface_size` | `engagement_detail` | `api_target_saturation` | `c/(c+10)` where `c` = in-scope API-token targets. The COUNT half of the API signal — a lone API target reads share 1.0 but size 0.09, so it can no longer fake breadth. 0 when no API targets. |
-| `web_surface` | `engagement_detail` | `web_token_share` | Share intersecting `{web, website, webapp, webapplication}`; a target matching neither token set whose `location` parses as http(s) counts as web. 0 when no in-scope targets. |
+| `api_surface` | `engagement_detail` | `api_token_share` | Share of in-scope targets whose token set intersects `{api, rest, graphql, grpc, webservice, endpoint}` OR whose `location` is an api-shaped http(s) URL (V1.4 `locationLooksApi`: a hostname token in `{api, apis, graphql, grpc, gateway, rest, rpc, ws, webservice, service}`, or a FIRST path segment in `{api, graphql, graphiql, rest, rpc, webservice, service, services}` — bare `/v\d+/` and deeper-than-segment-1 tokens do not count). 0 when no in-scope targets. |
+| `api_surface_size` | `engagement_detail` | `api_target_saturation` | `c/(c+10)` where `c` = in-scope API-classified targets (token OR URL shape). The COUNT half of the API signal — a lone API target reads share 1.0 but size 0.09, so it can no longer fake breadth. 0 when no API targets. |
+| `web_surface` | `engagement_detail` | `web_token_share` | Share intersecting `{web, website, webapp, webapplication}`; a target matching neither token set whose `location` parses as http(s) counts as web — unless it is api-shaped, in which case it counted as api and the fallback never fires. 0 when no in-scope targets. |
 | `researcher_competition` | `statistics` | `researchers_participating_saturation` | `n/(n+500)`, `n` = strict-parsed `statistics.researchers_participating` ← `recently_joined_users.total`. **Recent crowding** — joiners over a recent window, not lifetime participants and not a researcher count. `null` when the endpoint errors or exposes no `total` (managed/invitational briefs often don't). |
 | `submission_activity` | `statistics` | `submission_count_saturation` | `n/(n+500)`, `n` = strict-parsed `statistics.valid_submission_count` — a count of valid submissions, NOT a count of researchers. `null` when absent/unparseable (currently always — see Limitations). |
 | `research_saturation` | `derived` | `research_saturation_composite` / `insufficient_saturation_components` | Weighted mean over KNOWN components: `recent_crowding` 0.30 (the `researcher_competition` value), `submission_activity` 0.40, `rewarded_activity` 0.30. A missing component drops out of numerator AND denominator — never reads as 0. `null` when fewer than 2 components are known — one noisy metric must not pose as saturation truth. This is observed research attention, not duplicate probability. |
@@ -186,10 +190,10 @@ value.
 | `freshness` | `engagement_detail` | `age_band` | Newest valid of `lastBriefUpdate`/`lastStatusTransition`, aged in days vs `now`. Bands below; `null` when no valid date (or invalid `now`). |
 | `safe_harbor` | `engagement_detail` | `safe_harbor_field` | `safeHarborLevel` field only: contains `full` → 1.0, `partial` → 0.5, `none`/`absent` → 0.0 (case-insensitive); anything else or missing → `null`. |
 | `target_data_quality` | `derived` | `field_completeness_mix` | Mean of four parts: fraction of in-scope targets with non-empty `category`; fraction with usable location/name; 1 iff ≥1 in-scope group exists; fraction of in-scope groups carrying ≥1 non-null reward value (a recorded 0 counts). Empty denominators score 0. `null` only when zero in-scope targets AND zero in-scope groups. |
-| `accessibility` | `derived` | `not_available_v1` | Always `null` in V1 — setup/account requirements need deep analysis. |
+| `accessibility` | `engagement_detail` | `no_access_evidence` / `participation_access_rubric` | **Entry-friction rubric** (V1.4, `lib/radar/accessibility.ts`). Base band over `(detail.participation ?? catalog.lifecycle_status ?? "")` lowercased: contains `open` → 0.8; matches the gated family (`invite`/`application`/`approval`/`waitlist`/`private`/`managed`/`closed`) → 0.2; any other non-empty posture → 0.5; empty → `null`. The `??` order is pinned: `detail.participation` wins outright and an empty string suppresses the catalog fallback. Modifiers over the base: +0.10 for a signup marker in `briefText` (`@bugcrowdninja`, `sign up`, `self-serve`, `create/register … account(s)`), +0.10 for `credentialsProvided === true` (the brief ships a `credentialsUrl`), −0.20 for a friction marker in `briefText` (VPN, IP whitelist, NDA, identity verification, background check, citizenship); result clamped to 0..1. A rubric over stated posture, not a guarantee of access. |
 | `known_issue_density` | `deep_enrichment` | `not_deep_analyzed` / `ki_<status>` / `ki_density` | **Duplicate-pressure proxy** (V1.3): `0.5·(u/(u+50)) + 0.5·(d/(d+5))` where `u` = `unique_count` and `d = u / meaningfulTargetCount` (in-scope targets with usable identity; absent/degenerate surface → volume term only). Monotone nondecreasing in `u`; `u=0` → a real `0`. `null` unless `deep.known_issues.status === "complete"` — missing Known Issues never read as "no issues". NOT a duplicate-probability estimate: `total_count` (which embeds dup share) is captured for display but deliberately excluded from the signal. |
 | `opportunity_change` | `deep_enrichment` | `not_deep_analyzed` / `diff_<status>` / `opportunity_score` | **Semantic opportunity gained in the latest publish** (V1.3): `min(1, 0.35·ai/(ai+3) + 0.30·api/(api+2) + 0.10·ag/(ag+1) + 0.15·[reward_increase] + 0.10·mi/(mi+2))` over the diff facts (ai = added in-scope targets, api = added API targets, ag = added groups, mi = moved in-scope). `only_administrative_changes` → a real `0` — a wording edit scores nothing, which is the entire point versus `freshness`. `null` unless `deep.semantic_diff.status === "complete"`. |
-| `authz_opportunity` | `derived` | `not_available_v1` | Always `null` in V1 — no deterministic source until deep analysis. |
+| `authz_opportunity` | `engagement_detail` | `no_authz_evidence` / `authz_surface_rubric` | **Authz test-surface rubric** (V1.4, `lib/radar/authz.ts`). Two halves from the brief: `accountSurface` = 1 iff `credentialsProvided === true` or a signup marker (same regex as `accessibility`, deliberately a separate copy) appears in `briefText`; `permScore` = the most conservative `statusOfSentence` (`lib/model/policyText.ts`) over sentences naming an authz-relevant technique (`multi-account`, `cross-account-testing`, `other-customer-data`, `cross-tenant`): prohibited → 0, conditional → 0.5, allowed → 1, no normative predicate → not counted. `accountSurface === 0` and no authz-policy sentence → `null`. A prohibition reads a flat **0.1** — a LOW reading, never "no opportunity" and never blended upward by surface evidence. Otherwise `round4(clamp01(0.5·accountSurface + 0.5·(permScore ?? 0.35)))`. Submission-framed exclusions ("IDOR reports will be closed as not applicable") carry no testing predicate and count for nothing. This is a policy-text proxy — what the brief permits or forbids — not proof of an exploitable authz surface. |
 
 ### Normalization curves
 
@@ -243,7 +247,15 @@ penalizes shrinkage.
 **Tokenization** — `category`, `name`, and each `tag` are lowercased and
 split on non-alphanumeric runs into a token set; membership is exact, never
 substring (`capitol` ⊅ `api`, `restaurant` ⊅ `rest`). `location` is not
-tokenized — it only feeds the http(s) web fallback.
+tokenized — it feeds `locationLooksApi` (V1.4: `new URL` on the trimmed
+string must parse as http(s); the lowercased hostname is split on
+non-alphanumeric runs and matched against the API host-token set, or the
+FIRST pathname segment matched against the API path-token set — a bare
+`/v\d+/` segment and an api token deeper than segment 1 never count) and
+the http(s) web fallback, which fires only when neither class matched. One
+shared `classifyTarget` (`lib/radar/surface.ts`) feeds both
+`api_surface`/`web_surface` and the semantic diff's `added_api_targets`/
+`added_web_targets`, so the two can never drift.
 
 **`parseStatValue`** — accepts plain digits, strict thousands grouping
 (`1,234`, `1,234,567.89`), one optional leading `$`, and surrounding
@@ -256,8 +268,10 @@ are too noisy for a fixed curve.
 
 ## Scoring profiles
 
-Six profiles; the four touched by the V1.3 deep signals are version
-`1.3.0`, the untouched two keep `1.1.0` — a version asserts the semantics,
+Six profiles; the V1.3 deep signals bumped their consumers to `1.3.0`
+and the V1.4 sourced signals bumped `authz_api` and `easy_entry` to
+`1.4.0`, leaving `best_ev`, `low_competition`, `fresh_programs` at
+`1.3.0` and `high_reward` at `1.1.0` — a version asserts the semantics,
 not a release train. Retuning requires a version bump.
 Weight semantics: every weight is **non-negative** and carries a
 `direction` — `benefit` (default; bare-number shorthand) contributes
@@ -266,7 +280,7 @@ contribute nothing. `required_any` declares groups of alternative signals
 the profile considers essential: a score is `provisional` when every
 alternative in a group is null. `minConfidence` is the eligibility floor.
 
-| Signal | `best_ev` 1.3.0 | `low_competition` 1.3.0 | `high_reward` 1.1.0 | `authz_api` 1.3.0 | `fresh_programs` 1.3.0 | `easy_entry` 1.1.0 |
+| Signal | `best_ev` 1.3.0 | `low_competition` 1.3.0 | `high_reward` 1.1.0 | `authz_api` 1.4.0 | `fresh_programs` 1.3.0 | `easy_entry` 1.4.0 |
 |---|---|---|---|---|---|---|
 | `reward_potential` | 3 | 1 | 4 | 1.5 | 0.5 | 1 |
 | `reward_breadth` | 1 | — | 3 | — | — | 1.5 |
@@ -283,8 +297,8 @@ alternative in a group is null. `minConfidence` is the eligibility floor.
 | `accessibility` | — | — | — | — | — | 2 |
 | `known_issue_density` | 1 cost | 2 cost | — | — | — | — |
 | `opportunity_change` | 1.25 | 1 | — | 0.75 | 3 | — |
-| `authz_opportunity` | — | — | — | — | — | — |
-| **Σw** | **14.25** | **10.5** | **9** | **10.25** | **8** | **8** |
+| `authz_opportunity` | — | — | — | 2 | — | — |
+| **Σw** | **14.25** | **10.5** | **9** | **12.25** | **8** | **8** |
 | **required_any** | `saturation` ∨ `competition` ∨ `known_issue` | `saturation` ∨ `competition` ∨ `known_issue` | `reward_potential` | `api_surface` ∨ `api_size` | `freshness` ∨ `opportunity` | `accessibility` |
 | **minConfidence** | **0.6** | **0.5** | **0.5** | **0.5** | **0.4** | **0.3** |
 
@@ -303,12 +317,16 @@ Intended reading: `best_ev` — balanced opportunity;
 observed attention AND known-issue pressure, not duplicate probability;
 `high_reward` — payout ceiling plus breadth plus proven payment activity;
 `authz_api` — API-heavy candidate, measuring share AND size so a lone API
-target cannot fake breadth, plus a small semantic-expansion bonus;
+target cannot fake breadth, plus the brief-derived `authz_opportunity`
+rubric (weight 2 — a cross-account prohibition actively lowers the score
+via `AUTHZ_PROHIBITED`) and a small semantic-expansion bonus;
 `fresh_programs` (labelled **Fresh Opportunity**) — opportunity-dominated,
 where `opportunity_change` out-weights raw recency so a text-only publish
 can never read as fresh surface; `easy_entry` — onboarding, whose
-`accessibility` weight is always unknown in V1, capping achievable
-coverage at 6/8 = 0.75 and rendering every score provisional by design.
+`accessibility` weight is sourced in V1.4: a stated posture (or the
+catalog `accessStatus` fallback) now de-provisionals the score and can
+lift coverage to 8/8 = 1.0, while a program with no access evidence at
+all still scores provisional at 0.75 coverage.
 
 `freshness` carries a deliberately small `best_ev` weight (0.5): it
 measures brief/status recency, not new opportunity — wording fixes and
@@ -356,8 +374,9 @@ score     = clamp(Σ w_i·eff_i / Σw_i over known signals, 0, 1) × 100
 - Unknowns surface as `UNKNOWN_<KEY>` reason codes, appended after the
   threshold codes in the profile's declared weight order.
 - `detail: null` → all detail-derived signals `null`
-  (`detail_unavailable`); `accessibility`/`known_issue_density`/
-  `authz_opportunity` stay `null` (`not_available_v1`) regardless.
+  (`detail_unavailable`); `accessibility`/`authz_opportunity` also emit
+  `null` on that path under the surviving `not_available_v1` stub label —
+  the sourced rubrics are never reached, so nothing is catalog-inferred.
 - The UI renders unknown as `—`; it never prints 0.00 for `null`.
 
 ## Reason codes
@@ -388,19 +407,24 @@ the value sits between thresholds (silence is a valid answer):
 | | = 0.5 | `SAFE_HARBOR_PARTIAL` | `+ partial safe harbor` |
 | | = 0 | `SAFE_HARBOR_ABSENT` | `- no safe harbor` |
 | `target_data_quality` | ≤ 0.4 | `DATA_INCOMPLETE` | `- incomplete program data` |
+| `accessibility` | ≥ 0.7 | `ACCESS_OPEN` | `+ open access program` |
+| | ≤ 0.3 | `ACCESS_GATED` | `- restricted or gated access` |
 | `known_issue_density` | ≤ 0.25 | `KI_PRESSURE_LOW` | `+ low known-issue pressure` |
 | | ≥ 0.7 | `KI_PRESSURE_HIGH` | `- high known-issue pressure` |
 | `opportunity_change` | ≥ 0.5 | `OPPORTUNITY_EXPANDED` | `+ scope expanded in latest diff` |
 | | ≤ 0.1 | `OPPORTUNITY_TEXT_ONLY` | `- no scope growth in latest diff` |
+| `authz_opportunity` | ≥ 0.5 | `AUTHZ_SURFACE` | `+ authenticated authz test surface` |
+| | ≤ 0.15 | `AUTHZ_PROHIBITED` | `- cross-account testing prohibited` |
 | any weighted signal | value `null` | `UNKNOWN_<KEY>` | `? <key> unavailable` |
 
 `explainScore` renders `+ ` for positives, `- ` for cautions
 (`REWARD_LOW`, `COMPETITION_HIGH`, `STALE_PROGRAM`, `SAFE_HARBOR_ABSENT`,
 `DATA_INCOMPLETE`, `SUBMISSION_ACTIVITY_HIGH`, `SATURATION_HIGH`,
-`KI_PRESSURE_HIGH`, `OPPORTUNITY_TEXT_ONLY`),
+`KI_PRESSURE_HIGH`, `OPPORTUNITY_TEXT_ONLY`, `ACCESS_GATED`,
+`AUTHZ_PROHIBITED`),
 `? ` for unknowns — in the score's stored `reasons`
-order. The always-null signals emit no threshold codes, only
-`UNKNOWN_*` when a profile weights them.
+order. Every signal can emit its threshold codes once it has a value;
+a weighted-but-null signal emits `UNKNOWN_*` instead.
 
 ## Ranking rules
 
@@ -416,8 +440,9 @@ order. The always-null signals emit no threshold codes, only
 rows per engagement at the profile's *current* version, **scoped to the
 discovered set of the run `meta.latestRunId` points at** — its
 `completed_uuids ∪ pending_uuids` — joined with catalog identity and the
-vector's eight display signals (reward, surface trio, **research
-saturation**, freshness, known-issue density, opportunity change); an
+vector's ten display signals (reward, surface trio, **research
+saturation**, freshness, known-issue density, opportunity change, and the
+V1.4 access/authz readings); an
 optional `minConfidence` argument filters further, and `limit` is clamped
 to 1–200 (default 50). Ineligible rows rank after all eligible ones —
 dimmed in the UI, never hidden.
@@ -578,8 +603,10 @@ sender's document URL against the extension origin instead.
 - **This is a Metadata Opportunity Score plus a bounded deep pass, not
   expected value.** The ranked list is a candidate pool for deeper human
   analysis. `known_issue_density` and `opportunity_change` are sourced for
-  the deep-analyzed candidate union only (≤ 60 programs); `accessibility`
-  and `authz_opportunity` remain unsourced, and no signal estimates
+  the deep-analyzed candidate union only (≤ 60 programs);
+  `accessibility` and `authz_opportunity` are sourced metadata rubrics
+  (V1.4) but remain proxies — the first reads stated participation
+  posture, the second reads policy text — and no signal estimates
   duplicate probability or guarantees undiscovered bugs.
 - **`research_saturation` is not duplicate probability.** It is a
   metadata heuristic for *observed research attention*: a fixed-weight
@@ -602,18 +629,19 @@ sender's document URL against the extension origin instead.
   scope expansion — that is why `opportunity_change` now out-weights it in
   every profile where opportunity matters.
 - **`authz_api` is not proof of authorization vulnerabilities.** It ranks
-  API-heavy candidates by share and target count. `authz_opportunity`
-  is unweighted and always `null` in V1 — no deterministic source exists
-  until deep program analysis lands.
-- **The API classifier under-detects.** Token membership covers
-  `api/rest/graphql/grpc/webservice/endpoint`, but URL shapes like
-  `api.example.com`, `/api/v1/`, `/graphiql` on generic-category targets
-  are not yet parsed. Both `api_surface` and `api_surface_size` inherit
-  the gap.
-- **`accessibility` may remain unknown.** Account/setup requirements are
-  not derivable from cheap metadata; the signal stays `null`, which is why
-  `easy_entry` can never exceed 0.75 coverage and always scores
-  provisional.
+  API-heavy candidates by share and target count plus the
+  `authz_opportunity` rubric (weight 2, V1.4) — which reads the brief's
+  *normative policy text* on cross-account techniques: a prohibition reads
+  a flat 0.1, a grant reads high, and silence contributes a conservative
+  midpoint only when an account surface is proven. A grant is the
+  program's own claim about what may be tested, not evidence of an
+  exploitable authz surface.
+- **`accessibility` is a stated-posture rubric, not a guarantee.** V1.4
+  sources it from `participation` (with the catalog `accessStatus` as the
+  declared fallback), shipped credentials, and signup/friction markers in
+  the brief — a program can still gate access in ways neither field
+  states, and a brief with no access evidence at all reads `null`
+  (`no_access_evidence`), keeping `easy_entry` provisional.
 - **Known Issues are deep-stage only.** `engagement_known_issues.json`
   is fetched for the ≤60-program candidate union, never catalog-wide (~1
   extra request per candidate — verified `{"unique","total"}` shape).
@@ -635,9 +663,14 @@ sender's document URL against the extension origin instead.
 - **Scores are absolute, not relative.** Fixed curves only — no
   catalog-relative percentile; a score moves only when that program's
   inputs move.
-- **Surface classifiers are token membership.** A target matching neither
-  token set with a non-URL location counts toward neither `api_surface`
-  nor `web_surface`; taxonomy drift in API metadata is not learned.
+- **Surface classifiers are token membership plus URL shape.** A target
+  matching neither token set with a non-URL location counts toward neither
+  `api_surface` nor `web_surface`, and the V1.4 shape pass is deliberately
+  conservative: only parseable http(s) locations classify, only host
+  tokens and the FIRST path segment are consulted (a bare `/v2/` or
+  `/x/api` does not count), the pathname is case-sensitive
+  (`example.com/API` misses), and percent-encoding is not decoded.
+  Taxonomy drift in API metadata is not learned.
 - **Statistics are self-reported API strings.** Missing, renamed, or
   unparseable statistics keys degrade to `null` signals, not zero.
 - **Clamped floor.** The score is clamped to [0, 1] × 100 — a genuinely
