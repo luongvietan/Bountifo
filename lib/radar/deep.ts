@@ -1,33 +1,54 @@
 import { siteRequest } from "../api/siteClient";
-import type { ApiEngagementData } from "../types";
+import type { ApiEngagementData, ApiTargetGroup } from "../types";
+import { fetchScopeArc, selectArcBaseline } from "./arc";
 import { mapBriefDocument } from "./detailMap";
 import { diffBriefDocuments } from "./diff";
+import { fetchGroupKiStats } from "./groupStats";
+import type { GroupKiCategory } from "./groupStats";
 import { radarSourceHash } from "./hash";
-import { parseChangelogList, selectDiffBaseline } from "./history";
+import {
+  parseChangelogList,
+  selectDiffBaseline,
+  type RadarChangelogEntry,
+} from "./history";
 import { fetchKnownIssueSummary } from "./knownIssues";
 import type {
   RadarDeepEnrichment,
+  RadarGroupStats,
   RadarKnownIssueSummary,
+  RadarScopeArc,
   RadarSemanticDiff,
 } from "./deepTypes";
-import type { RadarCatalogItem, RadarProgramSnapshot } from "./types";
+import {
+  KI_GROUP_MAX_GROUPS,
+  KI_GROUP_MIN_UNIQUE,
+  type RadarCatalogItem,
+  type RadarProgramSnapshot,
+} from "./types";
 
 // ---------------------------------------------------------------------------
-// Deep enrichment orchestrator (V1.3): runs once per shortlisted program in
+// Deep enrichment orchestrator (V1.5): runs once per shortlisted program in
 // the coordinator's deep_enriching phase.
 //
-//   GET /engagements/<slug>/engagement_known_issues.json  → duplicate pressure
-//   GET /engagements/<slug>/changelog.json                → latest + baseline id
-//   GET /engagements/<slug>/changelog/<baseline>.json     → previous brief doc
+//   GET /engagements/<slug>/engagement_known_issues.json   → duplicate pressure
+//   GET /engagements/<slug>/changelog.json                 → latest + baselines
+//   GET /engagements/<slug>/changelog/<baseline>.json      → step baseline doc
+//   GET /engagements/<slug>/changelog/<arc-baseline>.json  → arc baseline doc
+//     (deduped against the step baseline when selection lands on it)
+//   GET /engagements/<slug>/target_groups/<id>/known_issue_stats × ≤6
+//     (gated: aggregate complete, unique ≥ KI_GROUP_MIN_UNIQUE,
+//      1..KI_GROUP_MAX_GROUPS qualifying in-scope groups)
 //
-// 3 site requests per program; the coordinator bounds the stage at
-// MAX_DEEP_PROGRAMS (60) unique candidates so a catalog scan stays
-// ~4·N + 3·≤60 requests.
+// ≤ 1 + 1 + 1 + 1 + 6 = 10 site requests per program; the coordinator bounds
+// the stage at MAX_DEEP_PROGRAMS (60) unique candidates so a catalog scan
+// stays ~4·N + 10·≤60 requests.
 //
 // Contract: NEVER throws. A program-scoped failure lands in the affected
 // sub-object's status and the envelope degrades honestly — nothing here is
 // fabricated for programs the deep pass could not analyze.
 // ---------------------------------------------------------------------------
+
+const GROUP_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 function nullDiff(
   status: RadarSemanticDiff["status"],
@@ -56,64 +77,200 @@ function nullDiff(
 }
 
 /**
- * Envelope status from the two sub-source statuses. "no_baseline" counts as
- * a completed history check (an honest "there is nothing to diff"), so
- * complete-ki + no_baseline-diff still yields a complete envelope.
+ * Envelope status from the four sub-source statuses. Terminal-OK covers a
+ * deliberate bound too — "no_baseline" and the group-stats "skipped_*"
+ * states are completed checks, not missing data — while a clean sweep of
+ * failures maps to "failed" only when at least one source actually failed
+ * (vs merely being absent for the program).
  */
 function envelopeStatus(
   ki: RadarKnownIssueSummary["status"],
   diff: RadarSemanticDiff["status"],
+  arc: RadarScopeArc["status"],
+  groups: RadarGroupStats["status"],
 ): RadarDeepEnrichment["status"] {
-  const kiDone = ki === "complete";
-  const diffDone = diff === "complete" || diff === "no_baseline";
-  if (kiDone && diffDone) return "complete";
-  if (kiDone || diffDone) return "partial";
-  return ki === "failed" || diff === "unavailable" ? "failed" : "unavailable";
+  const ok =
+    (ki === "complete" ? 1 : 0) +
+    (diff === "complete" || diff === "no_baseline" ? 1 : 0) +
+    (arc === "complete" || arc === "no_baseline" ? 1 : 0) +
+    (groups === "complete" || groups.startsWith("skipped_") ? 1 : 0);
+  if (ok === 4) return "complete";
+  if (ok === 0) {
+    return ki === "failed" || groups === "failed" ? "failed" : "unavailable";
+  }
+  return "partial";
+}
+
+interface ChangelogHistory {
+  entries: RadarChangelogEntry[];
+  latestId: string | null;
 }
 
 /**
- * Semantic diff for one program: refetch the changelog list, pick the
- * current Latest id and its immediate predecessor, fetch that baseline doc,
- * and diff mapped details. Failures → "unavailable" with fact fields null.
+ * Changelog list for one program — the single fetch shared by the step
+ * diff and the arc. null on fetch/parse failure; both history consumers
+ * then read "unavailable".
  */
-async function fetchSemanticDiff(
+async function fetchChangelogHistory(
   slug: string,
-  snapshot: RadarProgramSnapshot,
-): Promise<RadarSemanticDiff> {
-  let baselineId: string | null;
-  let latestId: string | null;
+): Promise<ChangelogHistory | null> {
   try {
     const res = await siteRequest({ operation: "GET_CHANGELOGS", slug });
     const entries = parseChangelogList(res.data);
     const latest =
       entries.find((e) => e.state === "Latest") ?? entries[0] ?? null;
-    latestId = latest?.id ?? null;
-    baselineId =
-      latestId === null ? null : selectDiffBaseline(entries, latestId);
+    return { entries, latestId: latest?.id ?? null };
   } catch {
-    return nullDiff("unavailable", null, null);
+    return null;
   }
-  if (latestId === null || baselineId === null) {
-    return nullDiff("no_baseline", null, latestId);
-  }
-  let prevDetail: ApiEngagementData;
-  try {
-    const docRes = await siteRequest({
-      operation: "GET_BRIEF_DOC",
-      slug,
-      versionId: baselineId,
-    });
-    // Statistics/joined lists are signals of the CURRENT version — the
-    // baseline doc maps with them absent; the differ ignores them anyway.
-    prevDetail = mapBriefDocument(slug, docRes.data, null, null);
-  } catch {
-    return nullDiff("unavailable", baselineId, latestId);
-  }
-  // snapshot.detail is guaranteed non-null by the caller.
-  return diffBriefDocuments(prevDetail, snapshot.detail!, {
-    from_version: baselineId,
-    to_version: latestId,
+}
+
+/**
+ * One historical brief document mapped for diffing. Statistics/joined
+ * lists are signals of the CURRENT version — baseline docs map with them
+ * absent; the differ ignores them anyway. Throws on fetch/parse failure.
+ */
+async function fetchBaselineDetail(
+  slug: string,
+  versionId: string,
+): Promise<ApiEngagementData> {
+  const res = await siteRequest({
+    operation: "GET_BRIEF_DOC",
+    slug,
+    versionId,
   });
+  return mapBriefDocument(slug, res.data, null, null);
+}
+
+/**
+ * The V1.3 single-step diff over a prefetched changelog list: immediate
+ * predecessor of the current Latest. `baselineDetail` rides back so the
+ * arc can reuse the document when its baseline lands on the same version.
+ */
+async function fetchSemanticDiff(
+  slug: string,
+  history: ChangelogHistory,
+  currentDetail: ApiEngagementData,
+): Promise<{
+  diff: RadarSemanticDiff;
+  baselineId: string | null;
+  baselineDetail: ApiEngagementData | null;
+}> {
+  const latestId = history.latestId;
+  const baselineId =
+    latestId === null
+      ? null
+      : selectDiffBaseline(history.entries, latestId);
+  if (latestId === null || baselineId === null) {
+    return {
+      diff: nullDiff("no_baseline", null, latestId),
+      baselineId: null,
+      baselineDetail: null,
+    };
+  }
+  try {
+    const baselineDetail = await fetchBaselineDetail(slug, baselineId);
+    return {
+      diff: diffBriefDocuments(baselineDetail, currentDetail, {
+        from_version: baselineId,
+        to_version: latestId,
+      }),
+      baselineId,
+      baselineDetail,
+    };
+  } catch {
+    return {
+      diff: nullDiff("unavailable", baselineId, latestId),
+      baselineId,
+      baselineDetail: null,
+    };
+  }
+}
+
+/**
+ * The V1.5 multi-publish arc over the same changelog list. When the arc
+ * baseline IS the step baseline already fetched (short histories clamp to
+ * the oldest entry), the mapped document is diffed in place — no second
+ * request. Otherwise fetchScopeArc owns its own select+fetch (≤1 request).
+ */
+async function resolveScopeArc(
+  slug: string,
+  history: ChangelogHistory,
+  baselineId: string | null,
+  baselineDetail: ApiEngagementData | null,
+  currentDetail: ApiEngagementData,
+): Promise<RadarScopeArc> {
+  const sel = selectArcBaseline(history.entries, history.latestId);
+  if (sel === null) {
+    return { status: "no_baseline", window_versions: null, diff: null };
+  }
+  if (sel.id === baselineId && baselineDetail !== null) {
+    const diff = diffBriefDocuments(baselineDetail, currentDetail, {
+      from_version: sel.id,
+      to_version: history.latestId,
+    });
+    if (diff.status !== "complete") {
+      return {
+        status: "unavailable",
+        window_versions: sel.window,
+        diff: null,
+      };
+    }
+    return { status: "complete", window_versions: sel.window, diff };
+  }
+  return fetchScopeArc(slug, history.entries, history.latestId, currentDetail);
+}
+
+/**
+ * The gated per-group KI-stats path. The gate runs BEFORE any request:
+ * the aggregate summary must have completed with enough volume for a
+ * concentration reading to mean anything, the qualifying in-scope group
+ * set must be non-empty and bounded, and every group id must be
+ * addressable — a group id siteRequest can't route means the sample can
+ * never be complete, so the breakdown fails without spending a request.
+ * groups_fetched counts requests actually initiated (Promise.all fires
+ * them all, even when one rejects).
+ */
+async function resolveGroupStats(
+  slug: string,
+  ki: RadarKnownIssueSummary,
+  detail: ApiEngagementData,
+): Promise<{ groupStats: RadarGroupStats; categories: GroupKiCategory[] | null }> {
+  const qualifying: ApiTargetGroup[] = detail.targetGroups.filter(
+    (g) => g.inScope === true && g.id !== "",
+  );
+  const total = qualifying.length;
+  const skip = (status: RadarGroupStats["status"]) => ({
+    groupStats: {
+      status,
+      groups_fetched: 0,
+      groups_total: total,
+    } satisfies RadarGroupStats,
+    categories: null,
+  });
+
+  if (ki.status !== "complete") return skip("skipped_upstream");
+  if ((ki.unique_count ?? 0) < KI_GROUP_MIN_UNIQUE) {
+    return skip("skipped_low_volume");
+  }
+  if (total < 1 || total > KI_GROUP_MAX_GROUPS) {
+    return skip("skipped_group_count");
+  }
+  if (qualifying.some((g) => !GROUP_ID_PATTERN.test(g.id))) {
+    return skip("failed");
+  }
+  const res = await fetchGroupKiStats(
+    slug,
+    qualifying.map((g) => g.id),
+  );
+  return {
+    groupStats: {
+      status: res.status,
+      groups_fetched: total,
+      groups_total: total,
+    },
+    categories: res.categories,
+  };
 }
 
 /**
@@ -128,14 +285,48 @@ export async function hydrateRadarDeep(
 ): Promise<RadarProgramSnapshot> {
   if (snapshot.detail === null) return snapshot;
   const slug = item.code ?? item.uuid;
-  const [ki, diff] = await Promise.all([
+  const detail = snapshot.detail;
+  const [kiBase, history] = await Promise.all([
     fetchKnownIssueSummary(slug),
-    fetchSemanticDiff(slug, snapshot),
+    fetchChangelogHistory(slug),
   ]);
+
+  const { diff, baselineId, baselineDetail } =
+    history === null
+      ? {
+          diff: nullDiff("unavailable", null, null),
+          baselineId: null,
+          baselineDetail: null,
+        }
+      : await fetchSemanticDiff(slug, history, detail);
+
+  const arc: RadarScopeArc =
+    history === null
+      ? { status: "unavailable", window_versions: null, diff: null }
+      : await resolveScopeArc(
+          slug,
+          history,
+          baselineId,
+          baselineDetail,
+          detail,
+        );
+
+  const { groupStats, categories } = await resolveGroupStats(
+    slug,
+    kiBase,
+    detail,
+  );
+  const ki: RadarKnownIssueSummary = {
+    ...kiBase,
+    group_stats: groupStats,
+    ...(categories !== null ? { categories } : {}),
+  };
+
   const deep: RadarDeepEnrichment = {
-    status: envelopeStatus(ki.status, diff.status),
+    status: envelopeStatus(ki.status, diff.status, arc.status, groupStats.status),
     known_issues: ki,
     semantic_diff: diff,
+    scope_arc: arc,
   };
   return {
     ...snapshot,

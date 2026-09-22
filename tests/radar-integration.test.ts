@@ -479,11 +479,11 @@ describe("radar scan integration — 12 discovered, 3 program-scoped failures", 
         "SAFE_HARBOR_PRESENT",
         // V1.3: no deep pass ran in this scenario — both deep signals are
         // honestly unknown and appear in profile-declared order. V1.5 adds
-        // payout_realized (absent stat) and the two new deep signals.
+        // the two new deep signals; payout_realized reads a real mid-band
+        // value from the fixture's statistics, so it emits no code.
         "UNKNOWN_OPPORTUNITY_CHANGE",
         "UNKNOWN_RESEARCH_SATURATION",
         "UNKNOWN_KNOWN_ISSUE_DENSITY",
-        "UNKNOWN_PAYOUT_REALIZED",
         "UNKNOWN_SCOPE_MOMENTUM",
         "UNKNOWN_KI_CONCENTRATION",
       ]);

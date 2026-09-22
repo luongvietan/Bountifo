@@ -1359,11 +1359,14 @@ export class RadarCoordinator {
       }
       await putSnapshot(db, enriched, this.deps.now());
       // "Enriched" counts envelopes that gained real deep evidence — a
-      // wholly-failed envelope (both sub-sources non-complete) is honest
-      // bookkeeping, not enrichment.
+      // wholly-failed envelope (every sub-source non-complete) is honest
+      // bookkeeping, not enrichment. V1.5 adds the scope arc and the
+      // per-group KI breakdown as evidence sources.
       if (
         enriched.deep?.known_issues?.status === "complete" ||
-        enriched.deep?.semantic_diff?.status === "complete"
+        enriched.deep?.semantic_diff?.status === "complete" ||
+        enriched.deep?.scope_arc?.status === "complete" ||
+        enriched.deep?.known_issues?.group_stats?.status === "complete"
       ) {
         run.deep_enriched += 1;
       }

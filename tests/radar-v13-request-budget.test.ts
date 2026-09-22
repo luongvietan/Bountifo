@@ -15,16 +15,19 @@ import type {
 // injected into the coordinator's enumerate/hydrate/deepHydrate seams —
 // the whole pipeline runs for real, only the wire is fake.
 //
-// BUDGET (per docs/superpowers/plans/2026-09-24-radar-v1.3.1.md):
+// BUDGET (per docs/superpowers/plans/2026-09-24-radar-v1.3.1.md + the V1.5
+// deep wiring):
 //   metadata = 4·N siteRequests + pages         (changelog + brief doc +
 //                                                statistics + recently_joined,
 //                                                plus 1 LIST_INDEX per page)
-//   deep     = ≤3 siteRequests per program      (changelog re-fetch +
-//                                                previous-version brief doc +
-//                                                known-issues JSON), and the
-//              unique deep-analyzed count is hard-capped at MAX_DEEP_PROGRAMS
-//              (60) — the profile-aware union and stabilization batches share
-//              that one budget.
+//   deep     = ≤10 siteRequests per program     (changelog re-fetch +
+//                                                step-baseline doc +
+//                                                ≤1 arc-baseline doc +
+//                                                known-issues JSON +
+//                                                ≤6 per-group KI stats), and
+//              the unique deep-analyzed count is hard-capped at
+//              MAX_DEEP_PROGRAMS (60) — the profile-aware union and
+//              stabilization batches share that one budget.
 //
 // Assertions are bounds, not equalities where the contract allows latitude:
 // the union/frontier deep set can legitimately differ from the old flat
@@ -61,6 +64,7 @@ const ALLOWED_OPS = new Set([
   "GET_BRIEF_STATS", // metadata only — never a deep call
   "GET_RECENTLY_JOINED", // metadata only — never a deep call
   "GET_ENGAGEMENT_KNOWN_ISSUES", // deep only
+  "GET_GROUP_KI_STATS", // deep only — V1.5 per-group KI breakdown
 ]);
 
 let runSeq = 0;
@@ -193,6 +197,7 @@ interface Call {
   slug?: string;
   page?: number;
   versionId?: string;
+  groupId?: string;
 }
 
 function calls(): Call[] {
@@ -310,8 +315,10 @@ describe("metadata request budget (V1.2 floor — green today and post-merge)", 
       ).length;
       expect(changelogs).toBeGreaterThanOrEqual(1);
       expect(changelogs).toBeLessThanOrEqual(2);
-      // Total per program: exactly 4 metadata calls, or ≤7 with a deep pass.
-      expect(c.length).toBeLessThanOrEqual(7);
+      // Total per program: exactly 4 metadata calls, or ≤14 with a deep
+      // pass (V1.5: ≤10 deep extras — changelog, step doc, arc doc, KI
+      // aggregate, ≤6 group stats).
+      expect(c.length).toBeLessThanOrEqual(14);
       if (c.length === 4) {
         expect(c.map((x) => x.operation).sort()).toEqual(
           [
@@ -324,9 +331,9 @@ describe("metadata request budget (V1.2 floor — green today and post-merge)", 
       }
     }
 
-    // Global bound: V1.2 floor + V1.3.1 deep allowance (hard cap 60).
+    // Global bound: V1.2 floor + V1.5 deep allowance (hard cap 60).
     const bound =
-      4 * slugs.length + 1 + 3 * Math.min(slugs.length, MAX_DEEP_PROGRAMS);
+      4 * slugs.length + 1 + 10 * Math.min(slugs.length, MAX_DEEP_PROGRAMS);
     expect(calls().length).toBeLessThanOrEqual(bound);
     // Every request is an allowlisted operation — nothing else may leave
     // the worker, whatever the merged deep stage calls its ops.
@@ -347,7 +354,7 @@ describe("metadata request budget (V1.2 floor — green today and post-merge)", 
 
     expect(countWhere((c) => c.operation === "LIST_INDEX")).toBe(2);
     const n = page1.length + page2.length;
-    const bound = 4 * n + 2 + 3 * Math.min(n, MAX_DEEP_PROGRAMS);
+    const bound = 4 * n + 2 + 10 * Math.min(n, MAX_DEEP_PROGRAMS);
     expect(calls().length).toBeLessThanOrEqual(bound);
     // Metadata floor is exact: stats + joined are fetched exactly once each
     // per program, deep stage or not.
@@ -391,13 +398,14 @@ describe("metadata request budget (V1.2 floor — green today and post-merge)", 
           .filter((x) => x.operation === "GET_BRIEF_DOC")
           .map((x) => x.versionId),
       );
-      expect(versions.size).toBeLessThanOrEqual(2);
+      // latest + step baseline + arc baseline (deduped when they coincide).
+      expect(versions.size).toBeLessThanOrEqual(3);
     }
   });
 });
 
 describe("deep-stage request budget (V1.3.1)", () => {
-  it("deep analysis adds ≤3 requests per shortlisted program and only touches the shortlist", async () => {
+  it("deep analysis adds ≤10 requests per shortlisted program and only touches the shortlist", async () => {
     const slugs = ["b-d1", "b-d2", "b-d3", "b-d4", "b-d5"];
     mockSite([slugs]);
     const phase = await runScan(slugs);
@@ -411,8 +419,12 @@ describe("deep-stage request budget (V1.3.1)", () => {
     for (const slug of deep) {
       const c = perSlug(slug);
       const extra = c.length - 4;
-      // Contract: changelog re-fetch + previous-version doc + known-issues.
-      expect(extra, `${slug} deep calls`).toBeLessThanOrEqual(3);
+      // Contract: changelog re-fetch + step doc + ≤1 arc doc + known-issues
+      // aggregate + ≤6 per-group stats. The shared fixture's 2-entry
+      // changelog dedupes the arc onto the step baseline and its unique=5
+      // aggregate trips the low-volume gate, so extras stay at 3 — the
+      // bound pins the worst-case envelope, not this fixture's count.
+      expect(extra, `${slug} deep calls`).toBeLessThanOrEqual(10);
       expect(extra).toBeGreaterThan(0);
       // A deep pass never re-fetches stats or recently-joined.
       expect(
@@ -421,7 +433,7 @@ describe("deep-stage request budget (V1.3.1)", () => {
       expect(
         c.filter((x) => x.operation === "GET_RECENTLY_JOINED"),
       ).toHaveLength(1);
-      // …and the deep extras are exactly the three sanctioned ops.
+      // …and the deep extras are exactly the sanctioned ops.
       const extras = c.filter(
         (x) =>
           !(
@@ -435,7 +447,12 @@ describe("deep-stage request budget (V1.3.1)", () => {
       );
       for (const x of extras) {
         expect(
-          ["GET_CHANGELOGS", "GET_BRIEF_DOC", "GET_ENGAGEMENT_KNOWN_ISSUES"],
+          [
+            "GET_CHANGELOGS",
+            "GET_BRIEF_DOC",
+            "GET_ENGAGEMENT_KNOWN_ISSUES",
+            "GET_GROUP_KI_STATS",
+          ],
         ).toContain(x.operation);
       }
     }
@@ -471,6 +488,81 @@ describe("deep-stage request budget (V1.3.1)", () => {
     expect(deep.size).toBeLessThanOrEqual(
       Math.min(slugs.length, STABLE_TOP_K + STABILITY_BUFFER),
     );
+  });
+
+  it("V1.5 deep extras fire: divergent arc baseline costs one doc, opened gate costs one group request per qualifying group", async () => {
+    // A 3-entry changelog makes the arc baseline (ver-old, clamped depth)
+    // differ from the step baseline (ver-2); unique=12 clears the
+    // KI_GROUP_MIN_UNIQUE gate; the fixture's one in-scope group (g1) is
+    // the single qualifying target for GET_GROUP_KI_STATS.
+    siteRequest.mockImplementation(
+      async (opts: {
+        operation: string;
+        slug?: string;
+        page?: number;
+        versionId?: string;
+        groupId?: string;
+      }) => {
+        switch (opts.operation) {
+          case "LIST_INDEX":
+            return { data: indexPage(["b-v15"], 1), status: 200 };
+          case "GET_CHANGELOGS":
+            return {
+              data: {
+                changelogs: [
+                  { id: "ver-1", changelogState: "Latest" },
+                  { id: "ver-2", changelogState: "Superseded" },
+                  { id: "ver-old", changelogState: "Superseded" },
+                ],
+              },
+              status: 200,
+            };
+          case "GET_BRIEF_DOC":
+            return { data: briefDoc(opts.slug ?? "?"), status: 200 };
+          case "GET_BRIEF_STATS":
+            return { data: statsBody(), status: 200 };
+          case "GET_RECENTLY_JOINED":
+            return { data: joinedBody(), status: 200 };
+          case "GET_GROUP_KI_STATS":
+            return {
+              data: [
+                {
+                  id: opts.groupId,
+                  knownIssues: {
+                    stats: [
+                      {
+                        name: "Cross Site Scripting (XSS)",
+                        uniqueCount: 8,
+                        duplicateCount: 4,
+                      },
+                    ],
+                  },
+                },
+              ],
+              status: 200,
+            };
+          default:
+            return { data: { unique: 12, total: 30 }, status: 200 };
+        }
+      },
+    );
+    const phase = await runScan(["b-v15"]);
+    expect(phase).toBe("done");
+
+    const c = perSlug("b-v15");
+    const extra = c.length - 4;
+    // changelog + step doc (ver-2) + arc doc (ver-old) + KI + 1 group stat.
+    expect(extra).toBe(5);
+    const docVersions = new Set(
+      c.filter((x) => x.operation === "GET_BRIEF_DOC").map((x) => x.versionId),
+    );
+    expect(docVersions).toEqual(new Set(["ver-1", "ver-2", "ver-old"]));
+    const groupCalls = c.filter((x) => x.operation === "GET_GROUP_KI_STATS");
+    expect(groupCalls).toHaveLength(1);
+    expect(groupCalls[0]?.groupId).toBe("g1");
+    // Group stats are slug-scoped AND group-scoped — never page- or
+    // catalog-scoped.
+    expect(groupCalls[0]?.slug).toBe("b-v15");
   });
 
   it("deep bookkeeping lands on the persisted run record", async () => {
