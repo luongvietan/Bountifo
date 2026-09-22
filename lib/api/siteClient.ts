@@ -12,6 +12,7 @@ import { ApiError } from "./errors";
  *   GET /engagements/<slug>/changelog.json          brief version list
  *   GET /engagements/<slug>/changelog/<ver>.json    structured brief document
  *   GET /engagements/<slug>/statistics.json         brief stats (rewards given, avg payout)
+ *   GET /engagements/<slug>/recently_joined_users.json  recent joiner list + total
  *
  * Authentication is the browser session — requests carry
  * `credentials: "include"` so the SW fetch sends the bugcrowd.com cookies
@@ -29,7 +30,8 @@ export type SiteRequestOptions =
   | { operation: "LIST_INDEX"; page?: number }
   | { operation: "GET_CHANGELOGS"; slug: string }
   | { operation: "GET_BRIEF_DOC"; slug: string; versionId: string }
-  | { operation: "GET_BRIEF_STATS"; slug: string };
+  | { operation: "GET_BRIEF_STATS"; slug: string }
+  | { operation: "GET_RECENTLY_JOINED"; slug: string };
 
 export interface SiteResponse<T> {
   data: T;
@@ -98,6 +100,8 @@ function buildUrl(opts: SiteRequestOptions): string {
     }
     case "GET_BRIEF_STATS":
       return `${BUGCROWD_SITE}/engagements/${requireSlug(opts.slug, opts.operation)}/statistics.json`;
+    case "GET_RECENTLY_JOINED":
+      return `${BUGCROWD_SITE}/engagements/${requireSlug(opts.slug, opts.operation)}/recently_joined_users.json`;
   }
 }
 

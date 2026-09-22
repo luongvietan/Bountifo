@@ -59,9 +59,12 @@ function latestChangelogId(data: unknown): string {
  *
  *   GET /engagements/<slug>/changelog.json          → current version id
  *   GET /engagements/<slug>/changelog/<id>.json     → structured brief doc
- *   GET /engagements/<slug>/statistics.json         → stats (non-fatal: an
- *     errored stats fetch degrades to empty statistics — the affected
- *     signals read unknown — rather than failing a hydrated brief)
+ *   GET /engagements/<slug>/statistics.json         → stats
+ *   GET /engagements/<slug>/recently_joined_users.json → recent joiner total
+ *
+ * Stats and joiner fetches are non-fatal: an errored secondary fetch degrades
+ * to absent statistics — the affected signals read unknown — rather than
+ * failing a hydrated brief.
  *
  * The slug is the item's canonical identity (`code`, falling back to `uuid`,
  * which carries the same value in V1.2).
@@ -90,19 +93,17 @@ export async function hydrateRadarProgram(
       slug,
       versionId,
     });
-    let stats: unknown = null;
-    try {
-      const statsRes = await siteRequest({
-        operation: "GET_BRIEF_STATS",
-        slug,
-      });
-      stats = statsRes.data;
-    } catch {
-      // Stats are a secondary signal source; a stats failure degrades to
-      // empty statistics rather than discarding the hydrated brief.
-      stats = null;
-    }
-    detail = mapBriefDocument(slug, docRes.data, stats);
+    // Secondary fetches run concurrently; each degrades to null on failure —
+    // they are supplemental signal sources, not gates on the brief doc.
+    const [stats, joined] = await Promise.all([
+      siteRequest({ operation: "GET_BRIEF_STATS", slug })
+        .then((r) => r.data)
+        .catch(() => null),
+      siteRequest({ operation: "GET_RECENTLY_JOINED", slug })
+        .then((r) => r.data)
+        .catch(() => null),
+    ]);
+    detail = mapBriefDocument(slug, docRes.data, stats, joined);
   } catch (err) {
     if (err instanceof ApiError) {
       enrichment = {

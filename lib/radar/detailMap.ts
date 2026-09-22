@@ -134,10 +134,33 @@ function mapTarget(raw: Record<string, unknown>, group: BriefDocScopeGroup): Api
   };
 }
 
+/**
+ * `joined` is the parsed body of recently_joined_users.json — its `total` is
+ * the recent joiner count for the engagement, the closest thing the site
+ * surface has to a participation/crowding figure. It maps onto
+ * `statistics.researchers_participating` with window "recent" — documented
+ * provenance: recent joiners, not lifetime participants. A missing/non-
+ * numeric total leaves the key absent (unknown, never zero).
+ */
+function joinedParticipation(
+  joined: unknown,
+): { value: string; window: string | null } | null {
+  const total = asRecord(joined)?.total;
+  if (
+    typeof total === "number" &&
+    Number.isFinite(total) &&
+    total >= 0
+  ) {
+    return { value: String(total), window: "recent" };
+  }
+  return null;
+}
+
 export function mapBriefDocument(
   slug: string,
   doc: unknown,
   stats: unknown,
+  joined: unknown = null,
 ): ApiEngagementData {
   const root = asRecord(doc);
   const data = requireData(doc);
@@ -175,7 +198,14 @@ export function mapBriefDocument(
     lastStatusTransition: asString(root?.lastTransitionAt),
     lastBriefUpdate: asString(root?.publishedAt),
     safeHarborLevel: asString(safeHarbor.status),
-    statistics: mapStatistics(stats),
+    statistics: (() => {
+      const statistics = mapStatistics(stats);
+      const joinedStat = joinedParticipation(joined);
+      if (joinedStat !== null) {
+        statistics.researchers_participating = joinedStat;
+      }
+      return statistics;
+    })(),
     targetGroups,
     targets,
     observedApiVersion: asString(root?.id),

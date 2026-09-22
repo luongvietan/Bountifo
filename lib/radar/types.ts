@@ -100,6 +100,7 @@ export const programFeatureVectorSchema = z
     reward_breadth: radarSignalSchema,
     meaningful_surface: radarSignalSchema,
     api_surface: radarSignalSchema,
+    api_surface_size: radarSignalSchema,
     web_surface: radarSignalSchema,
     researcher_competition: radarSignalSchema,
     rewarded_activity: radarSignalSchema,
@@ -118,12 +119,13 @@ export type RadarFeatureKey = Exclude<
   "schema_version"
 >;
 
-/** The 13 signal keys, in interface order. */
+/** The 14 signal keys, in interface order. */
 export const RADAR_FEATURE_KEYS: readonly RadarFeatureKey[] = [
   "reward_potential",
   "reward_breadth",
   "meaningful_surface",
   "api_surface",
+  "api_surface_size",
   "web_surface",
   "researcher_competition",
   "rewarded_activity",
@@ -137,14 +139,17 @@ export const RADAR_FEATURE_KEYS: readonly RadarFeatureKey[] = [
 
 // ---------------------------------------------------------------------------
 // Score — deterministic output of the scoring engine. `score` null when every
-// weighted signal is unknown; confidence is reported separately and never
-// multiplied into the score.
+// weighted signal is unknown; `confidence` is data coverage (known-weight
+// share), reported separately and never multiplied into the score.
+// `provisional` marks scores whose profile-declared required signals are all
+// absent — the row is shown but must not read as a final judgment.
 // ---------------------------------------------------------------------------
 
 const scoreComponentSchema = z
   .object({
     signal: z.number().nullable(),
     weight: z.number(),
+    direction: z.enum(["benefit", "cost"]),
     contribution: z.number().nullable(),
   })
   .strict();
@@ -157,6 +162,7 @@ export const programScoreSchema = z
     scoring_version: z.string().min(1),
     score: z.number().nullable(),
     confidence: z.number().min(0).max(1),
+    provisional: z.boolean(),
     components: z.record(z.string(), scoreComponentSchema),
     reasons: z.array(z.string()),
     source_hash: z.string().min(1),

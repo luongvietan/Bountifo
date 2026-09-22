@@ -44,6 +44,10 @@ const TIER_WEIGHTS = [
 
 // meaningful_surface saturation: c/(c+MEANINGFUL_SURFACE_K).
 const MEANINGFUL_SURFACE_K = 25;
+// api_surface_size saturation: c/(c+API_SURFACE_SIZE_K) — the COUNT of
+// API-classified targets, so a lone API target in a 1-target program cannot
+// fake "large API surface" (api_surface alone only measures the share).
+const API_SURFACE_SIZE_K = 10;
 // researcher_competition saturation: n/(n+RESEARCHER_COMPETITION_K).
 const RESEARCHER_COMPETITION_K = 500;
 // rewarded_activity saturation: n/(n+REWARDED_ACTIVITY_K).
@@ -153,6 +157,7 @@ export function extractProgramFeatures(
       reward_breadth: unavailable("engagement_detail"),
       meaningful_surface: unavailable("engagement_detail"),
       api_surface: unavailable("engagement_detail"),
+      api_surface_size: unavailable("engagement_detail"),
       web_surface: unavailable("engagement_detail"),
       researcher_competition: unavailable("statistics"),
       rewarded_activity: unavailable("statistics"),
@@ -175,6 +180,7 @@ export function extractProgramFeatures(
     reward_breadth: rewardBreadth(inScopeGroups),
     meaningful_surface: meaningfulSurface(inScopeTargets),
     api_surface: surfaces.api,
+    api_surface_size: surfaces.apiSize,
     web_surface: surfaces.web,
     researcher_competition: statSaturation(
       detail,
@@ -325,6 +331,7 @@ function isHttpUrl(location: string | null): boolean {
 
 function classifySurfaces(inScopeTargets: ApiTarget[]): {
   api: RadarSignal;
+  apiSize: RadarSignal;
   web: RadarSignal;
 } {
   let apiCount = 0;
@@ -344,6 +351,11 @@ function classifySurfaces(inScopeTargets: ApiTarget[]): {
       total === 0 ? 0 : apiCount / total,
       "engagement_detail",
       "api_token_share",
+    ),
+    apiSize: sig(
+      apiCount / (apiCount + API_SURFACE_SIZE_K),
+      "engagement_detail",
+      "api_target_saturation",
     ),
     web: sig(
       total === 0 ? 0 : webCount / total,

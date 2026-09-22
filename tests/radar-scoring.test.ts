@@ -76,6 +76,7 @@ function programScoreFor(overrides: Partial<ProgramScore>): ProgramScore {
     scoring_version: "1.0.0",
     score: 50,
     confidence: 1,
+    provisional: false,
     components: {},
     reasons: [],
     source_hash: `sha256:${"0".repeat(64)}`,
@@ -87,26 +88,26 @@ function programScoreFor(overrides: Partial<ProgramScore>): ProgramScore {
 // Task 10 — pinned profiles.
 // ---------------------------------------------------------------------------
 
-describe("RADAR_PROFILES pinned V1 calibration", () => {
-  it("contains exactly the six profiles of RADAR_PROFILE_IDS", () => {
+describe("RADAR_PROFILES pinned V1.1 calibration", () => {
+  it("contains exactly the six profiles of RADAR_PROFILE_IDS, all v1.1.0", () => {
     expect(Object.keys(RADAR_PROFILES).sort()).toEqual(
       [...RADAR_PROFILE_IDS].sort(),
     );
     for (const id of RADAR_PROFILE_IDS) {
-      expect(getRadarProfile(id).version).toBe("1.0.0");
+      expect(getRadarProfile(id).version).toBe("1.1.0");
       expect(getRadarProfile(id).id).toBe(id);
     }
   });
 
-  it("best_ev — Best EV, minConfidence 0.6", () => {
+  it("best_ev — Best EV, minConfidence 0.6, freshness halved, competition is cost", () => {
     const p = getRadarProfile("best_ev");
     expect(p.label).toBe("Best EV");
     expect(p.minConfidence).toBe(0.6);
     expect(p.weights).toEqual({
       reward_potential: 3,
       meaningful_surface: 2,
-      freshness: 1.5,
-      researcher_competition: -1.5,
+      freshness: 0.75,
+      researcher_competition: { weight: 1.5, direction: "cost" },
       api_surface: 1,
       web_surface: 1,
       reward_breadth: 1,
@@ -114,6 +115,9 @@ describe("RADAR_PROFILES pinned V1 calibration", () => {
       safe_harbor: 0.5,
       target_data_quality: 0.5,
     });
+    expect(p.required_any).toEqual([
+      ["researcher_competition", "known_issue_density"],
+    ]);
   });
 
   it("low_competition — Low Competition, minConfidence 0.5", () => {
@@ -121,12 +125,15 @@ describe("RADAR_PROFILES pinned V1 calibration", () => {
     expect(p.label).toBe("Low Competition");
     expect(p.minConfidence).toBe(0.5);
     expect(p.weights).toEqual({
-      researcher_competition: -3,
+      researcher_competition: { weight: 3, direction: "cost" },
       freshness: 2,
       meaningful_surface: 1.5,
       reward_potential: 1,
       target_data_quality: 0.5,
     });
+    expect(p.required_any).toEqual([
+      ["researcher_competition", "known_issue_density"],
+    ]);
   });
 
   it("high_reward — High Reward, minConfidence 0.5", () => {
@@ -139,20 +146,25 @@ describe("RADAR_PROFILES pinned V1 calibration", () => {
       rewarded_activity: 1.5,
       target_data_quality: 0.5,
     });
+    expect(p.required_any).toEqual([["reward_potential"]]);
   });
 
-  it("authz_api — AuthZ/API, minConfidence 0.5, authz_opportunity unweighted", () => {
+  it("authz_api — AuthZ/API, minConfidence 0.5, share+size split, authz_opportunity unweighted", () => {
     const p = getRadarProfile("authz_api");
     expect(p.label).toBe("AuthZ/API");
     expect(p.minConfidence).toBe(0.5);
     expect(p.weights).toEqual({
-      api_surface: 4,
+      api_surface: 1.5,
+      api_surface_size: 3,
       meaningful_surface: 1.5,
       reward_potential: 1.5,
       freshness: 1,
       safe_harbor: 0.5,
-      researcher_competition: -0.5,
+      researcher_competition: { weight: 0.5, direction: "cost" },
     });
+    expect(p.required_any).toEqual([
+      ["api_surface", "api_surface_size"],
+    ]);
     // Always null in V1 — a weight would only manufacture UNKNOWNs.
     expect(p.weights.authz_opportunity).toBeUndefined();
   });
@@ -164,9 +176,10 @@ describe("RADAR_PROFILES pinned V1 calibration", () => {
     expect(p.weights).toEqual({
       freshness: 5,
       meaningful_surface: 1,
-      researcher_competition: -1,
+      researcher_competition: { weight: 1, direction: "cost" },
       reward_potential: 0.5,
     });
+    expect(p.required_any).toEqual([["freshness"]]);
   });
 
   it("easy_entry — Easy Entry, minConfidence 0.3", () => {
@@ -181,6 +194,18 @@ describe("RADAR_PROFILES pinned V1 calibration", () => {
       meaningful_surface: 1,
       reward_potential: 1,
     });
+    expect(p.required_any).toEqual([["accessibility"]]);
+  });
+
+  it("every effective weight is non-negative — direction carries the sign", () => {
+    for (const id of RADAR_PROFILE_IDS) {
+      for (const [key, raw] of Object.entries(
+        getRadarProfile(id).weights,
+      )) {
+        const w = typeof raw === "number" ? raw : raw!.weight;
+        expect(w, `${id}.${key}`).toBeGreaterThanOrEqual(0);
+      }
+    }
   });
 });
 
@@ -201,44 +226,49 @@ describe("scoreProgram math", () => {
     expect(s.confidence).toBe(1);
   });
 
-  it("excludes unknown signals from the score denominator AND the confidence numerator", () => {
+  it("excludes unknown signals from the score denominator AND the coverage numerator", () => {
     const p = profile({ weights: { reward_potential: 3, freshness: 1 } });
     const s = scoreProgram(
       snapshot("u1"),
       vector({ reward_potential: 0.6 }),
       p,
     );
-    // freshness unknown → denominator is |3| alone, not 4.
+    // freshness unknown → denominator is 3 alone, not 4.
     expect(s.score).toBe(60);
-    // confidence = known |w| / total |w| = 3 / 4
+    // coverage = known w / total w = 3 / 4
     expect(s.confidence).toBe(0.75);
     expect(s.components.reward_potential).toEqual({
       signal: 0.6,
       weight: 3,
+      direction: "benefit",
       contribution: 1.8,
     });
     expect(s.components.freshness).toEqual({
       signal: null,
       weight: 1,
+      direction: "benefit",
       contribution: null,
     });
   });
 
-  it("never coerces unknown to 0/0.5 and never multiplies score by confidence", () => {
+  it("never coerces unknown to 0/0.5 and never multiplies score by coverage", () => {
     const p = profile({ weights: { reward_potential: 1, freshness: 9 } });
     const s = scoreProgram(
       snapshot("u1"),
       vector({ reward_potential: 0.6 }),
       p,
     );
-    // 90% of the weight unknown: confidence collapses, score does not.
+    // 90% of the weight unknown: coverage collapses, score does not.
     expect(s.score).toBe(60);
     expect(s.confidence).toBe(0.1);
   });
 
-  it("lets a negative weight lower the score (crowded competition is worse)", () => {
+  it("cost direction normalizes to 1 − signal (crowded competition is worse)", () => {
     const p = profile({
-      weights: { reward_potential: 1, researcher_competition: -1 },
+      weights: {
+        reward_potential: 1,
+        researcher_competition: { weight: 1, direction: "cost" },
+      },
     });
     const crowded = scoreProgram(
       snapshot("u1"),
@@ -250,10 +280,94 @@ describe("scoreProgram math", () => {
       vector({ reward_potential: 0.5, researcher_competition: 0.1 }),
       p,
     );
-    // crowded: (0.5 - 0.9) / 2 = -0.2 → clamped to 0
-    expect(crowded.score).toBe(0);
-    // quiet: (0.5 - 0.1) / 2 = 0.2 → 20
-    expect(quiet.score).toBe(20);
+    // crowded: (1*0.5 + 1*0.1) / 2 = 0.3 → 30
+    expect(crowded.score).toBe(30);
+    expect(crowded.components.researcher_competition).toEqual({
+      signal: 0.9,
+      weight: 1,
+      direction: "cost",
+      contribution: 0.1,
+    });
+    // quiet: (1*0.5 + 1*0.9) / 2 = 0.7 → 70
+    expect(quiet.score).toBe(70);
+  });
+
+  it("a null cost signal ties known-perfect at best — never exceeds it", () => {
+    const p = profile({
+      weights: {
+        reward_potential: 3,
+        researcher_competition: { weight: 1.5, direction: "cost" },
+      },
+      minConfidence: 0,
+    });
+    const unknown = scoreProgram(
+      snapshot("u1"),
+      vector({ reward_potential: 1 }),
+      p,
+    );
+    const perfect = scoreProgram(
+      snapshot("u2"),
+      vector({ reward_potential: 1, researcher_competition: 0 }),
+      p,
+    );
+    const worst = scoreProgram(
+      snapshot("u3"),
+      vector({ reward_potential: 1, researcher_competition: 1 }),
+      p,
+    );
+    // unknown: 3/3 = 100, coverage 2/3. perfect: (3 + 1.5)/4.5 = 100.
+    // worst: (3 + 0)/4.5 = 66.7. Unknown sits at the bound, not above —
+    // and loses the rank tie-break on coverage.
+    expect(unknown.score).toBe(100);
+    expect(perfect.score).toBe(100);
+    expect(worst.score).toBe(66.7);
+    expect(unknown.confidence).toBeLessThan(perfect.confidence);
+    const ranked = rankPrograms([unknown, perfect], p);
+    expect(ranked.map((r) => r.score.engagement_uuid)).toEqual([
+      "u2",
+      "u1",
+    ]);
+  });
+
+  it("rejects negative weights — the V1.0 signed-weight shape is gone", () => {
+    const p = profile({
+      weights: { reward_potential: -1 } as never,
+    });
+    expect(() => scoreProgram(snapshot("u1"), vector(), p)).toThrow(
+      TypeError,
+    );
+  });
+
+  it("marks the score provisional when a required_any group is entirely unknown", () => {
+    const p = profile({
+      weights: { reward_potential: 1 },
+      required_any: [
+        ["researcher_competition", "known_issue_density"],
+      ],
+    });
+    const missing = scoreProgram(
+      snapshot("u1"),
+      vector({ reward_potential: 0.9 }),
+      p,
+    );
+    expect(missing.provisional).toBe(true);
+    expect(missing.score).toBe(90); // still reported — flagged, not hidden
+    const covered = scoreProgram(
+      snapshot("u1"),
+      vector({ reward_potential: 0.9, known_issue_density: 0.4 }),
+      p,
+    );
+    expect(covered.provisional).toBe(false);
+  });
+
+  it("no required_any means never provisional", () => {
+    const p = profile({ weights: { reward_potential: 1 } });
+    const s = scoreProgram(
+      snapshot("u1"),
+      vector({ reward_potential: 0.5 }),
+      p,
+    );
+    expect(s.provisional).toBe(false);
   });
 
   it("returns score null and confidence 0 when every weighted signal is unknown", () => {
@@ -288,12 +402,12 @@ describe("scoreProgram math", () => {
     expect(s.schema_version).toBe(1);
     expect(s.engagement_uuid).toBe("uuid-abc");
     expect(s.profile).toBe("best_ev");
-    expect(s.scoring_version).toBe("1.0.0");
+    expect(s.scoring_version).toBe("1.1.0");
     expect(s.source_hash).toBe(snap.source_hash);
     expect(Object.keys(s.components)).toEqual(Object.keys(p.weights));
   });
 
-  it("caps easy_entry confidence at 0.75 in V1 — accessibility is always null by design", () => {
+  it("caps easy_entry coverage at 0.75 and flags provisional — accessibility is always null by design", () => {
     const p = getRadarProfile("easy_entry");
     const s = scoreProgram(
       snapshot("u1"),
@@ -309,6 +423,7 @@ describe("scoreProgram math", () => {
     );
     expect(s.confidence).toBe(0.75); // 6/8 — visibly reduced, intentionally
     expect(s.score).toBe(100);
+    expect(s.provisional).toBe(true);
     expect(s.reasons).toContain("UNKNOWN_ACCESSIBILITY");
   });
 });
@@ -445,7 +560,7 @@ describe("explainScore", () => {
     const p = profile({
       weights: {
         reward_potential: 1,
-        researcher_competition: -1,
+        researcher_competition: { weight: 1, direction: "cost" },
         freshness: 1,
         safe_harbor: 1,
         accessibility: 1,

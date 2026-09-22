@@ -83,7 +83,11 @@ function statsBody() {
   return { rewardedVulnerabilities: 721, averagePayout: "$2,000" };
 }
 
-/** Wires the three-call happy path: changelogs → doc → stats. */
+function joinedBody() {
+  return { users: [{ username: "reactor1" }], total: 349 };
+}
+
+/** Wires the happy path: changelogs → doc → stats + recently-joined. */
 function mockHappyPath(stats: unknown = statsBody()) {
   siteRequest.mockImplementation(async (opts: { operation: string }) => {
     if (opts.operation === "GET_CHANGELOGS") {
@@ -96,6 +100,9 @@ function mockHappyPath(stats: unknown = statsBody()) {
       if (stats instanceof Error) throw stats;
       return { data: stats, status: 200 };
     }
+    if (opts.operation === "GET_RECENTLY_JOINED") {
+      return { data: joinedBody(), status: 200 };
+    }
     throw new Error(`unexpected op ${opts.operation}`);
   });
 }
@@ -105,7 +112,7 @@ beforeEach(() => {
 });
 
 describe("hydrateRadarProgram happy path", () => {
-  it("resolves changelog → doc → stats into a complete snapshot", async () => {
+  it("resolves changelog → doc → stats + joiners into a complete snapshot", async () => {
     mockHappyPath();
     const item = catalogItem();
     const snap = await hydrateRadarProgram(item);
@@ -117,6 +124,7 @@ describe("hydrateRadarProgram happy path", () => {
       "GET_CHANGELOGS",
       "GET_BRIEF_DOC",
       "GET_BRIEF_STATS",
+      "GET_RECENTLY_JOINED",
     ]);
     expect(siteRequest).toHaveBeenCalledWith({
       operation: "GET_BRIEF_DOC",
@@ -137,6 +145,9 @@ describe("hydrateRadarProgram happy path", () => {
     expect(snap.detail?.statistics.vulnerabilities_rewarded?.value).toBe(
       "721",
     );
+    expect(
+      snap.detail?.statistics.researchers_participating?.value,
+    ).toBe("349");
     expect(snap.detail?.targetGroups[0]?.rewards.p1).toBe(3000);
     expect(snap.detail?.targets[0]?.location).toBe("https://app.web.com");
     expect(radarProgramSnapshotSchema.safeParse(snap).success).toBe(true);
@@ -151,13 +162,39 @@ describe("hydrateRadarProgram happy path", () => {
     });
   });
 
-  it("a stats failure degrades to empty statistics, still complete", async () => {
+  it("a stats failure degrades those keys only, still complete", async () => {
     mockHappyPath(new ApiError("http", "HTTP 500", 500));
     const snap = await hydrateRadarProgram(catalogItem());
     expect(snap.enrichment).toEqual({ status: "complete" });
     expect(snap.detail).not.toBeNull();
-    expect(snap.detail?.statistics).toEqual({});
+    // The recently-joined fetch still succeeded, so only the stats-endpoint
+    // keys are absent.
+    expect(snap.detail?.statistics.vulnerabilities_rewarded).toBeUndefined();
+    expect(
+      snap.detail?.statistics.researchers_participating?.value,
+    ).toBe("349");
     expect(snap.detail?.targetGroups.length).toBeGreaterThan(0);
+  });
+
+  it("a joiner failure leaves researchers_participating absent", async () => {
+    siteRequest.mockImplementation(async (opts: { operation: string }) => {
+      if (opts.operation === "GET_CHANGELOGS") {
+        return { data: changelogList(), status: 200 };
+      }
+      if (opts.operation === "GET_BRIEF_DOC") {
+        return { data: briefDoc(), status: 200 };
+      }
+      if (opts.operation === "GET_BRIEF_STATS") {
+        return { data: statsBody(), status: 200 };
+      }
+      throw new ApiError("not_found", "not found", 404);
+    });
+    const snap = await hydrateRadarProgram(catalogItem());
+    expect(snap.enrichment).toEqual({ status: "complete" });
+    expect(snap.detail?.statistics.researchers_participating).toBeUndefined();
+    expect(snap.detail?.statistics.vulnerabilities_rewarded?.value).toBe(
+      "721",
+    );
   });
 });
 

@@ -144,6 +144,20 @@ describe("siteRequest URL and request construction", () => {
     expect(url).toBe(`${BUGCROWD_SITE}/engagements/webdotcom/statistics.json`);
   });
 
+  it("GET_RECENTLY_JOINED requests the recent-joiner JSON", async () => {
+    const body = { users: [], total: 349 };
+    fetchMock.mockResolvedValue(jsonResponse(body));
+    const res = await client.siteRequest({
+      operation: "GET_RECENTLY_JOINED",
+      slug: "webdotcom",
+    });
+    expect(res.data).toEqual(body);
+    const [url] = fetchMock.mock.calls[0]! as [string, RequestInit];
+    expect(url).toBe(
+      `${BUGCROWD_SITE}/engagements/webdotcom/recently_joined_users.json`,
+    );
+  });
+
   it("rejects a non-JSON body on detail ops as invalid_response", async () => {
     fetchMock.mockResolvedValue(htmlResponse("<html>spa shell</html>"));
     await expect(

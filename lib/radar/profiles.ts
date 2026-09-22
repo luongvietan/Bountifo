@@ -2,40 +2,61 @@ import type { RadarFeatureKey, RadarProfileId } from "./types";
 
 /**
  * A scoring profile — a named, versioned weight table over the radar signal
- * set. Weights are SIGNED: a negative weight means "more of this signal is
- * worse" (researcher_competition). Signals absent from `weights` contribute
- * nothing. `minConfidence` is the eligibility floor for ranked display.
+ * set.
+ *
+ * V1.1 weight semantics: every weight is NON-NEGATIVE; direction is declared
+ * per signal. `"benefit"` (or the bare-number shorthand) contributes
+ * `weight × signal`; `"cost"` contributes `weight × (1 − signal)`. A null
+ * signal contributes nothing to either numerator or denominator — unknown
+ * can never outrank a known-good value (the V1.0 signed-weight bug: a null
+ * cost signal silently dropped its |weight| from the denominator, so a
+ * program with unknown competition scored HIGHER than one with competition
+ * provably at zero).
+ *
+ * `required_any` lists groups of alternative signals the profile considers
+ * essential: a score is `provisional` when every alternative in a group is
+ * null. Provisional rows still display — flagged, not hidden.
+ *
+ * `minConfidence` is the eligibility floor for ranked display.
  *
  * The key order inside each `weights` object is meaningful: components and
  * reason codes iterate the profile's declared order, so keep the pinned
  * declaration sequence.
  */
+export type ProfileWeight =
+  | number
+  | { weight: number; direction: "benefit" | "cost" };
+
 export interface RadarProfile {
   id: RadarProfileId;
   version: string;
   label: string;
-  weights: Partial<Record<RadarFeatureKey, number>>;
+  weights: Partial<Record<RadarFeatureKey, ProfileWeight>>;
+  required_any?: RadarFeatureKey[][];
   minConfidence: number;
 }
 
 /**
- * Frozen V1 calibration — every profile is version "1.0.0". These weights are
- * the controller's pinned calibration; do not retune without a version bump.
+ * V1.1 calibration — every profile is version "1.1.0" (direction-normalized
+ * weights; best_ev freshness reduced; authz_api splits share vs size).
+ * These weights are the controller's pinned calibration; do not retune
+ * without a version bump.
  */
 export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
   /**
-   * Balanced expected-value hunter: reward first, then surface, freshness,
-   * and a moderate penalty for crowded programs.
+   * Balanced expected-value hunter: reward first, then surface, a moderate
+   * cost weight on crowded programs, and a light recency factor (brief
+   * recency ≠ new opportunity — semantic diffing is not in V1).
    */
   best_ev: {
     id: "best_ev",
-    version: "1.0.0",
+    version: "1.1.0",
     label: "Best EV",
     weights: {
       reward_potential: 3,
       meaningful_surface: 2,
-      freshness: 1.5,
-      researcher_competition: -1.5,
+      freshness: 0.75,
+      researcher_competition: { weight: 1.5, direction: "cost" },
       api_surface: 1,
       web_surface: 1,
       reward_breadth: 1,
@@ -43,24 +64,26 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
       safe_harbor: 0.5,
       target_data_quality: 0.5,
     },
+    required_any: [["researcher_competition", "known_issue_density"]],
     minConfidence: 0.6,
   },
   /**
-   * Uncrowded-program hunter: dominant negative weight on competition plus
+   * Uncrowded-program hunter: dominant cost weight on competition plus
    * freshness and surface. This is NOT a duplicate-probability estimate —
-   * researcher_competition is only a participation proxy.
+   * researcher_competition is only a recent-joiner proxy.
    */
   low_competition: {
     id: "low_competition",
-    version: "1.0.0",
+    version: "1.1.0",
     label: "Low Competition",
     weights: {
-      researcher_competition: -3,
+      researcher_competition: { weight: 3, direction: "cost" },
       freshness: 2,
       meaningful_surface: 1.5,
       reward_potential: 1,
       target_data_quality: 0.5,
     },
+    required_any: [["researcher_competition", "known_issue_density"]],
     minConfidence: 0.5,
   },
   /**
@@ -69,7 +92,7 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
    */
   high_reward: {
     id: "high_reward",
-    version: "1.0.0",
+    version: "1.1.0",
     label: "High Reward",
     weights: {
       reward_potential: 4,
@@ -77,26 +100,31 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
       rewarded_activity: 1.5,
       target_data_quality: 0.5,
     },
+    required_any: [["reward_potential"]],
     minConfidence: 0.5,
   },
   /**
    * V1 meaning: "API-heavy / authenticated-research-friendly candidate" —
    * NOT a proven IDOR opportunity. `authz_opportunity` stays unweighted
    * because it is always null in V1 (no deterministic source exists until
-   * deep program analysis lands).
+   * deep program analysis lands). API surface is measured two ways so a
+   * lone API target cannot fake breadth: share (`api_surface`) and size
+   * (`api_surface_size`, saturation over target count).
    */
   authz_api: {
     id: "authz_api",
-    version: "1.0.0",
+    version: "1.1.0",
     label: "AuthZ/API",
     weights: {
-      api_surface: 4,
+      api_surface: 1.5,
+      api_surface_size: 3,
       meaningful_surface: 1.5,
       reward_potential: 1.5,
       freshness: 1,
       safe_harbor: 0.5,
-      researcher_competition: -0.5,
+      researcher_competition: { weight: 0.5, direction: "cost" },
     },
+    required_any: [["api_surface", "api_surface_size"]],
     minConfidence: 0.5,
   },
   /**
@@ -104,25 +132,27 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
    */
   fresh_programs: {
     id: "fresh_programs",
-    version: "1.0.0",
+    version: "1.1.0",
     label: "Fresh Programs",
     weights: {
       freshness: 5,
       meaningful_surface: 1,
-      researcher_competition: -1,
+      researcher_competition: { weight: 1, direction: "cost" },
       reward_potential: 0.5,
     },
+    required_any: [["freshness"]],
     minConfidence: 0.4,
   },
   /**
    * Onboarding hunter. `accessibility` is always null in V1 (account/setup
-   * requirements need deep analysis), so confidence is visibly reduced —
-   * max achievable is 6/8 = 0.75. That reduction is the plan's intent, not
-   * a bug: an entry-friction claim must show it is partly unknown.
+   * requirements need deep analysis), so every score here is inherently
+   * provisional and coverage is capped at 6/8 — that honesty is the plan's
+   * intent, not a bug: an entry-friction claim must show it is partly
+   * unknown.
    */
   easy_entry: {
     id: "easy_entry",
-    version: "1.0.0",
+    version: "1.1.0",
     label: "Easy Entry",
     weights: {
       accessibility: 2,
@@ -132,11 +162,12 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
       meaningful_surface: 1,
       reward_potential: 1,
     },
+    required_any: [["accessibility"]],
     minConfidence: 0.3,
   },
 };
 
-/** Returns the pinned V1 profile for `id`. */
+/** Returns the pinned profile for `id`. */
 export function getRadarProfile(id: RadarProfileId): RadarProfile {
   return RADAR_PROFILES[id];
 }

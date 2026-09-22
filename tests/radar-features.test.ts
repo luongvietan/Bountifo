@@ -411,6 +411,57 @@ describe("api_surface / web_surface token classification", () => {
     expect(v.api_surface.value).toBe(0);
     expect(v.web_surface.value).toBe(0);
   });
+});
+
+describe("api_surface_size — count saturation, split from share", () => {
+  it("saturates api target count as c/(c+10)", () => {
+    const v = vector(
+      detail({
+        targets: [
+          target({ id: "t1", category: "api" }),
+          target({ id: "t2", category: "api" }),
+          target({ id: "t3", category: "website" }),
+          target({ id: "t4", category: "website" }),
+        ],
+      }),
+    );
+    // 2 api / 4 total → share 0.5; size 2/12 = 0.1667.
+    expect(v.api_surface.value).toBe(0.5);
+    expect(v.api_surface_size).toEqual({
+      value: 0.1667,
+      source: "engagement_detail",
+      reason_code: "api_target_saturation",
+    });
+  });
+
+  it("a single api target cannot fake a large surface", () => {
+    const v = vector(
+      detail({ targets: [target({ id: "t1", category: "api" })] }),
+    );
+    expect(v.api_surface.value).toBe(1); // 100% share…
+    expect(v.api_surface_size.value).toBe(0.0909); // …but 1/11 size
+  });
+
+  it("20 api targets out of 50 → modest share, large size", () => {
+    const targets = [
+      ...Array.from({ length: 20 }, (_, i) =>
+        target({ id: `a${i}`, category: "api" }),
+      ),
+      ...Array.from({ length: 30 }, (_, i) =>
+        target({ id: `w${i}`, category: "website" }),
+      ),
+    ];
+    const v = vector(detail({ targets }));
+    expect(v.api_surface.value).toBe(0.4);
+    expect(v.api_surface_size.value).toBe(0.6667); // 20/30
+  });
+
+  it("is 0 (not null) when no targets are in scope", () => {
+    const v = vector(
+      detail({ targets: [target({ inScope: false, category: "api" })] }),
+    );
+    expect(v.api_surface_size.value).toBe(0);
+  });
 
   it("ignores out-of-scope targets", () => {
     const v = vector(
@@ -693,6 +744,7 @@ describe("detail:null snapshot", () => {
       "reward_breadth",
       "meaningful_surface",
       "api_surface",
+      "api_surface_size",
       "web_surface",
       "researcher_competition",
       "rewarded_activity",

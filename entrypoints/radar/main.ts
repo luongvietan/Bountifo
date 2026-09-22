@@ -10,7 +10,7 @@ import {
   buildRows,
   componentRows,
   errorText,
-  formatConfidence,
+  formatCoverage,
   formatScore,
   isActive,
   profileOptions,
@@ -85,11 +85,12 @@ function renderRows(rows: RadarResultRow[]): void {
   for (const view of views) {
     const tr = document.createElement("tr");
     if (!view.eligible) tr.classList.add("ineligible");
+    if (view.provisional) tr.classList.add("provisional");
     for (const text of [
       view.rank,
       view.program,
       view.score,
-      view.confidence,
+      view.coverage,
       view.reward,
       view.surface,
       view.competition,
@@ -112,7 +113,7 @@ function renderDetail(detail: RadarProgramDetail, uuid: string): void {
   detailMeta.textContent =
     detail.score === null
       ? "No score stored for this profile."
-      : `Score ${formatScore(detail.score.score)} · confidence ${formatConfidence(detail.score.confidence)}`;
+      : `Score ${formatScore(detail.score.score)} · coverage ${formatCoverage(detail.score.confidence)}${detail.score.provisional ? " · PROVISIONAL" : ""}`;
   componentsBody.replaceChildren();
   if (detail.score !== null) {
     for (const component of componentRows(detail.score)) {

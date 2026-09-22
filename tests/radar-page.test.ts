@@ -9,7 +9,7 @@ import {
   buildRows,
   componentRows,
   errorText,
-  formatConfidence,
+  formatCoverage,
   formatScore,
   formatSignal,
   formatWeight,
@@ -49,6 +49,7 @@ function resultRow(over: Partial<RadarResultRow> = {}): RadarResultRow {
     name: "Acme Corp",
     score: 82.4,
     confidence: 0.75,
+    provisional: false,
     eligible: true,
     signals: {
       reward_potential: 0.82,
@@ -74,23 +75,26 @@ describe("formatSignal", () => {
   });
 });
 
-describe("formatScore / formatConfidence / formatWeight", () => {
+describe("formatScore / formatCoverage / formatWeight", () => {
   it("score is a 0–100 value with one decimal, or a dash", () => {
     expect(formatScore(82.36)).toBe("82.4");
     expect(formatScore(82)).toBe("82.0");
     expect(formatScore(null)).toBe("—");
   });
 
-  it("confidence is a whole percentage", () => {
-    expect(formatConfidence(0.756)).toBe("76%");
-    expect(formatConfidence(0.6)).toBe("60%");
-    expect(formatConfidence(0)).toBe("0%");
+  it("coverage is a whole percentage", () => {
+    expect(formatCoverage(0.756)).toBe("76%");
+    expect(formatCoverage(0.6)).toBe("60%");
+    expect(formatCoverage(0)).toBe("0%");
   });
 
-  it("weights keep their sign", () => {
-    expect(formatWeight(3)).toBe("+3");
-    expect(formatWeight(-1.5)).toBe("-1.5");
-    expect(formatWeight(0.5)).toBe("+0.5");
+  it("benefit weights render with a + sign", () => {
+    expect(formatWeight(3, "benefit")).toBe("+3");
+    expect(formatWeight(0.5, "benefit")).toBe("+0.5");
+  });
+
+  it("cost weights keep a positive magnitude with a (cost) marker", () => {
+    expect(formatWeight(1.5, "cost")).toBe("+1.5 (cost)");
   });
 });
 
@@ -233,13 +237,28 @@ describe("buildRow / buildRows", () => {
       rank: "1",
       program: "Acme Corp",
       score: "82.4",
-      confidence: "75%",
+      coverage: "75%",
       reward: "0.82",
       surface: "0.60 (api 0.40 · web 0.30)",
       competition: "0.25",
       freshness: "0.90",
       eligible: true,
+      provisional: false,
     });
+  });
+
+  it("flags provisional scores in the score cell", () => {
+    const view = buildRow(resultRow({ provisional: true }), 1);
+    expect(view.score).toBe("82.4 provisional");
+    expect(view.provisional).toBe(true);
+  });
+
+  it("leaves an unscored provisional row as a dash", () => {
+    const view = buildRow(
+      resultRow({ score: null, provisional: true }),
+      1,
+    );
+    expect(view.score).toBe("—");
   });
 
   it("carries the eligible flag and dashes unknown signals", () => {
@@ -271,16 +290,32 @@ describe("componentRows", () => {
     scoring_version: "1.0.0",
     score: 82.4,
     confidence: 0.75,
+    provisional: false,
     components: {
-      reward_potential: { signal: 0.82, weight: 3, contribution: 2.46 },
-      researcher_competition: { signal: 0.4, weight: -1.5, contribution: -0.6 },
-      accessibility: { signal: null, weight: 2, contribution: null },
+      reward_potential: {
+        signal: 0.82,
+        weight: 3,
+        direction: "benefit",
+        contribution: 2.46,
+      },
+      researcher_competition: {
+        signal: 0.4,
+        weight: 1.5,
+        direction: "cost",
+        contribution: 0.9,
+      },
+      accessibility: {
+        signal: null,
+        weight: 2,
+        direction: "benefit",
+        contribution: null,
+      },
     },
     reasons: ["REWARD_HIGH"],
     source_hash: "abc123",
   };
 
-  it("renders signal, signed weight, and contribution in declared order", () => {
+  it("renders signal, weight+direction, and contribution in declared order", () => {
     expect(componentRows(score)).toEqual([
       {
         key: "reward_potential",
@@ -293,8 +328,8 @@ describe("componentRows", () => {
         key: "researcher_competition",
         label: "Researcher competition",
         signal: "0.40",
-        weight: "-1.5",
-        contribution: "-0.60",
+        weight: "+1.5 (cost)",
+        contribution: "0.90",
       },
       {
         key: "accessibility",

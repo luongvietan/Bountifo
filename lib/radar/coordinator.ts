@@ -100,6 +100,9 @@ export interface RadarResultRow {
   name: string | null;
   score: number | null;
   confidence: number;
+  /** True when a profile-declared required signal group is entirely
+   *  unknown — the row displays flagged, never silently final. */
+  provisional: boolean;
   eligible: boolean;
   signals: RadarResultSignals;
 }
@@ -420,6 +423,7 @@ export class RadarCoordinator {
         name: cat?.name ?? null,
         score: score.score,
         confidence: score.confidence,
+        provisional: score.provisional,
         eligible,
         signals: {
           reward_potential: vector?.reward_potential.value ?? null,

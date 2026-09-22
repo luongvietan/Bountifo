@@ -14,6 +14,7 @@ const SIGNAL_KEYS = [
   "reward_breadth",
   "meaningful_surface",
   "api_surface",
+  "api_surface_size",
   "web_surface",
   "researcher_competition",
   "rewarded_activity",
@@ -53,8 +54,14 @@ const score = {
   scoring_version: "1.0.0",
   score: 84.7,
   confidence: 0.88,
+  provisional: false,
   components: {
-    reward_potential: { signal: 0.8, weight: 3, contribution: 2.4 },
+    reward_potential: {
+      signal: 0.8,
+      weight: 3,
+      direction: "benefit",
+      contribution: 2.4,
+    },
   },
   reasons: ["REWARD_HIGH"],
   source_hash: "sha256:" + "0".repeat(64),
@@ -74,7 +81,7 @@ describe("radar profile ids", () => {
 });
 
 describe("radar feature keys", () => {
-  it("cover exactly the 13 signals, excluding schema_version", () => {
+  it("cover exactly the 14 signals, excluding schema_version", () => {
     expect([...RADAR_FEATURE_KEYS].sort()).toEqual([...SIGNAL_KEYS].sort());
     expect(RADAR_FEATURE_KEYS).not.toContain("schema_version");
   });

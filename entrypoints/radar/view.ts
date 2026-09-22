@@ -32,14 +32,26 @@ export function formatScore(score: number | null): string {
   return score === null ? EMPTY : score.toFixed(1);
 }
 
-/** Confidence is a 0–1 fraction rendered as a whole percentage. */
-export function formatConfidence(confidence: number): string {
+/**
+ * Data coverage is a 0–1 known-weight fraction rendered as a whole
+ * percentage. Named "coverage" in UI copy — it is NOT statistical
+ * confidence in the score.
+ */
+export function formatCoverage(confidence: number): string {
   return `${Math.round(confidence * 100)}%`;
 }
 
-/** Signed weight display: "+3", "-1.5". */
-export function formatWeight(weight: number): string {
-  return weight > 0 ? `+${weight}` : `${weight}`;
+/**
+ * Weight display: "+3", "+1.5". Cost-direction weights stay positive in
+ * V1.1 scoring — the "(cost)" suffix flags that contribution rises as the
+ * raw signal falls.
+ */
+export function formatWeight(
+  weight: number,
+  direction: "benefit" | "cost",
+): string {
+  const sign = weight > 0 ? "+" : "";
+  return direction === "cost" ? `${sign}${weight} (cost)` : `${sign}${weight}`;
 }
 
 /** Human-readable phase name for the status line. */
@@ -140,28 +152,32 @@ export interface RowView {
   rank: string;
   program: string;
   score: string;
-  confidence: string;
+  coverage: string;
   reward: string;
   surface: string;
   competition: string;
   freshness: string;
   /** Below the profile's confidence floor — rendered dimmed, never hidden. */
   eligible: boolean;
+  /** A required signal group was entirely unknown — flagged in the row. */
+  provisional: boolean;
 }
 
 /** Maps a coordinator row to display cells; `rank` is 1-based. */
 export function buildRow(row: RadarResultRow, rank: number): RowView {
+  const base = formatScore(row.score);
   return {
     uuid: row.uuid,
     rank: String(rank),
     program: programLabel(row),
-    score: formatScore(row.score),
-    confidence: formatConfidence(row.confidence),
+    score: row.provisional && base !== EMPTY ? `${base} provisional` : base,
+    coverage: formatCoverage(row.confidence),
     reward: formatSignal(row.signals.reward_potential),
     surface: surfaceText(row.signals),
     competition: formatSignal(row.signals.researcher_competition),
     freshness: formatSignal(row.signals.freshness),
     eligible: row.eligible,
+    provisional: row.provisional,
   };
 }
 
@@ -198,7 +214,7 @@ export function componentRows(score: ProgramScore): ComponentView[] {
     key,
     label: signalLabel(key),
     signal: formatSignal(component.signal),
-    weight: formatWeight(component.weight),
+    weight: formatWeight(component.weight, component.direction),
     contribution:
       component.contribution === null
         ? EMPTY

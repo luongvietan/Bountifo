@@ -22,6 +22,7 @@ td { font-variant-numeric: tabular-nums; }
 #results tbody tr { cursor: pointer; }
 #results tbody tr:hover { background: #1e293b; }
 tr.ineligible { opacity: .5; }
+tr.provisional td:nth-child(3) { color: #b45309; }
 td.empty { color: #64748b; text-align: center; cursor: default; }
 tr:has(td.empty):hover { background: none; }
 #detail { margin-top: 22px; padding: 16px 18px; border: 1px solid #334155; border-radius: 9px; }

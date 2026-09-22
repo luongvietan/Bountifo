@@ -61,6 +61,7 @@ function score(
     scoring_version: scoringVersion,
     score: value,
     confidence: 0.9,
+    provisional: false,
     components: {},
     reasons: [],
     source_hash: sourceHash,

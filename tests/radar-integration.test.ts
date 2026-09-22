@@ -136,13 +136,26 @@ function briefDoc(s: string, seed: number): object {
   };
 }
 
-/** Statistics endpoint body — the site surface has no participant count. */
+/**
+ * Statistics endpoint body — rewarded counts only. The participant-count
+ * proxy lives on the separate recently_joined_users endpoint.
+ */
 function statsBody(seed: number): object {
   return {
     rewardedVulnerabilities: seed * 3,
     averagePayout: "$2,000",
     validationWithin: "12 days",
   };
+}
+
+/**
+ * Recently-joined endpoint body — `total` is the researcher-competition
+ * proxy. Slug(1) gets total 100 → saturation 100/600 ≈ 0.1667 →
+ * COMPETITION_LOW and a non-provisional best_ev score.
+ */
+const JOINED_SLUG = slug(1);
+function joinedBody(s: string): object | null {
+  return s === JOINED_SLUG ? { users: [], total: 100 } : null;
 }
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 0));
@@ -305,6 +318,16 @@ function mainScenarioFetch(
     return Promise.resolve(jsonResponse(statsBody(seedFor(statsMatch[1]!))));
   }
 
+  const joinedMatch =
+    /\/engagements\/([A-Za-z0-9_-]+)\/recently_joined_users\.json$/.exec(url);
+  if (joinedMatch !== null) {
+    const body = joinedBody(joinedMatch[1]!);
+    if (body !== null) return Promise.resolve(jsonResponse(body));
+    return Promise.resolve(
+      jsonResponse({ error: "not found" }, { status: 404 }),
+    );
+  }
+
   return Promise.resolve(jsonResponse({ error: "not found" }, { status: 404 }));
 }
 
@@ -425,7 +448,7 @@ describe("radar scan integration — 12 discovered, 3 program-scoped failures", 
       const scoreRows = await store.getLatestScoreRowsForProfile(
         db,
         "best_ev",
-        "1.0.0",
+        "1.1.0",
       );
       expect(scoreRows).toHaveLength(12);
       const nonNull = scoreRows.filter((r) => r.score.score !== null);
@@ -441,9 +464,9 @@ describe("radar scan integration — 12 discovered, 3 program-scoped failures", 
         ).toBe(true);
       }
       // Stable reason codes on the pinned program (seed 28 → REWARD_MEDIUM
-      // band, recently updated, web surface, full safe harbor). The site
-      // surface exposes no participant count, so researcher_competition is
-      // honestly UNKNOWN.
+      // band, recently updated, web surface, full safe harbor). Its joined
+      // endpoint 404s, so researcher_competition is honestly UNKNOWN and the
+      // required_any group is empty → provisional.
       const pinned = scoreRows.find((r) => r.uuid === PINNED_SLUG);
       expect(pinned?.score.reasons).toEqual([
         "REWARD_MEDIUM",
@@ -453,6 +476,15 @@ describe("radar scan integration — 12 discovered, 3 program-scoped failures", 
         "SAFE_HARBOR_PRESENT",
         "UNKNOWN_RESEARCHER_COMPETITION",
       ]);
+      expect(pinned?.score.provisional).toBe(true);
+      // The joined-users slug carries a real competition proxy → known,
+      // non-provisional, and flagged COMPETITION_LOW (total 100 → 0.1667).
+      const joined = scoreRows.find((r) => r.uuid === JOINED_SLUG);
+      expect(joined?.score.provisional).toBe(false);
+      expect(joined?.score.reasons).toContain("COMPETITION_LOW");
+      expect(
+        joined?.score.components.researcher_competition?.direction,
+      ).toBe("cost");
 
       // ---- results table ---------------------------------------------------
       const results = await coord.getResults("best_ev", 200);
@@ -671,7 +703,7 @@ describe("radar scan integration — determinism", () => {
         const rows = await store.getLatestScoreRowsForProfile(
           db,
           "best_ev",
-          "1.0.0",
+          "1.1.0",
         );
         const scoreByUuid = new Map(
           rows.map((r) => [r.uuid, r.score] as const),

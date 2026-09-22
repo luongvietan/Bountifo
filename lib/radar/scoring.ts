@@ -1,4 +1,4 @@
-import type { RadarProfile } from "./profiles";
+import type { ProfileWeight, RadarProfile } from "./profiles";
 import { RADAR_FEATURE_KEYS } from "./types";
 import type {
   ProgramFeatureVector,
@@ -10,13 +10,16 @@ import type {
 // ---------------------------------------------------------------------------
 // Deterministic scoring engine — PURE. No clocks, no randomness, no I/O.
 //
-// Pinned math:
-//   confidence = known |w| / total |w|   (unknown weighted signals reduce it)
-//   score      = clamp(Σ w_i·s_i / known|w|, 0, 1) × 100
+// Pinned math (V1.1 — direction-normalized weights):
+//   effective_i = s_i (benefit) or 1 − s_i (cost)
+//   coverage    = known w / total w   (unknown weighted signals reduce it)
+//   score       = clamp(Σ w_i·eff_i / known w, 0, 1) × 100
 //
 // Unknown signals (value null) are excluded from the score denominator —
 // never coerced to 0 or 0.5 — and the score is never multiplied by
-// confidence. Both are reported separately.
+// coverage. Both are reported separately. Because every weight is positive
+// and eff ∈ [0,1], a null signal can only sit between the best and worst
+// known outcomes — never above "known perfect" (the V1.0 signed-weight bug).
 // ---------------------------------------------------------------------------
 
 function round4(value: number): number {
@@ -43,6 +46,7 @@ const REASON_RULES: Record<RadarFeatureKey, (s: number) => string | null> = {
   reward_breadth: (s) => (s >= 0.5 ? "REWARD_BROAD" : null),
   meaningful_surface: (s) => (s >= 0.5 ? "SURFACE_LARGE" : null),
   api_surface: (s) => (s >= 0.4 ? "API_SURFACE_HIGH" : null),
+  api_surface_size: (s) => (s >= 0.5 ? "API_SURFACE_LARGE" : null),
   web_surface: (s) => (s >= 0.4 ? "WEB_SURFACE_HIGH" : null),
   researcher_competition: (s) =>
     s <= 0.3 ? "COMPETITION_LOW" : s >= 0.7 ? "COMPETITION_HIGH" : null,
@@ -75,6 +79,7 @@ export const REASON_TEXT: Record<string, string> = {
   REWARD_LOW: "low reward potential",
   REWARD_BROAD: "broad reward coverage",
   API_SURFACE_HIGH: "substantial API surface",
+  API_SURFACE_LARGE: "large API target count",
   WEB_SURFACE_HIGH: "substantial web surface",
   SURFACE_LARGE: "large in-scope surface",
   COMPETITION_LOW: "low researcher competition",
@@ -103,11 +108,33 @@ const CAUTION_CODES: ReadonlySet<string> = new Set([
   "DATA_INCOMPLETE",
 ]);
 
+/** V1.1 weight normalization: bare number → benefit; object → declared
+ *  direction. Negative weights are a rejected legacy shape (the V1.0 bug
+ *  source) — refuse them loudly rather than silently flipping direction. */
+function normalizeWeight(
+  raw: ProfileWeight,
+  key: RadarFeatureKey,
+): { weight: number; direction: "benefit" | "cost" } {
+  const normalized =
+    typeof raw === "number"
+      ? { weight: raw, direction: "benefit" as const }
+      : raw;
+  if (!(normalized.weight >= 0) || !Number.isFinite(normalized.weight)) {
+    throw new TypeError(
+      `profile weight for ${key} must be a non-negative finite number`,
+    );
+  }
+  return normalized;
+}
+
 /**
  * Scores one program under one profile. Components carry one entry per
- * profile-weighted key ({signal, signed weight, w_i·s_i or null}). Reason
- * codes iterate the profile's declared key order; UNKNOWN_<KEY> codes for
- * weighted-but-null signals come last.
+ * profile-weighted key ({signal, declared weight, w_i·eff_i or null}).
+ * Reason codes iterate the profile's declared key order over the RAW signal
+ * value; UNKNOWN_<KEY> codes for weighted-but-null signals come last.
+ *
+ * `provisional` is true when a `required_any` group is entirely unknown —
+ * the score is still reported but flagged as not final.
  */
 export function scoreProgram(
   snapshot: RadarProgramSnapshot,
@@ -115,7 +142,7 @@ export function scoreProgram(
   profile: RadarProfile,
 ): ProgramScore {
   const entries = Object.entries(profile.weights) as Array<
-    [RadarFeatureKey, number]
+    [RadarFeatureKey, ProfileWeight]
   >;
 
   let totalWeight = 0;
@@ -125,21 +152,25 @@ export function scoreProgram(
   const reasons: string[] = [];
   const unknownReasons: string[] = [];
 
-  for (const [key, weight] of entries) {
+  for (const [key, rawWeight] of entries) {
+    const { weight, direction } = normalizeWeight(rawWeight, key);
     const signal = vector[key].value;
-    const magnitude = Math.abs(weight);
-    totalWeight += magnitude;
+    totalWeight += weight;
+    const effective =
+      signal === null ? null : direction === "cost" ? 1 - signal : signal;
     components[key] = {
       signal,
       weight,
-      contribution: signal === null ? null : round4(weight * signal),
+      direction,
+      contribution:
+        effective === null ? null : round4(weight * effective),
     };
-    if (signal === null) {
+    if (signal === null || effective === null) {
       unknownReasons.push(`UNKNOWN_${key.toUpperCase()}`);
       continue;
     }
-    knownWeight += magnitude;
-    weightedSum += weight * signal;
+    knownWeight += weight;
+    weightedSum += weight * effective;
     const reason = REASON_RULES[key](signal);
     if (reason !== null) reasons.push(reason);
   }
@@ -150,6 +181,10 @@ export function scoreProgram(
       ? null
       : round1(clamp01(weightedSum / knownWeight) * 100);
 
+  const provisional = (profile.required_any ?? []).some((group) =>
+    group.every((key) => vector[key].value === null),
+  );
+
   return {
     schema_version: 1,
     engagement_uuid: snapshot.uuid,
@@ -157,6 +192,7 @@ export function scoreProgram(
     scoring_version: profile.version,
     score,
     confidence,
+    provisional,
     components,
     reasons: [...reasons, ...unknownReasons],
     source_hash: snapshot.source_hash,
