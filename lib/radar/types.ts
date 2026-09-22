@@ -97,12 +97,15 @@ export const radarProgramSnapshotSchema = z
 export type RadarProgramSnapshot = z.infer<typeof radarProgramSnapshotSchema>;
 
 // ---------------------------------------------------------------------------
-// Feature vector — 17 signals in fixed order. accessibility and
+// Feature vector — 20 signals in fixed order. accessibility and
 // authz_opportunity may legitimately be null in Radar V1.3;
 // known_issue_density and opportunity_change are null unless the run's deep
 // stage analyzed the program; submission_activity is null whenever the site
 // omits valid_submission_count (the researcher surface currently ships it
-// null).
+// null). V1.5 appends payout_realized (statistics.average_payout — honest
+// null when the field is absent/unparseable), scope_momentum and
+// ki_concentration (deep-stage; null unless the arc/group-stats sub-sources
+// completed).
 // ---------------------------------------------------------------------------
 
 export const programFeatureVectorSchema = z
@@ -125,6 +128,9 @@ export const programFeatureVectorSchema = z
     known_issue_density: radarSignalSchema,
     opportunity_change: radarSignalSchema,
     authz_opportunity: radarSignalSchema,
+    payout_realized: radarSignalSchema,
+    scope_momentum: radarSignalSchema,
+    ki_concentration: radarSignalSchema,
   })
   .strict();
 export type ProgramFeatureVector = z.infer<typeof programFeatureVectorSchema>;
@@ -174,6 +180,8 @@ export const DEEP_PROFILE_IDS: readonly RadarProfileId[] = [
 export const DEEP_SIGNAL_KEYS: readonly RadarFeatureKey[] = [
   "known_issue_density",
   "opportunity_change",
+  "scope_momentum",
+  "ki_concentration",
 ];
 
 /** Per-profile metadata Top-N admitted into the deep candidate union. */
@@ -190,6 +198,13 @@ export const MAX_DEEP_PROGRAMS = 60;
 /** Programs added per stabilization round. */
 export const DEEP_BATCH_SIZE = 10;
 
+/** V1.5 — changelog versions the scope arc spans for `scope_momentum`. */
+export const SCOPE_ARC_DEPTH = 5;
+/** V1.5 — aggregate unique_count floor for the per-group stats fetch. */
+export const KI_GROUP_MIN_UNIQUE = 10;
+/** V1.5 — in-scope groups per program eligible for the stats fetch. */
+export const KI_GROUP_MAX_GROUPS = 6;
+
 /** Why a program entered the deep candidate set (per contributing profile). */
 export interface DeepCandidateReason {
   profile: RadarProfileId;
@@ -202,7 +217,7 @@ export interface DeepCandidate {
   reasons: DeepCandidateReason[];
 }
 
-/** The 17 signal keys, in interface order. */
+/** The 20 signal keys, in interface order. */
 export const RADAR_FEATURE_KEYS: readonly RadarFeatureKey[] = [
   "reward_potential",
   "reward_breadth",
@@ -221,6 +236,9 @@ export const RADAR_FEATURE_KEYS: readonly RadarFeatureKey[] = [
   "known_issue_density",
   "opportunity_change",
   "authz_opportunity",
+  "payout_realized",
+  "scope_momentum",
+  "ki_concentration",
 ];
 
 // ---------------------------------------------------------------------------

@@ -326,6 +326,9 @@ describe("reason-code hygiene over fixtures", () => {
       "UNKNOWN_REWARDED_ACTIVITY",
       "UNKNOWN_SAFE_HARBOR",
       "UNKNOWN_TARGET_DATA_QUALITY",
+      "UNKNOWN_PAYOUT_REALIZED",
+      "UNKNOWN_SCOPE_MOMENTUM",
+      "UNKNOWN_KI_CONCENTRATION",
     ]);
   });
 });

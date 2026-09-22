@@ -312,16 +312,31 @@ describe("deep-profile derivation", () => {
         expect(weighted).not.toContain(key);
       }
     }
-    // Pin the per-profile deep-signal sets (declared weight order).
+    // Pin the per-profile deep-signal sets (declared weight order). V1.5
+    // adds scope_momentum + ki_concentration to the deep signal family.
     expect(new Set(profileDeepSignals("best_ev"))).toEqual(
-      new Set(["known_issue_density", "opportunity_change"]),
+      new Set([
+        "known_issue_density",
+        "opportunity_change",
+        "scope_momentum",
+        "ki_concentration",
+      ]),
     );
     expect(new Set(profileDeepSignals("low_competition"))).toEqual(
-      new Set(["known_issue_density", "opportunity_change"]),
+      new Set([
+        "known_issue_density",
+        "opportunity_change",
+        "scope_momentum",
+        "ki_concentration",
+      ]),
     );
-    expect(profileDeepSignals("authz_api")).toEqual(["opportunity_change"]);
+    expect(profileDeepSignals("authz_api")).toEqual([
+      "opportunity_change",
+      "scope_momentum",
+    ]);
     expect(profileDeepSignals("fresh_programs")).toEqual([
       "opportunity_change",
+      "scope_momentum",
     ]);
   });
 });

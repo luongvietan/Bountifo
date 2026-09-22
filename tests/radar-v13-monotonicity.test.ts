@@ -289,7 +289,7 @@ describe("best_ev V1.3 calibration (INTEGRATION ASSERTIONS — red pre-merge)", 
   it("best_ev is versioned 1.3.0 once V1.3 weights land", () => {
     // A version asserts the semantics, not a release train — weighting two
     // new signals is a semantics change and demands the bump.
-    expect(bestEv().version).toBe("1.3.0");
+    expect(bestEv().version).toBe("1.5.0");
   });
 
   it("freshness carries strictly less weight than opportunity_change", () => {

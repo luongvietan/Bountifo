@@ -449,7 +449,7 @@ describe("radar scan integration — 12 discovered, 3 program-scoped failures", 
       const scoreRows = await store.getLatestScoreRowsForProfile(
         db,
         "best_ev",
-        "1.3.0",
+        "1.5.0",
       );
       expect(scoreRows).toHaveLength(12);
       const nonNull = scoreRows.filter((r) => r.score.score !== null);
@@ -459,8 +459,8 @@ describe("radar scan integration — 12 discovered, 3 program-scoped failures", 
         expect(row?.score.score).toBeNull();
         expect(row?.score.confidence).toBe(0);
         // Stable reason vocabulary: every gap is an UNKNOWN_<signal> code —
-        // 12 weighted signals in best_ev v1.3.0.
-        expect(row?.score.reasons).toHaveLength(12);
+        // 15 weighted signals in best_ev v1.5.0.
+        expect(row?.score.reasons).toHaveLength(15);
         expect(
           row?.score.reasons.every((c) => c.startsWith("UNKNOWN_")),
         ).toBe(true);
@@ -478,10 +478,14 @@ describe("radar scan integration — 12 discovered, 3 program-scoped failures", 
         "REWARD_BROAD",
         "SAFE_HARBOR_PRESENT",
         // V1.3: no deep pass ran in this scenario — both deep signals are
-        // honestly unknown and appear in profile-declared order.
+        // honestly unknown and appear in profile-declared order. V1.5 adds
+        // payout_realized (absent stat) and the two new deep signals.
         "UNKNOWN_OPPORTUNITY_CHANGE",
         "UNKNOWN_RESEARCH_SATURATION",
         "UNKNOWN_KNOWN_ISSUE_DENSITY",
+        "UNKNOWN_PAYOUT_REALIZED",
+        "UNKNOWN_SCOPE_MOMENTUM",
+        "UNKNOWN_KI_CONCENTRATION",
       ]);
       expect(pinned?.score.provisional).toBe(true);
       // The joined-users slug carries real crowding (total 100 → 0.1667) and
@@ -711,7 +715,7 @@ describe("radar scan integration — determinism", () => {
         const rows = await store.getLatestScoreRowsForProfile(
           db,
           "best_ev",
-          "1.3.0",
+          "1.5.0",
         );
         const scoreByUuid = new Map(
           rows.map((r) => [r.uuid, r.score] as const),

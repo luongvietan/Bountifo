@@ -1,8 +1,12 @@
 import type { ApiEngagementData, ApiTarget, ApiTargetGroup } from "../types";
 import { accessibilitySignal } from "./accessibility";
+import { scopeMomentumScore } from "./arc";
 import { authzOpportunitySignal } from "./authz";
+import { normReward, parseStatValue } from "./curves";
 import { opportunityChangeScore } from "./diff";
+import { kiConcentrationScore } from "./groupStats";
 import { knownIssueDensity as knownIssueDensityValue } from "./knownIssues";
+import { payoutRealizedSignal } from "./payout";
 import { classifyTarget } from "./surface";
 import type {
   ProgramFeatureVector,
@@ -20,24 +24,10 @@ import type {
 // "unknown" and is never fabricated.
 //
 // V1 calibration is frozen — tests pin every anchor, weight, denominator and
-// band boundary. `statistics.average_payout` is deliberately NOT consumed by
-// any V1 signal: it is captured in source_hash (so a change re-triggers
-// scoring) but payout averages are too noisy to feed a fixed curve yet.
+// band boundary. V1.5 consumes `statistics.average_payout` via the shared
+// normReward curve (lib/radar/curves.ts): realized payout evidence, still
+// captured in source_hash so a change re-triggers scoring.
 // ---------------------------------------------------------------------------
-
-/** Reward normalization anchors: (usdAmount, normalizedValue). */
-const REWARD_ANCHORS: ReadonlyArray<readonly [number, number]> = [
-  [0, 0],
-  [500, 0.25],
-  [2000, 0.5],
-  [10000, 0.8],
-  [25000, 1],
-];
-
-// Piecewise interpolation runs in ln(1+amount) space, so anchors are
-// precomputed in log space once.
-const LOG_ANCHORS: ReadonlyArray<readonly [number, number]> =
-  REWARD_ANCHORS.map(([amount, y]) => [Math.log(1 + amount), y]);
 
 /** reward_potential blend weights over tiers P1/P2/P3 (renormalized over
  *  tiers present). */
@@ -104,10 +94,6 @@ const DAY_MS = 86_400_000;
 const REASON_DETAIL_UNAVAILABLE = "detail_unavailable";
 const REASON_NOT_AVAILABLE_V1 = "not_available_v1";
 
-// "1,234" / "1234" with optional ".dec"; commas must be strict thousands
-// separators (leading group 1–3 digits, then ",ddd" groups only).
-const STAT_VALUE_RE = /^(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?$/;
-
 function round4(value: number): number {
   return Number(value.toFixed(4));
 }
@@ -124,38 +110,9 @@ function sig(
   };
 }
 
-/**
- * Frozen V1 reward curve: piecewise-linear interpolation in ln(1+amount)
- * between anchors 0→0, 500→0.25, 2000→0.5, 10000→0.8, 25000→1.0. Values
- * ≤0 (incl. NaN) → 0; ≥25000 (incl. +∞) → 1.
- */
-export function normReward(amount: number): number {
-  if (!(amount > 0)) return 0;
-  const top = REWARD_ANCHORS[REWARD_ANCHORS.length - 1]!;
-  if (amount >= top[0]) return 1;
-  const x = Math.log(1 + amount);
-  for (let i = 0; i < LOG_ANCHORS.length - 1; i++) {
-    const [x0, y0] = LOG_ANCHORS[i]!;
-    const [x1, y1] = LOG_ANCHORS[i + 1]!;
-    if (x <= x1) return y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
-  }
-  return 1;
-}
-
-/**
- * Strict parser for `statistics.*.value` strings. Accepts plain digits,
- * strict thousands grouping ("1,234", "1,234,567.89"), one optional leading
- * "$" ("$512.00") and surrounding whitespace. Rejects "1,23,4", empty,
- * negative-as-text, exponent or arbitrary text — never a bare parseFloat.
- */
-export function parseStatValue(raw: string): number | null {
-  if (typeof raw !== "string") return null;
-  let s = raw.trim();
-  if (s.startsWith("$")) s = s.slice(1).trim();
-  if (!STAT_VALUE_RE.test(s)) return null;
-  const n = Number(s.replace(/,/g, ""));
-  return Number.isFinite(n) ? n : null;
-}
+// normReward/parseStatValue moved to ./curves (V1.5) — re-exported so the
+// pinned test importers keep resolving from this module.
+export { normReward, parseStatValue };
 
 /**
  * Maps one hydrated snapshot to its deterministic ProgramFeatureVector.
@@ -194,6 +151,9 @@ export function extractProgramFeatures(
       known_issue_density: unavailable("deep_enrichment"),
       opportunity_change: unavailable("deep_enrichment"),
       authz_opportunity: notAvailableV1(),
+      payout_realized: unavailable("statistics"),
+      scope_momentum: unavailable("deep_enrichment"),
+      ki_concentration: unavailable("deep_enrichment"),
     };
   }
 
@@ -246,6 +206,9 @@ export function extractProgramFeatures(
     known_issue_density: knownIssueDensity(snapshot),
     opportunity_change: opportunityChange(snapshot),
     authz_opportunity: authzOpportunitySignal(detail),
+    payout_realized: payoutRealizedSignal(detail),
+    scope_momentum: scopeMomentum(snapshot),
+    ki_concentration: kiConcentration(snapshot),
   };
 }
 
@@ -307,6 +270,55 @@ function opportunityChange(snapshot: RadarProgramSnapshot): RadarSignal {
     opportunityChangeScore(diff),
     "deep_enrichment",
     "diff_score",
+  );
+}
+
+/**
+ * V1.5 scope momentum — the arc-window counterpart to opportunity_change.
+ * Same honesty doctrine: absent scope_arc (pre-V1.5 deep payload) reads
+ * "arc_absent"; an unavailable/no_baseline arc reads "arc_<status>"; only a
+ * COMPLETE arc feeds `scopeMomentumScore` — a complete text-only arc scoring
+ * 0 is a real reading, not an unknown.
+ */
+function scopeMomentum(snapshot: RadarProgramSnapshot): RadarSignal {
+  const arc = snapshot.deep?.scope_arc;
+  if (arc === undefined || arc === null) {
+    return sig(null, "deep_enrichment", "arc_absent");
+  }
+  if (arc.status !== "complete") {
+    return sig(null, "deep_enrichment", `arc_${arc.status}`);
+  }
+  return sig(
+    arc.diff === null ? null : scopeMomentumScore(arc.diff),
+    "deep_enrichment",
+    "arc_momentum",
+  );
+}
+
+/**
+ * V1.5 Known-Issues concentration — same doctrine layered one level deeper:
+ * the aggregate summary must be complete AND its group_stats sub-block
+ * present-and-complete before `kiConcentrationScore` sees the categories.
+ * skipped_* states are terminal OK (a deliberate bound), still honestly
+ * null. A complete stats payload whose categories sum to 0 contradicts the
+ * nonzero aggregate — null, never a fabricated 0.
+ */
+function kiConcentration(snapshot: RadarProgramSnapshot): RadarSignal {
+  const ki = snapshot.deep?.known_issues;
+  if (ki === undefined || ki === null) {
+    return sig(null, "deep_enrichment", "not_deep_analyzed");
+  }
+  const gs = ki.group_stats;
+  if (gs === undefined || gs === null) {
+    return sig(null, "deep_enrichment", "ki_groups_absent");
+  }
+  if (gs.status !== "complete") {
+    return sig(null, "deep_enrichment", `ki_groups_${gs.status}`);
+  }
+  return sig(
+    kiConcentrationScore(ki.categories ?? []),
+    "deep_enrichment",
+    "ki_concentration",
   );
 }
 

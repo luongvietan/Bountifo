@@ -93,16 +93,16 @@ describe("RADAR_PROFILES pinned V1.3 calibration", () => {
     expect(Object.keys(RADAR_PROFILES).sort()).toEqual(
       [...RADAR_PROFILE_IDS].sort(),
     );
-    // Deep-signal-touched profiles bumped to 1.3.0; V1.4 sourced-signal
-    // profiles (easy_entry, authz_api) bump to 1.4.0; untouched keep their
-    // versions — a version asserts the semantics, not a release train.
+    // V1.5: every profile gained at least one weighted signal
+    // (payout_realized / scope_momentum / ki_concentration), so all six
+    // versions bump to 1.5.0 — a version asserts the semantics.
     const versions: Record<string, string> = {
-      best_ev: "1.3.0",
-      low_competition: "1.3.0",
-      high_reward: "1.1.0",
-      authz_api: "1.4.0",
-      fresh_programs: "1.3.0",
-      easy_entry: "1.4.0",
+      best_ev: "1.5.0",
+      low_competition: "1.5.0",
+      high_reward: "1.5.0",
+      authz_api: "1.5.0",
+      fresh_programs: "1.5.0",
+      easy_entry: "1.5.0",
     };
     for (const id of RADAR_PROFILE_IDS) {
       expect(getRadarProfile(id).version).toBe(versions[id]);
@@ -127,6 +127,9 @@ describe("RADAR_PROFILES pinned V1.3 calibration", () => {
       rewarded_activity: 1,
       safe_harbor: 0.5,
       target_data_quality: 0.5,
+      payout_realized: 1,
+      scope_momentum: 1,
+      ki_concentration: { weight: 1, direction: "cost" },
     });
     // required_any falls back to the raw crowding signal and known-issue
     // density when the composite has < 2 components.
@@ -152,6 +155,8 @@ describe("RADAR_PROFILES pinned V1.3 calibration", () => {
       meaningful_surface: 1.5,
       reward_potential: 1,
       target_data_quality: 0.5,
+      scope_momentum: 1,
+      ki_concentration: { weight: 1.5, direction: "cost" },
     });
     expect(p.required_any).toEqual([
       ["research_saturation", "researcher_competition", "known_issue_density"],
@@ -168,6 +173,7 @@ describe("RADAR_PROFILES pinned V1.3 calibration", () => {
       reward_breadth: 3,
       rewarded_activity: 1.5,
       target_data_quality: 0.5,
+      payout_realized: 2,
     });
     expect(p.required_any).toEqual([["reward_potential"]]);
   });
@@ -186,6 +192,8 @@ describe("RADAR_PROFILES pinned V1.3 calibration", () => {
       opportunity_change: 0.75,
       safe_harbor: 0.5,
       research_saturation: { weight: 0.5, direction: "cost" },
+      scope_momentum: 0.75,
+      payout_realized: 0.5,
     });
     expect(p.required_any).toEqual([
       ["api_surface", "api_surface_size"],
@@ -206,6 +214,7 @@ describe("RADAR_PROFILES pinned V1.3 calibration", () => {
       meaningful_surface: 1,
       research_saturation: { weight: 1, direction: "cost" },
       reward_potential: 0.5,
+      scope_momentum: 1.5,
     });
     // Either signal satisfies the group: raw recency OR a real diff read.
     expect(p.required_any).toEqual([["freshness", "opportunity_change"]]);
@@ -222,6 +231,7 @@ describe("RADAR_PROFILES pinned V1.3 calibration", () => {
       safe_harbor: 1,
       meaningful_surface: 1,
       reward_potential: 1,
+      payout_realized: 0.5,
     });
     expect(p.required_any).toEqual([["accessibility"]]);
   });
@@ -431,7 +441,7 @@ describe("scoreProgram math", () => {
     expect(s.schema_version).toBe(1);
     expect(s.engagement_uuid).toBe("uuid-abc");
     expect(s.profile).toBe("best_ev");
-    expect(s.scoring_version).toBe("1.3.0");
+    expect(s.scoring_version).toBe("1.5.0");
     expect(s.source_hash).toBe(snap.source_hash);
     expect(Object.keys(s.components)).toEqual(Object.keys(p.weights));
   });
@@ -447,10 +457,11 @@ describe("scoreProgram math", () => {
         meaningful_surface: 1,
         reward_potential: 1,
         // accessibility: null — the V1.4 contract stub keeps it unknown.
+        // payout_realized: null — the V1.5 contract stub keeps it unknown.
       }),
       p,
     );
-    expect(s.confidence).toBe(0.75); // 6/8 — visibly reduced, intentionally
+    expect(s.confidence).toBe(0.7059); // 6/8.5 — visibly reduced, intentionally
     expect(s.score).toBe(100);
     expect(s.provisional).toBe(true);
     expect(s.reasons).toContain("UNKNOWN_ACCESSIBILITY");
@@ -788,6 +799,9 @@ describe("reason codes", () => {
       "ACTIVITY_PROVEN",
       "SAFE_HARBOR_PRESENT",
       "DATA_INCOMPLETE",
+      "UNKNOWN_PAYOUT_REALIZED",
+      "UNKNOWN_SCOPE_MOMENTUM",
+      "UNKNOWN_KI_CONCENTRATION",
     ]);
   });
 

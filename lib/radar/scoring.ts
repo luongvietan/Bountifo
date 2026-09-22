@@ -88,6 +88,16 @@ const REASON_RULES: Record<RadarFeatureKey, (s: number) => string | null> = {
         : null,
   authz_opportunity: (s) =>
     s >= 0.5 ? "AUTHZ_SURFACE" : s <= 0.15 ? "AUTHZ_PROHIBITED" : null,
+  // V1.5: payout_realized mirrors the reward-band cut at the 0.5 anchor
+  // ($2k average payout). scope_momentum names the arc-window ends like
+  // opportunity_change names the single-step ends; ki_concentration marks
+  // concentrated pressure (unmined taxonomy — benefit) vs dispersed
+  // (every VRT class contested — caution).
+  payout_realized: (s) => (s >= 0.5 ? "PAYOUT_REALIZED" : null),
+  scope_momentum: (s) =>
+    s >= 0.5 ? "SCOPE_MOMENTUM" : s <= 0.1 ? "SCOPE_MOMENTUM_FLAT" : null,
+  ki_concentration: (s) =>
+    s >= 0.6 ? "KI_CONCENTRATED" : s <= 0.3 ? "KI_DISPERSED" : null,
 };
 
 /**
@@ -125,6 +135,11 @@ export const REASON_TEXT: Record<string, string> = {
   ACCESS_GATED: "restricted or gated access",
   AUTHZ_SURFACE: "authenticated authz test surface",
   AUTHZ_PROHIBITED: "cross-account testing prohibited",
+  PAYOUT_REALIZED: "strong realized average payout",
+  SCOPE_MOMENTUM: "scope grew across recent publishes",
+  SCOPE_MOMENTUM_FLAT: "flat scope across recent publishes",
+  KI_CONCENTRATED: "known issues concentrated in one class",
+  KI_DISPERSED: "known issues spread across classes",
   ...Object.fromEntries(
     RADAR_FEATURE_KEYS.map((key) => [
       `UNKNOWN_${key.toUpperCase()}`,
@@ -146,6 +161,8 @@ const CAUTION_CODES: ReadonlySet<string> = new Set([
   "OPPORTUNITY_TEXT_ONLY",
   "ACCESS_GATED",
   "AUTHZ_PROHIBITED",
+  "SCOPE_MOMENTUM_FLAT",
+  "KI_DISPERSED",
 ]);
 
 /** V1.1 weight normalization: bare number → benefit; object → declared

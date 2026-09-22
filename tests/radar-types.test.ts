@@ -27,6 +27,9 @@ const SIGNAL_KEYS = [
   "known_issue_density",
   "opportunity_change",
   "authz_opportunity",
+  "payout_realized",
+  "scope_momentum",
+  "ki_concentration",
 ] as const;
 
 function signal(value: number | null) {
@@ -84,7 +87,7 @@ describe("radar profile ids", () => {
 });
 
 describe("radar feature keys", () => {
-  it("cover exactly the 17 signals, excluding schema_version", () => {
+  it("cover exactly the 20 signals, excluding schema_version", () => {
     expect([...RADAR_FEATURE_KEYS].sort()).toEqual([...SIGNAL_KEYS].sort());
     expect(RADAR_FEATURE_KEYS).not.toContain("schema_version");
   });

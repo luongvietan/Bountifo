@@ -833,11 +833,14 @@ describe("RadarCoordinator queries", () => {
       "api_surface",
       "authz_opportunity",
       "freshness",
+      "ki_concentration",
       "known_issue_density",
       "meaningful_surface",
       "opportunity_change",
+      "payout_realized",
       "research_saturation",
       "reward_potential",
+      "scope_momentum",
       "web_surface",
     ]);
 

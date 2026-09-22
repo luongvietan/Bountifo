@@ -17,6 +17,29 @@ import { z } from "zod";
 
 const nonNegativeInt = z.number().int().min(0);
 
+/**
+ * V1.5 per-group stats outcome. `skipped_*` states are terminal OK — a
+ * deliberate bounded decision, not missing data; "unavailable"/"failed" are
+ * the failure states.
+ */
+export const radarGroupStatsSchema = z
+  .object({
+    status: z.enum([
+      "complete",
+      "unavailable",
+      "failed",
+      "skipped_upstream",
+      "skipped_low_volume",
+      "skipped_group_count",
+    ]),
+    /** Requests actually made (0 when skipped before any fetch). */
+    groups_fetched: nonNegativeInt.nullable(),
+    /** Qualifying in-scope groups the breakdown would have covered. */
+    groups_total: nonNegativeInt.nullable(),
+  })
+  .strict();
+export type RadarGroupStats = z.infer<typeof radarGroupStatsSchema>;
+
 /** Aggregate Known Issues summary for one engagement. */
 export const radarKnownIssueSummarySchema = z
   .object({
@@ -45,6 +68,24 @@ export const radarKnownIssueSummarySchema = z
           .strict(),
       )
       .optional(),
+    /**
+     * V1.5 per-group fetch bookkeeping — present only once the group-stats
+     * path ran (or deliberately skipped) this program. Absent on pre-V1.5
+     * deep payloads: "ki_groups_absent", an honest unknown.
+     *
+     *   complete             — every qualifying in-scope group fetched and
+     *                          parsed; `categories` carries the aggregate.
+     *   skipped_upstream     — the aggregate summary never completed, so
+     *                          there was nothing to break down.
+     *   skipped_low_volume   — unique_count < KI_GROUP_MIN_UNIQUE:
+     *                          concentration of a handful of issues is noise.
+     *   skipped_group_count  — qualifying in-scope groups outside
+     *                          1..KI_GROUP_MAX_GROUPS.
+     *   unavailable / failed — endpoint absent for the program / fetch or
+     *                          parse failure. Never a partial sample: one
+     *                          group failing fails the whole breakdown.
+     */
+    group_stats: radarGroupStatsSchema.optional(),
   })
   .strict()
   // complete ⇒ real counts; anything else ⇒ counts stay null. A summary
@@ -130,15 +171,53 @@ export const radarSemanticDiffSchema = z
 export type RadarSemanticDiff = z.infer<typeof radarSemanticDiffSchema>;
 
 /**
- * One program's deep-enrichment outcome. "partial" = exactly one source
- * completed; "complete" = both did. The sub-objects carry their own status,
- * so consumers read them, never the envelope, for data truth.
+ * V1.5 scope arc — a semantic diff between the current brief and the
+ * document `window_versions` publishes back (≤ SCOPE_ARC_DEPTH). The nested
+ * `diff` is a full RadarSemanticDiff — the same fact semantics, only the
+ * baseline sits further back. complete ⇒ diff non-null with status
+ * "complete" and window_versions ≥ 1; any other status ⇒ diff null.
+ */
+export const radarScopeArcSchema = z
+  .object({
+    status: z.enum(["complete", "unavailable", "no_baseline"]),
+    /** Changelog steps spanned (Latest → arc baseline distance). */
+    window_versions: nonNegativeInt.min(1).nullable(),
+    diff: radarSemanticDiffSchema.nullable(),
+  })
+  .strict()
+  .superRefine((a, ctx) => {
+    const ok =
+      a.status === "complete"
+        ? a.diff !== null &&
+          a.diff.status === "complete" &&
+          a.window_versions !== null
+        : a.diff === null;
+    if (!ok) {
+      ctx.addIssue({
+        code: "custom",
+        message: "arc status/diff mismatch: complete requires the diff",
+      });
+    }
+  });
+export type RadarScopeArc = z.infer<typeof radarScopeArcSchema>;
+
+/**
+ * One program's deep-enrichment outcome. "partial" = some sub-sources
+ * completed while others failed; "complete" = every sub-source reached a
+ * terminal state (skipped_* group-stats states count as terminal — a
+ * deliberate bound is not missing data). The sub-objects carry their own
+ * status, so consumers read them, never the envelope, for data truth.
  */
 export const radarDeepEnrichmentSchema = z
   .object({
     status: z.enum(["complete", "partial", "unavailable", "failed"]),
     known_issues: radarKnownIssueSummarySchema.nullable(),
     semantic_diff: radarSemanticDiffSchema.nullable(),
+    /**
+     * V1.5 multi-publish arc diff — absent/null on pre-V1.5 payloads and on
+     * snapshots whose deep pass predates the arc wiring.
+     */
+    scope_arc: radarScopeArcSchema.nullable().optional(),
   })
   .strict();
 export type RadarDeepEnrichment = z.infer<typeof radarDeepEnrichmentSchema>;

@@ -600,6 +600,7 @@ describe("radarSourceHash deep preimage", () => {
     // unstorable (strict schema) and unhashable-by-omission.
     expect(Object.keys(radarDeepEnrichmentSchema.shape).sort()).toEqual([
       "known_issues",
+      "scope_arc",
       "semantic_diff",
       "status",
     ]);

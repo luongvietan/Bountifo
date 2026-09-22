@@ -100,7 +100,9 @@ const API_PATH_TOKENS: ReadonlySet<string> = new Set([
  * the trimmed string) with an http/https protocol AND either:
  *   - the lowercased hostname, split on /[^a-z0-9]+/, contains an
  *     API_HOST_TOKENS token ("api.acme.com", "internal-api.acme.com"), or
- *   - the FIRST pathname segment is an API_PATH_TOKENS token
+ *   - the FIRST pathname segment — percent-decoded and lowercased (V1.5:
+ *     "/API" and "/%61pi" classify like "/api"; malformed escapes fall back
+ *     to the raw segment) — is an API_PATH_TOKENS token
  *     ("example.com/api/v1").
  * Pinned conservatism: a bare version segment ("/v2/users") does NOT count,
  * and an api token deeper than path segment 1 ("/docs/api") does NOT count.
@@ -123,7 +125,14 @@ export function locationLooksApi(location: string | null): boolean {
   const firstSegment = url.pathname
     .split("/")
     .find((segment) => segment !== "");
-  return firstSegment !== undefined && API_PATH_TOKENS.has(firstSegment);
+  if (firstSegment === undefined) return false;
+  let segment = firstSegment;
+  try {
+    segment = decodeURIComponent(firstSegment);
+  } catch {
+    // Malformed escape — compare the raw segment rather than dropping it.
+  }
+  return API_PATH_TOKENS.has(segment.toLowerCase());
 }
 
 /**

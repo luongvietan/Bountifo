@@ -89,6 +89,7 @@ function resultRow(over: Partial<RadarResultRow> = {}): RadarResultRow {
     score_delta: null,
     provisional: false,
     eligible: true,
+    percentile: null,
     signals: {
       reward_potential: 0.82,
       meaningful_surface: 0.6,
@@ -100,6 +101,9 @@ function resultRow(over: Partial<RadarResultRow> = {}): RadarResultRow {
       opportunity_change: null,
       accessibility: null,
       authz_opportunity: null,
+      payout_realized: null,
+      scope_momentum: null,
+      ki_concentration: null,
     },
     ...over,
   };

@@ -59,10 +59,14 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
    * identical — and `known_issue_density` prices duplicate pressure
    * alongside, not inside, the saturation composite so deep-analyzed
    * programs are never double-penalized.
+   * V1.5: `payout_realized` adds realized payout evidence beside the
+   * advertised ceiling; `scope_momentum` reads multi-publish scope growth
+   * the single-step diff cannot see; `ki_concentration` is a second cost —
+   * concentrated pressure means the rest of the taxonomy is contested too.
    */
   best_ev: {
     id: "best_ev",
-    version: "1.3.0",
+    version: "1.5.0",
     label: "Best EV",
     weights: {
       reward_potential: 3,
@@ -77,6 +81,9 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
       rewarded_activity: 1,
       safe_harbor: 0.5,
       target_data_quality: 0.5,
+      payout_realized: 1,
+      scope_momentum: 1,
+      ki_concentration: { weight: 1, direction: "cost" },
     },
     required_any: [
       ["research_saturation", "researcher_competition", "known_issue_density"],
@@ -89,10 +96,13 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
    * reads), with freshness and a small opportunity bonus. This is NOT a
    * duplicate-probability estimate — saturation is observed attention, not
    * proof that bugs are gone.
+   * V1.5: `ki_concentration` joins as a cost — concentrated known-issue
+   * volume means researchers already mapped the easy classes — and
+   * `scope_momentum` keeps a genuinely expanding program competitive here.
    */
   low_competition: {
     id: "low_competition",
-    version: "1.3.0",
+    version: "1.5.0",
     label: "Low Saturation",
     weights: {
       research_saturation: { weight: 3, direction: "cost" },
@@ -102,6 +112,8 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
       meaningful_surface: 1.5,
       reward_potential: 1,
       target_data_quality: 0.5,
+      scope_momentum: 1,
+      ki_concentration: { weight: 1.5, direction: "cost" },
     },
     required_any: [
       ["research_saturation", "researcher_competition", "known_issue_density"],
@@ -111,16 +123,19 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
   /**
    * Payout hunter: ceiling (reward_potential) and breadth of reward-bearing
    * groups, with rewarded_activity as evidence the program actually pays.
+   * V1.5: `payout_realized` (weight 2, second only to the ceiling) — the
+   * measured average payout is the direct reading this profile exists for.
    */
   high_reward: {
     id: "high_reward",
-    version: "1.1.0",
+    version: "1.5.0",
     label: "High Reward",
     weights: {
       reward_potential: 4,
       reward_breadth: 3,
       rewarded_activity: 1.5,
       target_data_quality: 0.5,
+      payout_realized: 2,
     },
     required_any: [["reward_potential"]],
     minConfidence: 0.5,
@@ -136,10 +151,13 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
    * (weight 2, after api_surface_size) — the brief-derived authz-surface
    * reading the profile was named for; while the contract stub keeps it
    * null it still contributes UNKNOWN_ coverage, not a score change.
+   * V1.5: `scope_momentum` (an arc that keeps adding API scope is the
+   * profile's game over a longer window) and a light `payout_realized` —
+   * API-heavy programs that demonstrably pay are the find.
    */
   authz_api: {
     id: "authz_api",
-    version: "1.4.0",
+    version: "1.5.0",
     label: "AuthZ/API",
     weights: {
       api_surface: 1.5,
@@ -151,6 +169,8 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
       opportunity_change: 0.75,
       safe_harbor: 0.5,
       research_saturation: { weight: 0.5, direction: "cost" },
+      scope_momentum: 0.75,
+      payout_realized: 0.5,
     },
     required_any: [["api_surface", "api_surface_size"]],
     minConfidence: 0.5,
@@ -160,10 +180,12 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
    * it stays): `opportunity_change` slightly out-weights raw `freshness`
    * because a text-only diff must not read as a fresh opportunity; a light
    * saturation cost keeps a recently-updated-but-saturated program losing.
+   * V1.5: `scope_momentum` (weight 1.5) — steady multi-publish growth is
+   * exactly the fresh-opportunity shape this profile hunts.
    */
   fresh_programs: {
     id: "fresh_programs",
-    version: "1.3.0",
+    version: "1.5.0",
     label: "Fresh Opportunity",
     weights: {
       freshness: 2.5,
@@ -171,6 +193,7 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
       meaningful_surface: 1,
       research_saturation: { weight: 1, direction: "cost" },
       reward_potential: 0.5,
+      scope_momentum: 1.5,
     },
     required_any: [["freshness", "opportunity_change"]],
     minConfidence: 0.4,
@@ -181,10 +204,12 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
    * signup/friction markers — scores can leave `provisional`. While the
    * contract stub keeps the signal null the behavior is unchanged:
    * provisional, coverage capped at 6/8.
+   * V1.5: a light `payout_realized` (0.5) — an easy program that provably
+   * pays beats an easy program that might.
    */
   easy_entry: {
     id: "easy_entry",
-    version: "1.4.0",
+    version: "1.5.0",
     label: "Easy Entry",
     weights: {
       accessibility: 2,
@@ -193,6 +218,7 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
       safe_harbor: 1,
       meaningful_surface: 1,
       reward_potential: 1,
+      payout_realized: 0.5,
     },
     required_any: [["accessibility"]],
     minConfidence: 0.3,

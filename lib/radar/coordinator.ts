@@ -1,6 +1,7 @@
 import { ApiError } from "../api/errors";
 import type { CatalogScanResult } from "./catalog";
 import { extractProgramFeatures } from "./features";
+import { cohortPercentile } from "./percentile";
 import { getRadarProfile } from "./profiles";
 import { explainScore, rankPrograms, scoreProgram } from "./scoring";
 import {
@@ -166,6 +167,9 @@ export interface RadarResultRow {
    *  unknown — the row displays flagged, never silently final. */
   provisional: boolean;
   eligible: boolean;
+  /** V1.5 — share of the eligible cohort this row outranks (0.0–100.0,
+   *  one decimal); null on ineligible rows. */
+  percentile: number | null;
   signals: RadarResultSignals;
 }
 
@@ -191,6 +195,12 @@ export interface RadarResultSignals {
   /** V1.4 authz test-surface reading — null until the sourced rubric
    *  lands (contract stub keeps it unknown). */
   authz_opportunity: number | null;
+  /** V1.5 realized average payout — null when statistics omit the field. */
+  payout_realized: number | null;
+  /** V1.5 multi-publish scope growth — null unless the deep arc completed. */
+  scope_momentum: number | null;
+  /** V1.5 known-issue concentration — null unless per-group stats ran. */
+  ki_concentration: number | null;
 }
 
 /** Envelope returned by getProgram. */
@@ -675,9 +685,15 @@ export class RadarCoordinator {
     const cap = Number.isFinite(limit)
       ? Math.max(1, Math.min(Math.floor(limit), MAX_RESULT_LIMIT))
       : MAX_RESULT_LIMIT;
+    // V1.5: percentile is a property of the row inside the profile's
+    // eligible cohort — computed before the minConfidence filter and the
+    // limit cap so neither UI knob shifts it.
+    const cohortSize = ranked.filter((r) => r.eligible).length;
+    let eligiblePos = 0;
     const out: RadarResultRow[] = [];
     for (const { score, eligible } of ranked) {
       if (out.length >= cap) break;
+      if (eligible) eligiblePos++;
       if (minConfidence !== undefined && score.confidence < minConfidence) {
         continue;
       }
@@ -704,6 +720,9 @@ export class RadarCoordinator {
         score_delta: ann.score_delta,
         provisional: score.provisional,
         eligible,
+        percentile: eligible
+          ? cohortPercentile(eligiblePos, cohortSize)
+          : null,
         signals: {
           reward_potential: vector?.reward_potential.value ?? null,
           meaningful_surface: vector?.meaningful_surface.value ?? null,
@@ -716,6 +735,9 @@ export class RadarCoordinator {
           opportunity_change: vector?.opportunity_change.value ?? null,
           accessibility: vector?.accessibility.value ?? null,
           authz_opportunity: vector?.authz_opportunity.value ?? null,
+          payout_realized: vector?.payout_realized.value ?? null,
+          scope_momentum: vector?.scope_momentum.value ?? null,
+          ki_concentration: vector?.ki_concentration.value ?? null,
         },
       });
     }
