@@ -93,6 +93,9 @@ const SINK_REGISTRY: Record<string, string[]> = {
   // previous changelog doc) via the same allowlisted siteRequest.
   "lib/radar/knownIssues.ts": ["delegated:network"],
   "lib/radar/deep.ts": ["delegated:network"],
+  // V1.5 deep stage: per-group known_issue_stats reads via the same
+  // allowlisted siteRequest, gated to the in-scope group shortlist.
+  "lib/radar/groupStats.ts": ["delegated:network"],
   // Radar IndexedDB persistence (bce-radar database).
   "lib/radar/store.ts": ["idb"],
   // Same-origin dossier page fetch + extension messaging + job bookkeeping.
@@ -189,6 +192,7 @@ describe("architecture: radar collection-plane closure", () => {
     "lib/radar/enrichment.ts": ["delegated:network"],
     "lib/radar/knownIssues.ts": ["delegated:network"],
     "lib/radar/deep.ts": ["delegated:network"],
+    "lib/radar/groupStats.ts": ["delegated:network"],
     "lib/radar/store.ts": ["idb"],
   };
 

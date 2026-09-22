@@ -1,0 +1,30 @@
+[
+  {
+    "id": "grp-api",
+    "targetGroup": { "name": "API" },
+    "knownIssues": {
+      "stats": [
+        {
+          "name": "Cross Site Scripting (XSS)",
+          "uniqueCount": 15,
+          "duplicateCount": 3,
+          "children": []
+        },
+        {
+          "name": "SQL Injection",
+          "uniqueCount": 40,
+          "duplicateCount": 10,
+          "children": [
+            {
+              "name": "Error Based",
+              "uniqueCount": 40,
+              "duplicateCount": 10,
+              "children": []
+            }
+          ]
+        }
+      ],
+      "totals": { "unique": 55, "duplicate": 13 }
+    }
+  }
+]
