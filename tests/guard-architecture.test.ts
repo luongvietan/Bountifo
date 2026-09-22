@@ -89,6 +89,10 @@ const SINK_REGISTRY: Record<string, string[]> = {
   // Radar detail hydration: site JSON reads (changelog → doc → stats);
   // the mapper itself is pure (collection plane).
   "lib/radar/enrichment.ts": ["delegated:network"],
+  // V1.3 deep stage: per-shortlist site JSON reads (known-issues aggregate,
+  // previous changelog doc) via the same allowlisted siteRequest.
+  "lib/radar/knownIssues.ts": ["delegated:network"],
+  "lib/radar/deep.ts": ["delegated:network"],
   // Radar IndexedDB persistence (bce-radar database).
   "lib/radar/store.ts": ["idb"],
   // Same-origin dossier page fetch + extension messaging + job bookkeeping.
@@ -183,6 +187,8 @@ describe("architecture: radar collection-plane closure", () => {
   const RADAR_REGISTRY: Record<string, string[]> = {
     "lib/radar/catalog.ts": ["delegated:network"],
     "lib/radar/enrichment.ts": ["delegated:network"],
+    "lib/radar/knownIssues.ts": ["delegated:network"],
+    "lib/radar/deep.ts": ["delegated:network"],
     "lib/radar/store.ts": ["idb"],
   };
 
@@ -236,7 +242,7 @@ describe("architecture: radar collection-plane closure", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("the radar registry stays exactly: catalog/enrichment network, store idb", () => {
+  it("the radar registry stays exactly: catalog/enrichment/deep network, store idb", () => {
     for (const [file, sinks] of Object.entries(RADAR_REGISTRY)) {
       expect(
         SINK_REGISTRY[file],

@@ -19,6 +19,7 @@ import {
 import { JobCoordinator } from "../lib/job/coordinator";
 import { enumerateEngagementCatalog } from "../lib/radar/catalog";
 import { RadarCoordinator } from "../lib/radar/coordinator";
+import { hydrateRadarDeep } from "../lib/radar/deep";
 import { hydrateRadarProgram } from "../lib/radar/enrichment";
 import { openRadarStore } from "../lib/radar/store";
 import {
@@ -52,6 +53,7 @@ export const coordinator = new JobCoordinator({
 export const radar = new RadarCoordinator({
   enumerate: () => enumerateEngagementCatalog(),
   hydrate: (item) => hydrateRadarProgram(item),
+  deepHydrate: (item, snapshot) => hydrateRadarDeep(item, snapshot),
   openStore: openRadarStore,
   now: () => new Date().toISOString(),
   concurrency: 2,
