@@ -211,6 +211,25 @@ describe("fixture signal semantics", () => {
       expect(v[key].reason_code).toBe("detail_unavailable");
     }
   });
+
+  it("no fixture carries a deep pass — deep signals are honestly null", () => {
+    for (const name of FIXTURE_NAMES) {
+      const v = vec(name);
+      for (const key of [
+        "known_issue_density",
+        "opportunity_change",
+      ] as const) {
+        expect(v[key].value, `${name}.${key}`).toBeNull();
+        // detail:null fixtures short-circuit to detail_unavailable; the
+        // rest never saw a deep pass at all.
+        expect(v[key].reason_code, `${name}.${key}`).toBe(
+          name === "partial-program"
+            ? "detail_unavailable"
+            : "not_deep_analyzed",
+        );
+      }
+    }
+  });
 });
 
 describe("profile relationships over fixtures", () => {
@@ -298,7 +317,9 @@ describe("reason-code hygiene over fixtures", () => {
       "UNKNOWN_REWARD_POTENTIAL",
       "UNKNOWN_MEANINGFUL_SURFACE",
       "UNKNOWN_FRESHNESS",
+      "UNKNOWN_OPPORTUNITY_CHANGE",
       "UNKNOWN_RESEARCH_SATURATION",
+      "UNKNOWN_KNOWN_ISSUE_DENSITY",
       "UNKNOWN_API_SURFACE",
       "UNKNOWN_WEB_SURFACE",
       "UNKNOWN_REWARD_BREADTH",

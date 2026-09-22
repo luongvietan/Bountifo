@@ -88,19 +88,19 @@ function programScoreFor(overrides: Partial<ProgramScore>): ProgramScore {
 // Task 10 — pinned profiles.
 // ---------------------------------------------------------------------------
 
-describe("RADAR_PROFILES pinned V1.2 calibration", () => {
+describe("RADAR_PROFILES pinned V1.3 calibration", () => {
   it("contains exactly the six profiles of RADAR_PROFILE_IDS with per-profile versions", () => {
     expect(Object.keys(RADAR_PROFILES).sort()).toEqual(
       [...RADAR_PROFILE_IDS].sort(),
     );
-    // Saturation-touched profiles bumped to 1.2.0; untouched keep 1.1.0 —
+    // Deep-signal-touched profiles bumped to 1.3.0; untouched keep 1.1.0 —
     // a version asserts the semantics, not a release train.
     const versions: Record<string, string> = {
-      best_ev: "1.2.0",
-      low_competition: "1.2.0",
+      best_ev: "1.3.0",
+      low_competition: "1.3.0",
       high_reward: "1.1.0",
-      authz_api: "1.2.0",
-      fresh_programs: "1.2.0",
+      authz_api: "1.3.0",
+      fresh_programs: "1.3.0",
       easy_entry: "1.1.0",
     };
     for (const id of RADAR_PROFILE_IDS) {
@@ -109,15 +109,17 @@ describe("RADAR_PROFILES pinned V1.2 calibration", () => {
     }
   });
 
-  it("best_ev — Best EV, minConfidence 0.6, saturation composite is the cost signal", () => {
+  it("best_ev — Best EV, minConfidence 0.6, deep signals wired v1.3", () => {
     const p = getRadarProfile("best_ev");
     expect(p.label).toBe("Best EV");
     expect(p.minConfidence).toBe(0.6);
     expect(p.weights).toEqual({
       reward_potential: 3,
       meaningful_surface: 2,
-      freshness: 0.75,
+      freshness: 0.5,
+      opportunity_change: 1.25,
       research_saturation: { weight: 1.5, direction: "cost" },
+      known_issue_density: { weight: 1, direction: "cost" },
       api_surface: 1,
       web_surface: 1,
       reward_breadth: 1,
@@ -125,23 +127,27 @@ describe("RADAR_PROFILES pinned V1.2 calibration", () => {
       safe_harbor: 0.5,
       target_data_quality: 0.5,
     });
-    // required_any falls back to the raw crowding signal and (future)
-    // known-issue density when the composite has < 2 components.
+    // required_any falls back to the raw crowding signal and known-issue
+    // density when the composite has < 2 components.
     expect(p.required_any).toEqual([
       ["research_saturation", "researcher_competition", "known_issue_density"],
     ]);
-    // No double counting: the composite's constituent is NOT also weighted.
+    // No double counting: the composite's constituent is NOT also weighted,
+    // and known_issue_density is a standalone cost — NOT inside the
+    // metadata-only saturation composite.
     expect(p.weights.researcher_competition).toBeUndefined();
   });
 
-  it("low_competition — relabeled Low Saturation, minConfidence 0.5", () => {
+  it("low_competition — Low Saturation, minConfidence 0.5, KI density is a real cost", () => {
     const p = getRadarProfile("low_competition");
     expect(p.id).toBe("low_competition"); // persisted id unchanged
     expect(p.label).toBe("Low Saturation");
     expect(p.minConfidence).toBe(0.5);
     expect(p.weights).toEqual({
       research_saturation: { weight: 3, direction: "cost" },
-      freshness: 2,
+      known_issue_density: { weight: 2, direction: "cost" },
+      freshness: 1.5,
+      opportunity_change: 1,
       meaningful_surface: 1.5,
       reward_potential: 1,
       target_data_quality: 0.5,
@@ -165,7 +171,7 @@ describe("RADAR_PROFILES pinned V1.2 calibration", () => {
     expect(p.required_any).toEqual([["reward_potential"]]);
   });
 
-  it("authz_api — AuthZ/API, minConfidence 0.5, share+size split, saturation cost", () => {
+  it("authz_api — AuthZ/API, minConfidence 0.5, share+size split, small opportunity benefit", () => {
     const p = getRadarProfile("authz_api");
     expect(p.label).toBe("AuthZ/API");
     expect(p.minConfidence).toBe(0.5);
@@ -175,6 +181,7 @@ describe("RADAR_PROFILES pinned V1.2 calibration", () => {
       meaningful_surface: 1.5,
       reward_potential: 1.5,
       freshness: 1,
+      opportunity_change: 0.75,
       safe_harbor: 0.5,
       research_saturation: { weight: 0.5, direction: "cost" },
     });
@@ -185,17 +192,20 @@ describe("RADAR_PROFILES pinned V1.2 calibration", () => {
     expect(p.weights.authz_opportunity).toBeUndefined();
   });
 
-  it("fresh_programs — Fresh Programs, minConfidence 0.4, saturation cost", () => {
+  it("fresh_programs — relabeled Fresh Opportunity, minConfidence 0.4, opportunity dominates", () => {
     const p = getRadarProfile("fresh_programs");
-    expect(p.label).toBe("Fresh Programs");
+    expect(p.id).toBe("fresh_programs"); // persisted id unchanged
+    expect(p.label).toBe("Fresh Opportunity");
     expect(p.minConfidence).toBe(0.4);
     expect(p.weights).toEqual({
-      freshness: 5,
+      freshness: 2.5,
+      opportunity_change: 3,
       meaningful_surface: 1,
       research_saturation: { weight: 1, direction: "cost" },
       reward_potential: 0.5,
     });
-    expect(p.required_any).toEqual([["freshness"]]);
+    // Either signal satisfies the group: raw recency OR a real diff read.
+    expect(p.required_any).toEqual([["freshness", "opportunity_change"]]);
   });
 
   it("easy_entry — Easy Entry, minConfidence 0.3, untouched at 1.1.0", () => {
@@ -418,7 +428,7 @@ describe("scoreProgram math", () => {
     expect(s.schema_version).toBe(1);
     expect(s.engagement_uuid).toBe("uuid-abc");
     expect(s.profile).toBe("best_ev");
-    expect(s.scoring_version).toBe("1.2.0");
+    expect(s.scoring_version).toBe("1.3.0");
     expect(s.source_hash).toBe(snap.source_hash);
     expect(Object.keys(s.components)).toEqual(Object.keys(p.weights));
   });
@@ -558,6 +568,184 @@ describe("research saturation scoring (V1.2)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// V1.3 — deep-signal scoring invariants.
+// ---------------------------------------------------------------------------
+
+describe("deep-signal scoring (V1.3)", () => {
+  // All best_ev-weighted signals pinned equal except the deep pair.
+  const base: Partial<Record<RadarFeatureKey, number>> = {
+    reward_potential: 0.6,
+    meaningful_surface: 0.5,
+    freshness: 0.5,
+    api_surface: 0.4,
+    web_surface: 0.4,
+    reward_breadth: 0.5,
+    rewarded_activity: 0.5,
+    safe_harbor: 1,
+    target_data_quality: 1,
+    research_saturation: 0.4,
+  };
+
+  it("higher known_issue_density never increases the best_ev score", () => {
+    const p = getRadarProfile("best_ev");
+    const snap = snapshot("u1");
+    let prev = Infinity;
+    for (const ki of [0, 0.25, 0.5, 0.75, 1]) {
+      const s = scoreProgram(
+        snap,
+        vector({ ...base, known_issue_density: ki }),
+        p,
+      );
+      expect(s.score!).toBeLessThanOrEqual(prev);
+      prev = s.score!;
+    }
+    const clean = scoreProgram(
+      snap,
+      vector({ ...base, known_issue_density: 0 }),
+      p,
+    );
+    const pressured = scoreProgram(
+      snap,
+      vector({ ...base, known_issue_density: 1 }),
+      p,
+    );
+    expect(clean.score!).toBeGreaterThan(pressured.score!);
+    expect(pressured.components.known_issue_density).toEqual({
+      signal: 1,
+      weight: 1,
+      direction: "cost",
+      contribution: 0,
+    });
+    expect(pressured.reasons).toContain("KI_PRESSURE_HIGH");
+    expect(clean.reasons).toContain("KI_PRESSURE_LOW");
+  });
+
+  it("higher known_issue_density never increases the low_competition score", () => {
+    const p = getRadarProfile("low_competition");
+    const snap = snapshot("u1");
+    const quiet = scoreProgram(
+      snap,
+      vector({ ...base, known_issue_density: 0.1 }),
+      p,
+    );
+    const loud = scoreProgram(
+      snap,
+      vector({ ...base, known_issue_density: 0.9 }),
+      p,
+    );
+    expect(quiet.score!).toBeGreaterThan(loud.score!);
+  });
+
+  it("higher opportunity_change increases or ties — never decreases", () => {
+    const snap = snapshot("u1");
+    for (const id of ["best_ev", "fresh_programs"] as const) {
+      const p = getRadarProfile(id);
+      let prev = -Infinity;
+      for (const oc of [0, 0.25, 0.5, 0.75, 1]) {
+        const s = scoreProgram(
+          snap,
+          vector({ ...base, opportunity_change: oc }),
+          p,
+        );
+        expect(s.score!, `${id} @ ${oc}`).toBeGreaterThanOrEqual(prev);
+        prev = s.score!;
+      }
+    }
+  });
+
+  it("a text-only diff (opportunity_change 0) scores below a scope expansion", () => {
+    const p = getRadarProfile("fresh_programs");
+    const snap = snapshot("u1");
+    const textOnly = scoreProgram(
+      snap,
+      vector({ ...base, opportunity_change: 0 }),
+      p,
+    );
+    const expanded = scoreProgram(
+      snap,
+      vector({ ...base, opportunity_change: 1 }),
+      p,
+    );
+    expect(expanded.score!).toBeGreaterThan(textOnly.score!);
+    expect(textOnly.reasons).toContain("OPPORTUNITY_TEXT_ONLY");
+    expect(expanded.reasons).toContain("OPPORTUNITY_EXPANDED");
+    // Same gap under best_ev — freshness alone cannot hide a stale diff.
+    const bestEv = getRadarProfile("best_ev");
+    const t2 = scoreProgram(snap, vector({ ...base, opportunity_change: 0 }), bestEv);
+    const e2 = scoreProgram(snap, vector({ ...base, opportunity_change: 1 }), bestEv);
+    expect(e2.score!).toBeGreaterThan(t2.score!);
+  });
+
+  it("unknown deep signals reduce coverage and never beat known-perfect", () => {
+    const p = getRadarProfile("best_ev");
+    const unknown = scoreProgram(snapshot("u-unk"), vector({ ...base }), p);
+    const perfect = scoreProgram(
+      snapshot("u-per"),
+      vector({ ...base, known_issue_density: 0, opportunity_change: 1 }),
+      p,
+    );
+    expect(perfect.score!).toBeGreaterThanOrEqual(unknown.score!);
+    expect(unknown.confidence).toBeLessThan(perfect.confidence);
+    expect(unknown.reasons).toContain("UNKNOWN_KNOWN_ISSUE_DENSITY");
+    expect(unknown.reasons).toContain("UNKNOWN_OPPORTUNITY_CHANGE");
+    // Coverage ordering: even at a tied score the known program ranks first.
+    const ranked = rankPrograms([unknown, perfect], p);
+    expect(ranked.map((r) => r.score.engagement_uuid)).toEqual([
+      "u-per",
+      "u-unk",
+    ]);
+  });
+
+  it("a known-issue density alone satisfies the best_ev required_any group", () => {
+    const p = getRadarProfile("best_ev");
+    const snap = snapshot("u1");
+    // Both composite and raw crowding unknown — but the deep density read
+    // is real evidence, so the group is satisfied (not provisional).
+    const s = scoreProgram(
+      snap,
+      vector({ ...base, research_saturation: null, known_issue_density: 0.3 }),
+      p,
+    );
+    expect(s.provisional).toBe(false);
+  });
+
+  it("fresh_programs required_any accepts freshness OR opportunity_change", () => {
+    const p = getRadarProfile("fresh_programs");
+    const snap = snapshot("u1");
+    const neither = scoreProgram(
+      snap,
+      vector({ meaningful_surface: 0.5, reward_potential: 0.5 }),
+      p,
+    );
+    expect(neither.provisional).toBe(true);
+    expect(
+      scoreProgram(snap, vector({ freshness: 0.8 }), p).provisional,
+    ).toBe(false);
+    expect(
+      scoreProgram(snap, vector({ opportunity_change: 0.8 }), p).provisional,
+    ).toBe(false);
+  });
+
+  it("explainScore renders the new caution codes with '- '", () => {
+    const p = profile({
+      weights: {
+        known_issue_density: { weight: 1, direction: "cost" },
+        opportunity_change: 1,
+      },
+    });
+    const s = scoreProgram(
+      snapshot("u1"),
+      vector({ known_issue_density: 0.9, opportunity_change: 0 }),
+      p,
+    );
+    expect(explainScore(s)).toEqual([
+      "- high known-issue pressure",
+      "- no scope growth in latest diff",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Task 12 — reason codes, text templates, explanation lines.
 // ---------------------------------------------------------------------------
 
@@ -570,8 +758,10 @@ describe("reason codes", () => {
         reward_potential: 0.9,
         meaningful_surface: 0.6,
         freshness: 0.9,
+        opportunity_change: 0.6,
         research_saturation: 0.2,
-        // researcher_competition: set but UNWEIGHTED in best_ev v1.2 — no code.
+        known_issue_density: 0.2,
+        // researcher_competition: set but UNWEIGHTED in best_ev — no code.
         researcher_competition: 0.9,
         api_surface: 0.5,
         web_surface: 0.4,
@@ -586,7 +776,9 @@ describe("reason codes", () => {
       "REWARD_HIGH",
       "SURFACE_LARGE",
       "RECENTLY_UPDATED",
+      "OPPORTUNITY_EXPANDED",
       "SATURATION_LOW",
+      "KI_PRESSURE_LOW",
       "API_SURFACE_HIGH",
       "WEB_SURFACE_HIGH",
       "REWARD_BROAD",
@@ -625,6 +817,12 @@ describe("reason codes", () => {
     [{ safe_harbor: 0 }, "SAFE_HARBOR_ABSENT"],
     [{ target_data_quality: 0.4 }, "DATA_INCOMPLETE"],
     [{ target_data_quality: 0.41 }, null],
+    [{ known_issue_density: 0.25 }, "KI_PRESSURE_LOW"],
+    [{ known_issue_density: 0.7 }, "KI_PRESSURE_HIGH"],
+    [{ known_issue_density: 0.5 }, null],
+    [{ opportunity_change: 0.5 }, "OPPORTUNITY_EXPANDED"],
+    [{ opportunity_change: 0.1 }, "OPPORTUNITY_TEXT_ONLY"],
+    [{ opportunity_change: 0.3 }, null],
   ])("threshold %j → %s", (values, expected) => {
     const key = Object.keys(values)[0] as RadarFeatureKey;
     const p = profile({
@@ -671,7 +869,8 @@ describe("reason codes", () => {
         safe_harbor: 1,
         target_data_quality: 0.3,
         accessibility: 0.5,
-        known_issue_density: 0.5,
+        known_issue_density: 0.8, // KI_PRESSURE_HIGH
+        opportunity_change: 0.6, // OPPORTUNITY_EXPANDED
         authz_opportunity: 0.5,
       }),
       p,
@@ -688,6 +887,20 @@ describe("reason codes", () => {
     expect(REASON_TEXT.COMPETITION_LOW).toBe("low recent crowding");
     expect(REASON_TEXT.UNKNOWN_ACCESSIBILITY).toBe(
       "accessibility unavailable",
+    );
+    expect(REASON_TEXT.KI_PRESSURE_LOW).toBe("low known-issue pressure");
+    expect(REASON_TEXT.KI_PRESSURE_HIGH).toBe("high known-issue pressure");
+    expect(REASON_TEXT.OPPORTUNITY_EXPANDED).toBe(
+      "scope expanded in latest diff",
+    );
+    expect(REASON_TEXT.OPPORTUNITY_TEXT_ONLY).toBe(
+      "no scope growth in latest diff",
+    );
+    expect(REASON_TEXT.UNKNOWN_KNOWN_ISSUE_DENSITY).toBe(
+      "known issue density unavailable",
+    );
+    expect(REASON_TEXT.UNKNOWN_OPPORTUNITY_CHANGE).toBe(
+      "opportunity change unavailable",
     );
   });
 });
