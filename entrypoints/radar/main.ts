@@ -134,11 +134,13 @@ function programCell(tr: HTMLTableRowElement, view: RowView): void {
 }
 
 /**
- * Score cell: evidence badge (DEEP/META) + score text. The badge names the
- * stage that produced the score — a META badge can only appear in the
- * metadata view, since the deep ranking never returns metadata-only rows
- * (and when it does, the fallback note says why). Δ gets a tooltip pinning
- * its direction so "−11.4" can't be misread as the display order's sign.
+ * Score cell: evidence badge (DEEP/META) + score text. The badge marks the
+ * row's evidence AVAILABILITY — deep-analyzed this scan vs metadata-only —
+ * while the number itself is always the active view's stage (the deep
+ * ranking only ever contains deep rows; the metadata view shows metadata
+ * baselines, deep-analyzed or not). The tooltip must describe evidence,
+ * never claim the displayed number's stage — a DEEP badge in metadata view
+ * still shows the metadata score.
  */
 function scoreCell(tr: HTMLTableRowElement, view: RowView): void {
   const td = document.createElement("td");
@@ -149,8 +151,8 @@ function scoreCell(tr: HTMLTableRowElement, view: RowView): void {
   badge.textContent = evidenceBadge(view.evidence) ?? "META";
   badge.title =
     view.evidence === "deep"
-      ? "Deep-stage score — re-scored after deep enrichment (known issues + changelog diff)."
-      : "Metadata-stage score — catalog/brief signals only; not deep-analyzed.";
+      ? "Deep-analyzed in this scan — a deep score exists for this row (Δ = deep − metadata)."
+      : "Metadata-stage only — catalog/brief signals; not deep-analyzed.";
   td.append(badge, document.createTextNode(` ${view.score}`));
   if (view.scoreDelta !== null) {
     td.title = "Δ = deep score − metadata score";

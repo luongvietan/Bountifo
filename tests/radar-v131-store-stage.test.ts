@@ -551,6 +551,7 @@ describe("normalizeRunRecord adversarial inputs", () => {
               { profile: "best_ev", metadata_rank: Infinity },
               { profile: "fresh_programs", metadata_rank: 7.9 }, // non-integer → dropped
               { profile: "low_competition", metadata_rank: -4 }, // negative → dropped
+              { profile: "best_ev", metadata_rank: 0 }, // ranks are 1-based → dropped
               null,
               "junk",
             ],

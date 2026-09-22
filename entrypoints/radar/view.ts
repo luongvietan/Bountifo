@@ -249,9 +249,9 @@ export function summaryText(
 
 /**
  * While the run is in a deep phase, progress is "12/20 analyzed" (completed
- * of shortlisted) plus the stabilization round once it advances past 0 —
- * round 0 is the first pass and isn't numbered rather than fabricating a
- * "round 1" the coordinator never declared.
+ * of shortlisted) plus the stabilization round — the coordinator declares
+ * deep_round = 1 for the initial dispatch, so a live deep stage always
+ * shows a numbered round.
  */
 function deepProgressText(state: RadarRunState): string {
   if (

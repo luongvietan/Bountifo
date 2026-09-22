@@ -115,6 +115,9 @@ export interface RadarScanSummary {
    *  and on runs whose deep stage never started (no deepHydrate dep). */
   deep_candidates?: number;
   deep_analyzed?: number;
+  /** Envelopes that gained real deep evidence — vs deep_analyzed, which
+   *  counts attempted programs (missing data completes honestly too). */
+  deep_enriched?: number;
   deep_rounds?: number;
   deep_budget?: number;
   deep_stabilization?: DeepStabilization | null;
@@ -307,13 +310,30 @@ function isSummary(value: unknown): value is RadarScanSummary {
   ]) {
     if (!(key in v)) return false;
   }
-  return (
+  const baseOk =
     typeof v.catalog_complete === "boolean" &&
     typeof v.discovered === "number" &&
     typeof v.enriched === "number" &&
     typeof v.enrichment_failed === "number" &&
     typeof v.scored === "number" &&
-    Array.isArray(v.warnings)
+    Array.isArray(v.warnings);
+  if (!baseOk) return false;
+  // Optional V1.3.1 deep fields, when present, must be the right types —
+  // a corrupt persisted `deep_analyzed: "lots"` must not render "lots
+  // analyzed" in the UI.
+  for (const key of [
+    "deep_candidates",
+    "deep_analyzed",
+    "deep_enriched",
+    "deep_rounds",
+    "deep_budget",
+  ] as const) {
+    if (key in v && typeof v[key] !== "number") return false;
+  }
+  return (
+    !("deep_stabilization" in v) ||
+    v.deep_stabilization === null ||
+    STABILIZATION_VALUES.has(v.deep_stabilization as string)
   );
 }
 
@@ -334,10 +354,12 @@ function asStabilization(value: unknown): DeepStabilization | null {
 function asDeepCandidates(value: unknown): DeepCandidate[] {
   if (!Array.isArray(value)) return [];
   const out: DeepCandidate[] = [];
+  const seen = new Set<string>();
   for (const entry of value) {
     if (entry === null || typeof entry !== "object") continue;
     const uuid = (entry as { uuid?: unknown }).uuid;
-    if (typeof uuid !== "string" || uuid === "") continue;
+    if (typeof uuid !== "string" || uuid === "" || seen.has(uuid)) continue;
+    seen.add(uuid);
     const reasons: DeepCandidate["reasons"] = [];
     const rawReasons = (entry as { reasons?: unknown }).reasons;
     if (Array.isArray(rawReasons)) {
@@ -350,7 +372,7 @@ function asDeepCandidates(value: unknown): DeepCandidate[] {
           (RADAR_PROFILE_IDS as readonly string[]).includes(profile) &&
           typeof rank === "number" &&
           Number.isInteger(rank) &&
-          rank >= 0
+          rank >= 1
         ) {
           reasons.push({
             profile: profile as RadarProfileId,
@@ -644,7 +666,9 @@ export class RadarCoordinator {
     const catalog = new Map(
       (await getCatalog(db)).map((item) => [item.uuid, item]),
     );
-    const cap = Math.max(1, Math.min(Math.floor(limit), MAX_RESULT_LIMIT));
+    const cap = Number.isFinite(limit)
+      ? Math.max(1, Math.min(Math.floor(limit), MAX_RESULT_LIMIT))
+      : MAX_RESULT_LIMIT;
     const out: RadarResultRow[] = [];
     for (const { score, eligible } of ranked) {
       if (out.length >= cap) break;
@@ -1064,20 +1088,28 @@ export class RadarCoordinator {
       );
     }
     const budget = this.deps.deepLimit ?? MAX_DEEP_PROGRAMS;
-    // The FULL union is recorded for provenance — deep_candidates documents
-    // every profile's demand even when the budget binds; only the first
-    // `budget` candidates enter the pending queue (deep_analyzed vs
-    // deep_candidates in the summary then honestly shows the shortfall).
+    const depth = this.deps.deepCandidateDepth ?? PROFILE_CANDIDATE_DEPTH;
+    // The FULL union is recorded for provenance — the union cannot exceed
+    // depth × |DEEP_PROFILE_IDS| by construction, so that bound means
+    // "uncapped". deep_candidates documents every profile's demand even
+    // when the budget binds; only the first `budget` candidates enter the
+    // pending queue (deep_analyzed vs deep_candidates in the summary then
+    // honestly shows the shortfall).
     const { candidates } = selectDeepCandidates({
       perProfile,
-      depth: this.deps.deepCandidateDepth ?? PROFILE_CANDIDATE_DEPTH,
+      depth,
+      maxCandidates: depth * DEEP_PROFILE_IDS.length,
     });
 
     run.deep_candidates = candidates;
     run.deep_budget = budget;
+    // Already-completed uuids are never re-queued — a rebuild after a
+    // scoring-pass rewind must not redo (or double-count) finished work.
+    const completed = new Set(run.deep_completed_uuids);
     run.deep_pending_uuids = candidates
-      .slice(0, budget)
-      .map((c) => c.uuid);
+      .map((c) => c.uuid)
+      .filter((uuid) => !completed.has(uuid))
+      .slice(0, budget);
     if (run.deep_pending_uuids.length > 0) run.deep_round = 1;
   }
 
@@ -1376,6 +1408,7 @@ export class RadarCoordinator {
         ? {
             deep_candidates: run.deep_candidates.length,
             deep_analyzed: run.deep_completed_uuids.length,
+            deep_enriched: run.deep_enriched,
             deep_rounds: run.deep_round,
             deep_budget: run.deep_budget,
             deep_stabilization: run.deep_stabilization,

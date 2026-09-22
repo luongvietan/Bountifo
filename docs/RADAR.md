@@ -469,12 +469,14 @@ The deep stage (V1.3.1) has three steps:
    profile (`best_ev`, `low_competition`, `authz_api`, `fresh_programs`)
    contributes its Top `PROFILE_CANDIDATE_DEPTH` (20) *eligible* metadata
    ranks of THIS run. `selectDeepCandidates` dedupes the union by uuid
-   (provenance: every contributing profile + the metadata rank it earned),
-   orders candidates by earliest contributing profile → best metadata
-   rank → uuid, and caps the set at `MAX_DEEP_PROGRAMS` (60) with the
-   truncation reported. No profile consumes budget before the union
-   forms, and `high_reward`/`easy_entry` contribute nothing — their
-   scores cannot move under deep evidence.
+   (provenance: every contributing profile + the metadata rank it earned)
+   and orders candidates by earliest contributing profile → best metadata
+   rank → uuid. The run records the FULL union in `deep_candidates`; the
+   `MAX_DEEP_PROGRAMS` (60) budget caps only the pending queue, so
+   `deep_analyzed` vs `deep_candidates` in the summary honestly shows the
+   shortfall when the union exceeds the budget. No profile consumes budget
+   before the union forms, and `high_reward`/`easy_entry` contribute
+   nothing — their scores cannot move under deep evidence.
 2. **Deep enrich** — the same worker-pool discipline fetches
    `engagement_known_issues.json` + re-reads `changelog.json` + fetches
    the baseline `changelog/<id>.json` — **≤3 requests per candidate** —
@@ -493,6 +495,16 @@ The deep stage (V1.3.1) has three steps:
    `"incomplete"` (cancelled/failed mid-loop). "Stable" is honest about
    its bound: it asserts the bounded Top-K+buffer frontier, not a global
    fixpoint.
+
+   Budget arithmetic, stated plainly: the union can reach
+   `depth × profiles` = 20 × 4 = 80 while `MAX_DEEP_PROGRAMS` is 60 — so
+   at full-catalog scale with low cross-profile overlap, round 1 alone
+   exhausts the budget and the truthful verdict is `budget_limited`.
+   Iterative rounds engage when the union fits inside the budget (high
+   overlap, smaller catalog) or when deep-dropped rows pull frontier
+   members forward. This is deliberate: the request ceiling is the
+   product constraint, and the verdict reports what was actually
+   stabilized rather than implying completeness that wasn't paid for.
 
 - `start()` is idempotent — an active run (in memory or persisted) is
   adopted and continued, never duplicated.
@@ -514,14 +526,15 @@ The deep stage (V1.3.1) has three steps:
   Deep-stage rows are written only for the four deep-dependent profiles.
 - Run records persist the deep orchestration state — `deep_pending_uuids`,
   `deep_completed_uuids`, `deep_candidates` (uuid → contributing profiles
-  + metadata ranks), `deep_analyzed`, `deep_rounds`, `deep_budget`,
+  + metadata ranks), `deep_enriched`, `deep_round`, `deep_budget`,
   `deep_stabilization` — so a service-worker restart mid-deep resumes the
   pending queue without repeating completed fetches.
 - `RadarScanSummary` verdict on termination: `failed` when the run failed;
   otherwise `complete` iff `catalog_complete` AND `enrichment_failed === 0`;
   anything else is honestly `partial`. Deep progress surfaces as
-  `deep_candidates` / `deep_analyzed` / `deep_rounds` / `deep_budget` /
-  `deep_stabilization` on the same summary. Warning details cap at 50
+  `deep_candidates` / `deep_analyzed` / `deep_enriched` / `deep_rounds` /
+  `deep_budget` / `deep_stabilization` on the same summary. Warning
+  details cap at 50
   entries plus a `…and N more` overflow line.
 
 ## Persistence
