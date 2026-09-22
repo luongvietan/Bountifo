@@ -948,9 +948,10 @@ export class RadarCoordinator {
       await this.checkpoint(db, run);
     }
 
-    // Deep stage (V1.3): when a deepHydrate dep exists, shortlist the top of
-    // this run's best_ev metadata ranking for known-issues + changelog-diff
-    // enrichment. Otherwise (or an empty shortlist) the run ends here.
+    // Deep stage (V1.3.1): when a deepHydrate dep exists, build the
+    // profile-aware candidate union over this run's metadata rankings for
+    // known-issues + changelog-diff enrichment. Otherwise (or an empty
+    // union) the run ends here.
     await this.buildDeepShortlist(db, run);
     if (run.deep_pending_uuids.length > 0) {
       run.phase = "deep_enriching";

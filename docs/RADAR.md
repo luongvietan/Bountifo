@@ -5,14 +5,20 @@ enumerates every engagement visible to the browser session, hydrates each
 program's structured brief document, reduces it to a fixed 17-signal feature vector, and
 ranks programs under six versioned weight profiles. No LLM participates in
 collection, extraction, scoring, ranking, or explanation. The output is a
-two-stage **Opportunity Score** — V1.3 runs a cheap metadata pass over the
+two-stage **Opportunity Score** — a cheap metadata pass over the
 whole catalog, then a bounded deep-enrichment pass (Known Issues aggregate
-+ semantic changelog diff) over the top of the best_ev shortlist. Deep
-signals stay `null` for programs that were never deep-analyzed — missing
-data is never coerced into a favorable or unfavorable value. This is still
-a candidate-pool ranking, not a true expected-value estimate; the signals
-that would make it EV (duplicate probability, accessibility, real authz
-opportunity) remain partially unsourced.
++ semantic changelog diff) over a **profile-aware candidate union**
+(V1.3.1): every profile whose weights consume deep signals contributes its
+own metadata Top-N to the shortlist, and an iterative frontier check keeps
+deepening until each deep profile's Top-K window is fully analyzed or the
+bounded budget runs out. Metadata and deep scores are stored as separate
+evidence stages and ranked separately — a metadata-only row never shares
+an ordinal rank with a deep-analyzed one. Deep signals stay `null` for
+programs that were never deep-analyzed — missing data is never coerced
+into a favorable or unfavorable value. This is still a candidate-pool
+ranking, not a true expected-value estimate; the signals that would make
+it EV (duplicate probability, accessibility, real authz opportunity)
+remain partially unsourced.
 
 ```text
 GET /engagements.json?page=N    GET /engagements/<slug>/changelog.json
@@ -43,14 +49,17 @@ GET /engagements.json?page=N    GET /engagements/<slug>/changelog.json
                             components, reasons}
                                     │
               ┌─────────────────────┴──────────────────────┐
-              │ V1.3 deep stage — Top-N best_ev shortlist  │
-              │ (DEEP_ANALYSIS_LIMIT = 30, eligible only): │
+              │ V1.3.1 deep stage — per-profile candidate  │
+              │ union (Top 20 metadata ranks of every deep │
+              │ profile, deduped, ≤ MAX_DEEP_PROGRAMS 60): │
               │   GET …/engagement_known_issues.json       │
               │   GET …/changelog.json  (re-fetch)         │
               │   GET …/changelog/<baseline>.json          │
               │     → hydrateRadarDeep (lib/radar/deep.ts) │
               │     → snapshot.deep + joined source_hash   │
-              │     → re-score deep-completed uuids        │
+              │     → deep-stage re-score (deep profiles)  │
+              │     → frontier check → next batch until    │
+              │       Top-K+10 window all-deep / budget    │
               └─────────────────────┬──────────────────────┘
                                     ▼
                   IndexedDB `bce-radar` (lib/radar/store.ts)
@@ -403,15 +412,32 @@ order. The always-null signals emit no threshold codes, only
 4. `engagement_uuid` ascending — the tie-break that makes identical inputs
    always rank identically.
 
-`getResults` returns the latest score row per engagement at the profile's
-*current* version, **scoped to the discovered set of the run
-`meta.latestRunId` points at** — its `completed_uuids ∪ pending_uuids` —
-joined with catalog identity and the vector's eight display signals
-(reward, surface trio, **research saturation**, freshness,
-known-issue density, opportunity change); an
+`getResults(profile, limit, minConfidence, mode)` returns the latest score
+rows per engagement at the profile's *current* version, **scoped to the
+discovered set of the run `meta.latestRunId` points at** — its
+`completed_uuids ∪ pending_uuids` — joined with catalog identity and the
+vector's eight display signals (reward, surface trio, **research
+saturation**, freshness, known-issue density, opportunity change); an
 optional `minConfidence` argument filters further, and `limit` is clamped
 to 1–200 (default 50). Ineligible rows rank after all eligible ones —
 dimmed in the UI, never hidden.
+
+`mode` selects the evidence level (V1.3.1):
+
+- `"metadata"` — every in-scope program ranked by its metadata-stage
+  score. Rows the latest run also deep-analyzed carry
+  `evidence_level: "deep"`, a `deep_score`, and a `score_delta` — both
+  scores are visible without overwriting the metadata value.
+- `"deep"` — **only** programs the latest run deep-analyzed
+  (`deep_completed_uuids`), ranked among themselves. Metadata-only rows
+  never appear here: an ordinal rank shared across evidence levels would
+  imply a comparability that does not exist. For the two profiles that
+  weight no deep signal (`high_reward`, `easy_entry`) this mode is
+  honestly empty — no deep rows are ever written for them.
+
+Every result row carries `evidence_level` (`"metadata"` | `"deep"`),
+`metadata_score`, `deep_score`, and `score_delta` (deep − metadata, null
+when either endpoint is missing).
 
 Result scoping is staleness-honest but non-destructive:
 
@@ -426,23 +452,47 @@ Result scoping is staleness-honest but non-destructive:
 
 ## Scan lifecycle and resume
 
-Phases: `catalog` → `enriching` → `scoring` → `deep_enriching` →
-`deep_scoring` → `done` | `failed` | `cancelled`. The deep phases run only
-when a `deepHydrate` dependency is wired and the shortlist is non-empty;
-otherwise the run ends after `scoring` exactly as before (pre-V1.3
-persisted runs resume cleanly). MV3 service workers may die mid-scan, so
-every phase transition and every per-program step checkpoints the run
-record into the `runs` store; `meta.latestRunId` points at the newest run.
+Phases: `catalog` → `enriching` → `scoring` → (`deep_enriching` ⇄
+`deep_scoring`)* → `done` | `failed` | `cancelled`. The deep phases run
+only when a `deepHydrate` dependency is wired and the candidate union is
+non-empty; otherwise the run ends after `scoring` exactly as before
+(pre-V1.3 persisted runs resume cleanly). The two deep phases form a
+bounded loop: `deep_scoring` re-scores the batch just enriched, then the
+stabilization frontier decides whether another `deep_enriching` round is
+needed. MV3 service workers may die mid-scan, so every phase transition
+and every per-program step checkpoints the run record into the `runs`
+store; `meta.latestRunId` points at the newest run.
 
-The deep stage (V1.3): after metadata scoring, the top
-`DEEP_ANALYSIS_LIMIT` (30) *eligible* `best_ev` rows of THIS run become
-`deep_pending_uuids`. The same worker-pool discipline fetches
-`engagement_known_issues.json` + re-reads `changelog.json` + fetches the
-baseline `changelog/<id>.json` — **3 requests per shortlisted program** —
-writes a NEW snapshot whose `deep` payload joins `source_hash`, then
-`deep_scoring` re-scores only `deep_completed_uuids` through the identical
-deterministic path. A program without a metadata detail is completed
-without enrichment; deep signals are never fabricated.
+The deep stage (V1.3.1) has three steps:
+
+1. **Candidate union** — after metadata scoring, each deep-dependent
+   profile (`best_ev`, `low_competition`, `authz_api`, `fresh_programs`)
+   contributes its Top `PROFILE_CANDIDATE_DEPTH` (20) *eligible* metadata
+   ranks of THIS run. `selectDeepCandidates` dedupes the union by uuid
+   (provenance: every contributing profile + the metadata rank it earned),
+   orders candidates by earliest contributing profile → best metadata
+   rank → uuid, and caps the set at `MAX_DEEP_PROGRAMS` (60) with the
+   truncation reported. No profile consumes budget before the union
+   forms, and `high_reward`/`easy_entry` contribute nothing — their
+   scores cannot move under deep evidence.
+2. **Deep enrich** — the same worker-pool discipline fetches
+   `engagement_known_issues.json` + re-reads `changelog.json` + fetches
+   the baseline `changelog/<id>.json` — **≤3 requests per candidate** —
+   writes a NEW snapshot whose `deep` payload joins `source_hash`. A
+   program without a metadata detail is completed without enrichment;
+   deep signals are never fabricated.
+3. **Deep score + frontier** — `deep_scoring` re-scores the just-enriched
+   uuids for the four deep profiles only, writing score rows under
+   `stage: "deep"` (the metadata-stage row is never overwritten).
+   `evaluateFrontier` then takes each deep profile's Top
+   `STABLE_TOP_K + STABILITY_BUFFER` (20 + 10) metadata-ranked window and
+   counts the uuids still lacking deep analysis; up to `DEEP_BATCH_SIZE`
+   (10) of them form the next batch and the loop returns to step 2. The
+   run records `deep_stabilization`: `"stable"` (every window fully
+   analyzed), `"budget_limited"` (the 60-program cap hit first), or
+   `"incomplete"` (cancelled/failed mid-loop). "Stable" is honest about
+   its bound: it asserts the bounded Top-K+buffer frontier, not a global
+   fixpoint.
 
 - `start()` is idempotent — an active run (in memory or persisted) is
   adopted and continued, never duplicated.
@@ -457,11 +507,22 @@ without enrichment; deep signals are never fabricated.
   fatal hydration class on the session surface — a cancel request →
   `cancelled`.
 - Scoring recomputes all completed uuids × all six profiles on entry;
-  `putScore` upserts by key, so re-scoring is idempotent.
+  `putScore` upserts by key, so re-scoring is idempotent. Metadata scores
+  are written at `stage: "metadata"`; deep re-scores write separate
+  `stage: "deep"` rows (same key shape plus the stage discriminator) —
+  deep analysis never destroys the metadata baseline it was computed on.
+  Deep-stage rows are written only for the four deep-dependent profiles.
+- Run records persist the deep orchestration state — `deep_pending_uuids`,
+  `deep_completed_uuids`, `deep_candidates` (uuid → contributing profiles
+  + metadata ranks), `deep_analyzed`, `deep_rounds`, `deep_budget`,
+  `deep_stabilization` — so a service-worker restart mid-deep resumes the
+  pending queue without repeating completed fetches.
 - `RadarScanSummary` verdict on termination: `failed` when the run failed;
   otherwise `complete` iff `catalog_complete` AND `enrichment_failed === 0`;
-  anything else is honestly `partial`. Warning details cap at 50 entries
-  plus a `…and N more` overflow line.
+  anything else is honestly `partial`. Deep progress surfaces as
+  `deep_candidates` / `deep_analyzed` / `deep_rounds` / `deep_budget` /
+  `deep_stabilization` on the same summary. Warning details cap at 50
+  entries plus a `…and N more` overflow line.
 
 ## Persistence
 
@@ -472,7 +533,7 @@ job tables:
 |---|---|---|---|
 | `catalog` | `uuid` | — | `RadarCatalogItem` |
 | `snapshots` | `[uuid, source_hash]` | `byUuid` | `{uuid, source_hash, stored_at, snapshot}` |
-| `scores` | `[uuid, profile, scoring_version, source_hash]` | `byUuidProfile` | `{uuid, profile, scoring_version, source_hash, stored_at, score, vector?}` |
+| `scores` | `[uuid, profile, scoring_version, source_hash]` | `byUuidProfile` | `{uuid, profile, scoring_version, source_hash, stage?, stored_at, score, vector?}` — `stage` `"metadata"`/`"deep"` (V1.3.1); legacy rows without it resolve lazily from their snapshot's deep payload |
 | `runs` | `run_id` | — | run record incl. checkpoint bookkeeping |
 | `meta` | `key` | — | `{key, value}` — holds `latestRunId` |
 
@@ -496,17 +557,17 @@ sender's document URL against the extension origin instead.
 | `RADAR_START_SCAN` | — | `{run}` — starts or adopts the active run |
 | `RADAR_CANCEL_SCAN` | — | `{run}` — cancels whichever run is active |
 | `RADAR_GET_STATE` | — | `{run}` — current run state or `null` |
-| `RADAR_GET_RESULTS` | `profile` (enum), `limit` int 1–200 (default 50), `minConfidence` 0–1 optional | `{rows}` ranked result rows |
+| `RADAR_GET_RESULTS` | `profile` (enum), `limit` int 1–200 (default 50), `minConfidence` 0–1 optional, `mode` `"metadata"`/`"deep"` (default `"metadata"`) | `{rows}` ranked result rows — rows carry `evidence_level`, `metadata_score`, `deep_score`, `score_delta` |
 | `RADAR_GET_PROGRAM` | `uuid` (the engagement's slug — `[A-Za-z0-9_-]{1,100}`), `profile` optional (router defaults to `best_ev`) | `{program}` — snapshot, score, rendered explanation, catalog row |
 
 ## Limitations
 
 - **This is a Metadata Opportunity Score plus a bounded deep pass, not
   expected value.** The ranked list is a candidate pool for deeper human
-  analysis. V1.3 sources `known_issue_density` and `opportunity_change`
-  for the deep-analyzed shortlist only; `accessibility` and
-  `authz_opportunity` remain unsourced, and no signal estimates duplicate
-  probability or guarantees undiscovered bugs.
+  analysis. `known_issue_density` and `opportunity_change` are sourced for
+  the deep-analyzed candidate union only (≤ 60 programs); `accessibility`
+  and `authz_opportunity` remain unsourced, and no signal estimates
+  duplicate probability or guarantees undiscovered bugs.
 - **`research_saturation` is not duplicate probability.** It is a
   metadata heuristic for *observed research attention*: a fixed-weight
   composite of recent crowding, valid-submission volume, and rewarded
@@ -541,8 +602,10 @@ sender's document URL against the extension origin instead.
   `easy_entry` can never exceed 0.75 coverage and always scores
   provisional.
 - **Known Issues are deep-stage only.** `engagement_known_issues.json`
-  is fetched for the ≤30-program shortlist, never catalog-wide (~1 extra
-  request per shortlisted program — verified `{"unique","total"}` shape).
+  is fetched for the ≤60-program candidate union, never catalog-wide (~1
+  extra request per candidate — verified `{"unique","total"}` shape).
+  Deep cost is bounded: ≤ 3 requests × ≤ 60 programs = ≤ 180 requests per
+  scan, on top of ~4 metadata requests per program + 1 per catalog page.
   `known_issue_density` is a duplicate-PRESSURE proxy over `unique`
   counts blended with per-target density; it is not a duplicate
   probability, and a program whose fetch fails reads `null`, never 0.
