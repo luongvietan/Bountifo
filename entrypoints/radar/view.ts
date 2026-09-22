@@ -7,7 +7,11 @@ import type {
 } from "../../lib/radar/coordinator";
 import { RADAR_PROFILES } from "../../lib/radar/profiles";
 import { RADAR_PROFILE_IDS } from "../../lib/radar/types";
-import type { ProgramScore, RadarProfileId } from "../../lib/radar/types";
+import type {
+  ProgramFeatureVector,
+  ProgramScore,
+  RadarProfileId,
+} from "../../lib/radar/types";
 
 // ---------------------------------------------------------------------------
 // Pure view helpers for the radar page — no DOM, no messaging, no clocks.
@@ -25,6 +29,22 @@ const EMPTY = "—";
 /** "0.82" for a known signal, "—" for unknown (null is never coerced to 0). */
 export function formatSignal(value: number | null): string {
   return value === null ? EMPTY : value.toFixed(2);
+}
+
+/**
+ * Display bands for the research_saturation composite. Honest wording: this
+ * is observed attention, not duplicate probability or researcher counts.
+ */
+export function saturationBand(value: number): string {
+  if (value < 0.2) return "Low";
+  if (value < 0.45) return "Moderate-low";
+  if (value < 0.7) return "Moderate-high";
+  return "High";
+}
+
+/** "0.68 · Moderate-high"; "—" when the composite has < 2 known inputs. */
+export function saturationText(value: number | null): string {
+  return value === null ? EMPTY : `${formatSignal(value)} · ${saturationBand(value)}`;
 }
 
 /** Scores arrive on a 0–100 scale (scoring.ts round1); "—" when unscored. */
@@ -155,7 +175,7 @@ export interface RowView {
   coverage: string;
   reward: string;
   surface: string;
-  competition: string;
+  saturation: string;
   freshness: string;
   /** Below the profile's confidence floor — rendered dimmed, never hidden. */
   eligible: boolean;
@@ -174,7 +194,7 @@ export function buildRow(row: RadarResultRow, rank: number): RowView {
     coverage: formatCoverage(row.confidence),
     reward: formatSignal(row.signals.reward_potential),
     surface: surfaceText(row.signals),
-    competition: formatSignal(row.signals.researcher_competition),
+    saturation: saturationText(row.signals.research_saturation),
     freshness: formatSignal(row.signals.freshness),
     eligible: row.eligible,
     provisional: row.provisional,
@@ -219,6 +239,32 @@ export function componentRows(score: ProgramScore): ComponentView[] {
       component.contribution === null
         ? EMPTY
         : component.contribution.toFixed(2),
+  }));
+}
+
+/**
+ * Saturation diagnostics for the detail pane: the composite plus its three
+ * V1.2 inputs, always shown — the composite must never hide its evidence.
+ * Values come from the embedded vector, so unweighted inputs still render.
+ */
+export function saturationRows(
+  vector: ProgramFeatureVector | null,
+): { label: string; value: string }[] {
+  const rows: { label: string; key: keyof ProgramFeatureVector }[] = [
+    { label: "Research saturation", key: "research_saturation" },
+    { label: "Recent crowding", key: "researcher_competition" },
+    { label: "Submission activity", key: "submission_activity" },
+    { label: "Rewarded activity", key: "rewarded_activity" },
+  ];
+  return rows.map(({ label, key }) => ({
+    label,
+    value:
+      vector === null
+        ? EMPTY
+        : formatSignal(
+            (vector[key] as { value: number | null } | undefined)?.value ??
+              null,
+          ),
   }));
 }
 

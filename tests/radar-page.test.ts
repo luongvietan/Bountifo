@@ -17,6 +17,8 @@ import {
   phaseLabel,
   programLabel,
   profileOptions,
+  saturationRows,
+  saturationText,
   statusText,
   surfaceText,
 } from "../entrypoints/radar/view";
@@ -56,7 +58,7 @@ function resultRow(over: Partial<RadarResultRow> = {}): RadarResultRow {
       meaningful_surface: 0.6,
       api_surface: 0.4,
       web_surface: 0.3,
-      researcher_competition: 0.25,
+      research_saturation: 0.25,
       freshness: 0.9,
     },
     ...over,
@@ -230,6 +232,56 @@ describe("programLabel / surfaceText", () => {
   });
 });
 
+describe("saturationText", () => {
+  it("renders null as an em dash — never 0", () => {
+    expect(saturationText(null)).toBe("—");
+  });
+
+  it("renders the numeric value plus an honest band label", () => {
+    expect(saturationText(0.1)).toBe("0.10 · Low");
+    expect(saturationText(0.3)).toBe("0.30 · Moderate-low");
+    expect(saturationText(0.68)).toBe("0.68 · Moderate-high");
+    expect(saturationText(0.9)).toBe("0.90 · High");
+  });
+
+  it("pins band boundaries", () => {
+    expect(saturationText(0)).toBe("0.00 · Low");
+    expect(saturationText(0.2)).toBe("0.20 · Moderate-low");
+    expect(saturationText(0.45)).toBe("0.45 · Moderate-high");
+    expect(saturationText(0.7)).toBe("0.70 · High");
+    expect(saturationText(1)).toBe("1.00 · High");
+  });
+});
+
+describe("saturationRows", () => {
+  it("exposes the composite plus all three V1.2 inputs", () => {
+    const rows = saturationRows({
+      research_saturation: { value: 0.4 },
+      researcher_competition: { value: 0.3 },
+      submission_activity: { value: 0.7 },
+      rewarded_activity: { value: 0.2 },
+    } as never);
+    expect(rows).toEqual([
+      { label: "Research saturation", value: "0.40" },
+      { label: "Recent crowding", value: "0.30" },
+      { label: "Submission activity", value: "0.70" },
+      { label: "Rewarded activity", value: "0.20" },
+    ]);
+  });
+
+  it("dashes unknown inputs and handles a missing vector", () => {
+    const rows = saturationRows({
+      research_saturation: { value: null },
+      researcher_competition: { value: 0.3 },
+      submission_activity: { value: null },
+      rewarded_activity: { value: 0.2 },
+    } as never);
+    expect(rows[0]!.value).toBe("—");
+    expect(rows[2]!.value).toBe("—");
+    expect(saturationRows(null).every((r) => r.value === "—")).toBe(true);
+  });
+});
+
 describe("buildRow / buildRows", () => {
   it("maps a coordinator row onto display cells", () => {
     expect(buildRow(resultRow(), 1)).toEqual({
@@ -240,7 +292,7 @@ describe("buildRow / buildRows", () => {
       coverage: "75%",
       reward: "0.82",
       surface: "0.60 (api 0.40 · web 0.30)",
-      competition: "0.25",
+      saturation: "0.25 · Moderate-low",
       freshness: "0.90",
       eligible: true,
       provisional: false,
@@ -298,7 +350,7 @@ describe("componentRows", () => {
         direction: "benefit",
         contribution: 2.46,
       },
-      researcher_competition: {
+      research_saturation: {
         signal: 0.4,
         weight: 1.5,
         direction: "cost",
@@ -325,8 +377,8 @@ describe("componentRows", () => {
         contribution: "2.46",
       },
       {
-        key: "researcher_competition",
-        label: "Researcher competition",
+        key: "research_saturation",
+        label: "Research saturation",
         signal: "0.40",
         weight: "+1.5 (cost)",
         contribution: "0.90",
@@ -346,7 +398,7 @@ describe("profileOptions", () => {
   it("lists the six V1 profiles in pinned order", () => {
     expect(profileOptions()).toEqual([
       { id: "best_ev", label: "Best EV" },
-      { id: "low_competition", label: "Low Competition" },
+      { id: "low_competition", label: "Low Saturation" },
       { id: "high_reward", label: "High Reward" },
       { id: "authz_api", label: "AuthZ/API" },
       { id: "fresh_programs", label: "Fresh Programs" },

@@ -14,6 +14,7 @@ import {
   formatScore,
   isActive,
   profileOptions,
+  saturationRows,
   statusText,
 } from "./view";
 
@@ -45,6 +46,8 @@ const detailTitle = document.querySelector<HTMLElement>("#detail-title")!;
 const detailMeta = document.querySelector<HTMLElement>("#detail-meta")!;
 const componentsBody =
   document.querySelector<HTMLTableSectionElement>("#components-body")!;
+const saturationBody =
+  document.querySelector<HTMLTableSectionElement>("#saturation-body")!;
 const explanationList =
   document.querySelector<HTMLUListElement>("#explanation")!;
 
@@ -93,7 +96,7 @@ function renderRows(rows: RadarResultRow[]): void {
       view.coverage,
       view.reward,
       view.surface,
-      view.competition,
+      view.saturation,
       view.freshness,
     ]) {
       cell(tr, text);
@@ -128,6 +131,14 @@ function renderDetail(detail: RadarProgramDetail, uuid: string): void {
       }
       componentsBody.append(tr);
     }
+  }
+  saturationBody.replaceChildren();
+  for (const row of saturationRows(detail.vector)) {
+    const tr = document.createElement("tr");
+    for (const text of [row.label, row.value]) {
+      cell(tr, text);
+    }
+    saturationBody.append(tr);
   }
   explanationList.replaceChildren();
   if (detail.explanation.length === 0) {

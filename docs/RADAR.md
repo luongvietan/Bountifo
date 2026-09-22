@@ -2,7 +2,7 @@
 
 Deterministic program triage over the Bugcrowd engagement catalog. Radar
 enumerates every engagement visible to the browser session, hydrates each
-program's structured brief document, reduces it to a fixed 14-signal feature vector, and
+program's structured brief document, reduces it to a fixed 16-signal feature vector, and
 ranks programs under six versioned weight profiles. No LLM participates in
 collection, extraction, scoring, ranking, or explanation. The output is a
 **Metadata Opportunity Score** — a candidate-pool ranking over cheap
@@ -29,7 +29,7 @@ GET /engagements.json?page=N    GET /engagements/<slug>/changelog.json
               pure — `now` passed in, no clock/network/storage
                                     │
                                     ▼
-               ProgramFeatureVector — 14 signals, 0..1 or null
+               ProgramFeatureVector — 16 signals, 0..1 or null
                                     │
               scoreProgram × 6 profiles (lib/radar/profiles.ts,
               lib/radar/scoring.ts) — pure, deterministic
@@ -63,8 +63,8 @@ instead of aborting the run.
 | Catalog | `GET /engagements.json?page=N` → `{engagements, paginationMeta{limit, totalCount}}` | `RadarCatalogItem` — uuid (the brief-URL slug), code (same slug), name, lifecycle_status (`accessStatus`), engagement_type (`productEngagementType.label`), discovered_at |
 | Version list | `GET /engagements/{slug}/changelog.json` → `{changelogs[]}` | the `changelogState:"Latest"` entry's `id` (fallback: first entry — the list is newest-first) |
 | Detail | `GET /engagements/{slug}/changelog/{version}.json` | `ApiEngagementData` via `lib/radar/detailMap.ts`: identity (`data.engagement.code`), `engagementTypeDetail.productLabel`, `statusLabel`, `data.engagement.startsAt`/`endsAt`, `lastTransitionAt`, `publishedAt` → `lastBriefUpdate`, `brief.safeHarborStatus.status`, scope groups (`inScope`, `rewardRange.pNMaxCents` — cents→dollars), targets (`uri`, `category`, `tags`) |
-| Stats | `GET /engagements/{slug}/statistics.json` | `statistics` — `rewardedVulnerabilities` → `vulnerabilities_rewarded`, `averagePayout` → `average_payout`, `validationWithin`, `validSubmissionCount` |
-| Joined | `GET /engagements/{slug}/recently_joined_users.json` | `statistics.researchers_participating` ← `total` (recent-joiner count — the competition proxy). Absent/`total` missing → key omitted, never invented. |
+| Stats | `GET /engagements/{slug}/statistics.json` | `statistics` — `rewardedVulnerabilities` → `vulnerabilities_rewarded`, `averagePayout` → `average_payout`, `validationWithin`, `validSubmissionCount` → `valid_submission_count` (present in the schema but currently `null` on every observed program — consumed honestly when Bugcrowd populates it) |
+| Joined | `GET /engagements/{slug}/recently_joined_users.json` | `statistics.researchers_participating` ← `total` (recent-joiner count — the recent-crowding proxy, NOT lifetime participation). Absent/`total` missing → key omitted, never invented. |
 
 The detail chain is pure JSON end-to-end — the brief's rendered page is a
 client-side SPA shell whose markup carries no scope content, so nothing on
@@ -136,7 +136,7 @@ preimage `"radar-source-v1:" + canonicalJson(projection)`.
 `extractProgramFeatures(snapshot, now)` is pure: no network, storage,
 `Date.now()`, or randomness. Every emitted value is rounded to 4 decimals;
 `null` means unknown and is never fabricated. When `snapshot.detail` is
-`null`, the eleven detail-derived signals are `null` with reason code
+`null`, the thirteen detail-derived signals are `null` with reason code
 `detail_unavailable` — nothing is inferred from the catalog row — and the
 three V1-unavailable signals keep `not_available_v1`.
 
@@ -150,8 +150,10 @@ three V1-unavailable signals keep `not_available_v1`.
 | `api_surface` | `engagement_detail` | `api_token_share` | Share of in-scope targets whose token set intersects `{api, rest, graphql, grpc, webservice, endpoint}`. 0 when no in-scope targets. |
 | `api_surface_size` | `engagement_detail` | `api_target_saturation` | `c/(c+10)` where `c` = in-scope API-token targets. The COUNT half of the API signal — a lone API target reads share 1.0 but size 0.09, so it can no longer fake breadth. 0 when no API targets. |
 | `web_surface` | `engagement_detail` | `web_token_share` | Share intersecting `{web, website, webapp, webapplication}`; a target matching neither token set whose `location` parses as http(s) counts as web. 0 when no in-scope targets. |
-| `researcher_competition` | `statistics` | `researchers_participating_saturation` | `n/(n+500)`, `n` = strict-parsed `statistics.researchers_participating` ← `recently_joined_users.total`. `null` when the endpoint errors or exposes no `total` (managed/invitational briefs often don't). |
-| `rewarded_activity` | `statistics` | `vulnerabilities_rewarded_saturation` | `n/(n+200)`, `n` = strict-parsed `statistics.vulnerabilities_rewarded`. `null` when absent/unparseable. |
+| `researcher_competition` | `statistics` | `researchers_participating_saturation` | `n/(n+500)`, `n` = strict-parsed `statistics.researchers_participating` ← `recently_joined_users.total`. **Recent crowding** — joiners over a recent window, not lifetime participants and not a researcher count. `null` when the endpoint errors or exposes no `total` (managed/invitational briefs often don't). |
+| `submission_activity` | `statistics` | `submission_count_saturation` | `n/(n+500)`, `n` = strict-parsed `statistics.valid_submission_count` — a count of valid submissions, NOT a count of researchers. `null` when absent/unparseable (currently always — see Limitations). |
+| `research_saturation` | `derived` | `research_saturation_composite` / `insufficient_saturation_components` | Weighted mean over KNOWN components: `recent_crowding` 0.30 (the `researcher_competition` value), `submission_activity` 0.40, `rewarded_activity` 0.30. A missing component drops out of numerator AND denominator — never reads as 0. `null` when fewer than 2 components are known — one noisy metric must not pose as saturation truth. This is observed research attention, not duplicate probability. |
+| `rewarded_activity` | `statistics` | `vulnerabilities_rewarded_saturation` | `n/(n+200)`, `n` = strict-parsed `statistics.vulnerabilities_rewarded` — rewarded report volume, NOT unique bugs by unique hunters. `null` when absent/unparseable. |
 | `freshness` | `engagement_detail` | `age_band` | Newest valid of `lastBriefUpdate`/`lastStatusTransition`, aged in days vs `now`. Bands below; `null` when no valid date (or invalid `now`). |
 | `safe_harbor` | `engagement_detail` | `safe_harbor_field` | `safeHarborLevel` field only: contains `full` → 1.0, `partial` → 0.5, `none`/`absent` → 0.0 (case-insensitive); anything else or missing → `null`. |
 | `target_data_quality` | `derived` | `field_completeness_mix` | Mean of four parts: fraction of in-scope targets with non-empty `category`; fraction with usable location/name; 1 iff ≥1 in-scope group exists; fraction of in-scope groups carrying ≥1 non-null reward value (a recorded 0 counts). Empty denominators score 0. `null` only when zero in-scope targets AND zero in-scope groups. |
@@ -172,8 +174,15 @@ three V1-unavailable signals keep `not_available_v1`.
 | ≥ $25,000 | 1.0 |
 
 **Saturation** — `n/(n+k)` with fixed `k`: 25 (meaningful surface),
-500 (researcher competition), 200 (rewarded activity), 10 (API target
-count).
+500 (recent crowding), 500 (submission activity), 200 (rewarded
+activity), 10 (API target count).
+
+**Research saturation composite** — `Σ w_i·c_i / Σ w_i` over known
+components only, weights `recent_crowding 0.30 / submission_activity
+0.40 / rewarded_activity 0.30` (pinned V1.2 calibration). Fewer than 2
+known components → `null`. `known_issue_density` is a declared component
+slot for V1.3 — it carries no weight yet, so wiring it later changes
+only the weight table.
 
 **Freshness bands** — evaluated in order on age in days:
 
@@ -202,15 +211,17 @@ are too noisy for a fixed curve.
 
 ## Scoring profiles
 
-Six profiles, all version `1.1.0`; retuning requires a version bump.
-V1.1 weight semantics: every weight is **non-negative** and carries a
+Six profiles; the four touched by Research Saturation are version `1.2.0`,
+the untouched two keep `1.1.0` — a version asserts the semantics, not a
+release train. Retuning requires a version bump.
+Weight semantics: every weight is **non-negative** and carries a
 `direction` — `benefit` (default; bare-number shorthand) contributes
 `w·s`, `cost` contributes `w·(1−s)`. Signals absent from a profile
 contribute nothing. `required_any` declares groups of alternative signals
 the profile considers essential: a score is `provisional` when every
 alternative in a group is null. `minConfidence` is the eligibility floor.
 
-| Signal | `best_ev` | `low_competition` | `high_reward` | `authz_api` | `fresh_programs` | `easy_entry` |
+| Signal | `best_ev` 1.2.0 | `low_competition` 1.2.0 | `high_reward` 1.1.0 | `authz_api` 1.2.0 | `fresh_programs` 1.2.0 | `easy_entry` 1.1.0 |
 |---|---|---|---|---|---|---|
 | `reward_potential` | 3 | 1 | 4 | 1.5 | 0.5 | 1 |
 | `reward_breadth` | 1 | — | 3 | — | — | 1.5 |
@@ -218,7 +229,8 @@ alternative in a group is null. `minConfidence` is the eligibility floor.
 | `api_surface` (share) | 1 | — | — | 1.5 | — | — |
 | `api_surface_size` | — | — | — | 3 | — | — |
 | `web_surface` | 1 | — | — | — | — | — |
-| `researcher_competition` | 1.5 cost | 3 cost | — | 0.5 cost | 1 cost | — |
+| `research_saturation` | 1.5 cost | 3 cost | — | 0.5 cost | 1 cost | — |
+| `researcher_competition` | — | — | — | — | — | — |
 | `rewarded_activity` | 1 | — | 1.5 | — | — | — |
 | `freshness` | 0.75 | 2 | — | 1 | 5 | 1.5 |
 | `safe_harbor` | 0.5 | — | — | 0.5 | — | 1 |
@@ -227,17 +239,24 @@ alternative in a group is null. `minConfidence` is the eligibility floor.
 | `known_issue_density` | — | — | — | — | — | — |
 | `authz_opportunity` | — | — | — | — | — | — |
 | **Σw** | **12.25** | **8** | **9** | **9.5** | **7.5** | **8** |
-| **required_any** | `competition` ∨ `known_issue` | `competition` ∨ `known_issue` | `reward_potential` | `api_surface` ∨ `api_size` | `freshness` | `accessibility` |
+| **required_any** | `saturation` ∨ `competition` ∨ `known_issue` | `saturation` ∨ `competition` ∨ `known_issue` | `reward_potential` | `api_surface` ∨ `api_size` | `freshness` | `accessibility` |
 | **minConfidence** | **0.6** | **0.5** | **0.5** | **0.5** | **0.4** | **0.3** |
 
-Intended reading: `best_ev` — balanced metadata opportunity; `low_competition` —
-uncrowded programs (recent-joiner proxy, not duplicate probability);
-`high_reward` — payout ceiling plus breadth plus proven payment activity;
-`authz_api` — API-heavy candidate, measuring share AND size so a lone API
-target cannot fake breadth; `fresh_programs` — recency-dominated;
-`easy_entry` — onboarding, whose `accessibility` weight is always unknown
-in V1, capping achievable coverage at 6/8 = 0.75 and rendering every score
-provisional by design.
+No profile weights `research_saturation` AND its constituent
+`researcher_competition` — the composite replaced the raw crowding signal
+in the score so crowding evidence is never double-counted. The raw signal
+survives only as a `required_any` fallback (a composite with < 2 known
+components is null, but crowding alone still proves the group has data).
+
+Intended reading: `best_ev` — balanced metadata opportunity;
+`low_competition` (labelled **Low Saturation**) — unsaturated programs by
+observed attention, not duplicate probability; `high_reward` — payout
+ceiling plus breadth plus proven payment activity; `authz_api` —
+API-heavy candidate, measuring share AND size so a lone API target cannot
+fake breadth; `fresh_programs` — recency-dominated; `easy_entry` —
+onboarding, whose `accessibility` weight is always unknown in V1, capping
+achievable coverage at 6/8 = 0.75 and rendering every score provisional
+by design.
 
 `freshness` carries a deliberately small `best_ev` weight: it measures
 brief/status recency, not new opportunity — wording fixes and
@@ -303,8 +322,12 @@ the value sits between thresholds (silence is a valid answer):
 | `api_surface` | ≥ 0.4 | `API_SURFACE_HIGH` | `+ substantial API surface` |
 | `api_surface_size` | ≥ 0.5 (c ≥ 10) | `API_SURFACE_LARGE` | `+ large API target count` |
 | `web_surface` | ≥ 0.4 | `WEB_SURFACE_HIGH` | `+ substantial web surface` |
-| `researcher_competition` | ≤ 0.3 (n ≤ 214) | `COMPETITION_LOW` | `+ low researcher competition` |
-| | ≥ 0.7 (n ≥ 1167) | `COMPETITION_HIGH` | `- high researcher competition` |
+| `researcher_competition` | ≤ 0.3 (n ≤ 214) | `COMPETITION_LOW` | `+ low recent crowding` |
+| | ≥ 0.7 (n ≥ 1167) | `COMPETITION_HIGH` | `- high recent crowding` |
+| `submission_activity` | ≤ 0.25 (n ≤ 167) | `SUBMISSION_ACTIVITY_LOW` | `+ low submission volume` |
+| | ≥ 0.7 (n ≥ 1167) | `SUBMISSION_ACTIVITY_HIGH` | `- high submission volume` |
+| `research_saturation` | ≤ 0.25 | `SATURATION_LOW` | `+ low observed research saturation` |
+| | ≥ 0.7 | `SATURATION_HIGH` | `- high observed research saturation` |
 | `rewarded_activity` | ≥ 0.5 (n ≥ 200) | `ACTIVITY_PROVEN` | `+ proven reward activity` |
 | `freshness` | ≥ 0.85 | `RECENTLY_UPDATED` | `+ recently updated` |
 | | ≤ 0.15 | `STALE_PROGRAM` | `- stale program` |
@@ -316,7 +339,8 @@ the value sits between thresholds (silence is a valid answer):
 
 `explainScore` renders `+ ` for positives, `- ` for cautions
 (`REWARD_LOW`, `COMPETITION_HIGH`, `STALE_PROGRAM`, `SAFE_HARBOR_ABSENT`,
-`DATA_INCOMPLETE`), `? ` for unknowns — in the score's stored `reasons`
+`DATA_INCOMPLETE`, `SUBMISSION_ACTIVITY_HIGH`, `SATURATION_HIGH`),
+`? ` for unknowns — in the score's stored `reasons`
 order. The three always-null signals emit no threshold codes, only
 `UNKNOWN_*` when a profile weights them.
 
@@ -333,7 +357,8 @@ order. The three always-null signals emit no threshold codes, only
 `getResults` returns the latest score row per engagement at the profile's
 *current* version, **scoped to the discovered set of the run
 `meta.latestRunId` points at** — its `completed_uuids ∪ pending_uuids` —
-joined with catalog identity and the vector's six display signals; an
+joined with catalog identity and the vector's six display signals
+(reward, surface trio, **research saturation**, freshness); an
 optional `minConfidence` argument filters further, and `limit` is clamped
 to 1–200 (default 50). Ineligible rows rank after all eligible ones —
 dimmed in the UI, never hidden.
@@ -419,12 +444,22 @@ sender's document URL against the extension origin instead.
   taxonomy, recent scope changes → real EV ranking). Three signals that
   would carry true EV are unsourced in V1: `known_issue_density`,
   `accessibility`, `authz_opportunity`.
-- **`researcher_competition` is not duplicate probability.** It is a
-  recent-joiner-count saturation (`n/(n+500)` over
-  `recently_joined_users.total`) — a crowd proxy only. Programs that
-  don't expose a joiner total (managed/invitational briefs) read `null`;
-  the weight then shifts into coverage loss and the `required_any` group
-  flags the score provisional.
+- **`research_saturation` is not duplicate probability.** It is a
+  metadata heuristic for *observed research attention*: a fixed-weight
+  composite of recent crowding, valid-submission volume, and rewarded
+  report volume. A high value says the program looks well-worked; it does
+  not prove bugs are gone, and a low value does not prove any remain.
+- **`researcher_competition` is recent crowding, not participation.** It
+  saturates `recently_joined_users.total` (`n/(n+500)`) — joiners over a
+  recent window, not lifetime unique researchers. Programs that don't
+  expose a joiner total (managed/invitational briefs) read `null`; the
+  composite may still form from its other components, and a fully-empty
+  `required_any` group flags the score provisional.
+- **`validSubmissionCount` currently reads null on the live site.** The
+  field exists in `statistics.json` schema but every program observed
+  ships it `null`, so `submission_activity` is honestly unknown until
+  Bugcrowd populates it — the composite then forms from the remaining two
+  components, or stays `null` itself when they too are missing.
 - **`freshness` is brief recency, not opportunity change.** A wording
   fix, contact update, or administrative edit refreshes it exactly like a
   scope expansion. `best_ev` therefore weights it lightly (0.75) until
