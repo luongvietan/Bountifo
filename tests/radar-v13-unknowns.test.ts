@@ -227,7 +227,24 @@ describe("deep signals: unknown states stay null with honest reason codes", () =
         deep: deep({
           status: "partial",
           known_issues: ki("unavailable"),
-          semantic_diff: diff("complete", { added_targets: 2 }),
+          // complete ⇒ every fact real (schema superRefine); a 2-target
+          // scope add with all other counters at 0 and flags false.
+          semantic_diff: diff("complete", {
+            added_targets: 2,
+            removed_targets: 0,
+            added_in_scope_targets: 2,
+            removed_in_scope_targets: 0,
+            moved_in_scope: 0,
+            moved_out_of_scope: 0,
+            added_api_targets: 0,
+            added_web_targets: 2,
+            added_groups: 0,
+            reward_increase: false,
+            reward_decrease: false,
+            safe_harbor_changed: false,
+            status_changed: false,
+            only_administrative_changes: false,
+          }),
         }),
       },
       "ki_unavailable",

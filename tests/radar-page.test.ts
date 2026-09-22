@@ -443,7 +443,7 @@ describe("profileOptions", () => {
       { id: "low_competition", label: "Low Saturation" },
       { id: "high_reward", label: "High Reward" },
       { id: "authz_api", label: "AuthZ/API" },
-      { id: "fresh_programs", label: "Fresh Programs" },
+      { id: "fresh_programs", label: "Fresh Opportunity" },
       { id: "easy_entry", label: "Easy Entry" },
     ]);
   });

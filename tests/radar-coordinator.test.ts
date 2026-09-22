@@ -2,6 +2,7 @@ import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiEngagementData } from "../lib/types";
 import type { CatalogScanResult } from "../lib/radar/catalog";
+import { getRadarProfile } from "../lib/radar/profiles";
 import { RADAR_PROFILE_IDS } from "../lib/radar/types";
 import type {
   RadarCatalogItem,
@@ -20,6 +21,10 @@ type StoreModule = typeof import("../lib/radar/store");
 type ErrorsModule = typeof import("../lib/api/errors");
 
 const T0 = "2026-09-21T00:00:00.000Z";
+
+/** Score rows are keyed by profile version — resolve it instead of pinning
+ *  a literal so a semantic bump (1.2.0 → 1.3.0) doesn't stale these lookups. */
+const BEST_EV_VERSION = getRadarProfile("best_ev").version;
 
 let coordinator: CoordinatorModule;
 let store: StoreModule;
@@ -227,7 +232,7 @@ describe("RadarCoordinator happy path", () => {
     const scoreRows = await store.getLatestScoreRowsForProfile(
       db,
       "best_ev",
-      "1.2.0",
+      BEST_EV_VERSION,
     );
     const rowA1 = scoreRows.find((r) => r.uuid === "u-a1");
     expect(rowA1?.vector?.reward_potential.value).not.toBeNull();
@@ -472,7 +477,7 @@ describe("RadarCoordinator resume", () => {
     );
     // The resumed uuid was scored, not merely hydrated.
     expect(
-      await store.getLatestScoreRow(db, "u-g2", "best_ev", "1.2.0"),
+      await store.getLatestScoreRow(db, "u-g2", "best_ev", BEST_EV_VERSION),
     ).not.toBeNull();
     db.close();
     // coordA is intentionally left hung on `stuck` — it models the dead worker.
@@ -656,7 +661,7 @@ describe("RadarCoordinator deep stage (V1.3)", () => {
     // while the un-enriched program keeps its metadata-hash row.
     const hiSnap = await store.getLatestSnapshot(db, "u-hi");
     expect(hiSnap?.deep?.status).toBe("complete");
-    const hiScore = await store.getLatestScoreRow(db, "u-hi", "best_ev", "1.2.0");
+    const hiScore = await store.getLatestScoreRow(db, "u-hi", "best_ev", BEST_EV_VERSION);
     expect(hiScore?.score.source_hash).toBe(hiSnap?.source_hash);
     db.close();
   });
@@ -910,7 +915,7 @@ describe("RadarCoordinator latest-run scoping", () => {
     // Non-destructive: the dropped program's cache rows are still stored…
     expect(await store.getCatalogItem(db, "u-s-old")).not.toBeNull();
     expect(
-      await store.getLatestScoreRow(db, "u-s-old", "best_ev", "1.2.0"),
+      await store.getLatestScoreRow(db, "u-s-old", "best_ev", BEST_EV_VERSION),
     ).not.toBeNull();
     db.close();
     // …but neither results nor drill-down surface it anymore.
@@ -926,7 +931,7 @@ describe("RadarCoordinator latest-run scoping", () => {
     const db = await store.openRadarStore();
     // Score rows really are in the DB…
     expect(
-      (await store.getLatestScoreRowsForProfile(db, "best_ev", "1.2.0"))
+      (await store.getLatestScoreRowsForProfile(db, "best_ev", BEST_EV_VERSION))
         .length,
     ).toBeGreaterThan(0);
     // …but with no run to scope them to, nothing ranks.
@@ -946,7 +951,7 @@ describe("RadarCoordinator latest-run scoping", () => {
     await seedCoord.waitForIdle();
     const db = await store.openRadarStore();
     expect(
-      await store.getLatestScoreRow(db, "u-empty-seed", "best_ev", "1.2.0"),
+      await store.getLatestScoreRow(db, "u-empty-seed", "best_ev", BEST_EV_VERSION),
     ).not.toBeNull();
 
     // The new latest run fails catalog discovery with zero uuids.

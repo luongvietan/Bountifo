@@ -44,6 +44,7 @@ vi.mock("../lib/api/siteClient", () => ({
 
 import { enumerateEngagementCatalog } from "../lib/radar/catalog";
 import { RadarCoordinator } from "../lib/radar/coordinator";
+import { hydrateRadarDeep } from "../lib/radar/deep";
 import { hydrateRadarProgram } from "../lib/radar/enrichment";
 import { openRadarStore, getRun } from "../lib/radar/store";
 
@@ -237,6 +238,9 @@ function makeDeps(): { deps: RadarCoordinatorDeps } {
       enumerate: (): Promise<CatalogScanResult> =>
         enumerateEngagementCatalog(T0),
       hydrate: (item) => hydrateRadarProgram(item),
+      // The landed deep stage: real orchestrator over the mocked wire —
+      // its siteRequest calls land in the same accounting.
+      deepHydrate: (item, snapshot) => hydrateRadarDeep(item, snapshot),
       openStore: openRadarStore,
       now: () => T0,
       concurrency: 2,

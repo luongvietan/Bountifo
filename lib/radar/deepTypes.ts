@@ -46,7 +46,18 @@ export const radarKnownIssueSummarySchema = z
       )
       .optional(),
   })
-  .strict();
+  .strict()
+  // complete ⇒ real counts; anything else ⇒ counts stay null. A summary
+  // claiming "complete" without counts is fabricated — reject it outright.
+  .superRefine((s, ctx) => {
+    const complete = s.status === "complete";
+    if (complete !== (s.unique_count !== null && s.total_count !== null)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "status/counts mismatch: complete requires counts",
+      });
+    }
+  });
 export type RadarKnownIssueSummary = z.infer<
   typeof radarKnownIssueSummarySchema
 >;
@@ -86,7 +97,36 @@ export const radarSemanticDiffSchema = z
      */
     only_administrative_changes: z.boolean().nullable(),
   })
-  .strict();
+  .strict()
+  // complete ⇒ every fact is a real value; unavailable/no_baseline ⇒ every
+  // fact stays null. A "complete" diff with null facts is fabricated.
+  .superRefine((d, ctx) => {
+    const facts = [
+      d.added_targets,
+      d.removed_targets,
+      d.added_in_scope_targets,
+      d.removed_in_scope_targets,
+      d.moved_in_scope,
+      d.moved_out_of_scope,
+      d.added_api_targets,
+      d.added_web_targets,
+      d.added_groups,
+      d.reward_increase,
+      d.reward_decrease,
+      d.safe_harbor_changed,
+      d.status_changed,
+      d.only_administrative_changes,
+    ];
+    const allKnown = facts.every((f) => f !== null);
+    const allNull = facts.every((f) => f === null);
+    const ok = d.status === "complete" ? allKnown : allNull;
+    if (!ok) {
+      ctx.addIssue({
+        code: "custom",
+        message: "status/facts mismatch: complete requires all facts",
+      });
+    }
+  });
 export type RadarSemanticDiff = z.infer<typeof radarSemanticDiffSchema>;
 
 /**
