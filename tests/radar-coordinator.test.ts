@@ -135,6 +135,11 @@ async function until(cond: () => Promise<boolean>, tries = 500): Promise<void> {
 interface RadarDeps {
   enumerate: () => Promise<CatalogScanResult>;
   hydrate: (it: RadarCatalogItem) => Promise<RadarProgramSnapshot>;
+  deepHydrate?: (
+    it: RadarCatalogItem,
+    snapshot: RadarProgramSnapshot,
+  ) => Promise<RadarProgramSnapshot>;
+  deepLimit?: number;
   openStore: () => Promise<import("../lib/radar/store").RadarDb>;
   now: () => string;
   concurrency?: number;
@@ -573,6 +578,196 @@ describe("RadarCoordinator resume", () => {
     expect(hydrate).not.toHaveBeenCalled();
     // The terminal run is still exposed via getState.
     expect((await coord.getState())?.run_id).toBe("run-seeded-done");
+    db.close();
+  });
+});
+
+describe("RadarCoordinator deep stage (V1.3)", () => {
+  /** A snapshot with a complete deep payload and a fresh hash. */
+  function deepSnap(
+    base: RadarProgramSnapshot,
+    unique = 10,
+  ): RadarProgramSnapshot {
+    return {
+      ...base,
+      deep: {
+        status: "complete",
+        known_issues: {
+          status: "complete",
+          unique_count: unique,
+          total_count: unique * 2,
+        },
+        semantic_diff: {
+          status: "no_baseline",
+          from_version: null,
+          to_version: "v-latest",
+          added_targets: null,
+          removed_targets: null,
+          added_in_scope_targets: null,
+          removed_in_scope_targets: null,
+          moved_in_scope: null,
+          moved_out_of_scope: null,
+          added_api_targets: null,
+          added_web_targets: null,
+          added_groups: null,
+          reward_increase: null,
+          reward_decrease: null,
+          safe_harbor_changed: null,
+          status_changed: null,
+          only_administrative_changes: null,
+        },
+      },
+      source_hash: `sha256:deep${String(++snapSeq).padStart(61, "0")}`,
+    };
+  }
+
+  it("enriches only the top-N eligible then re-scores them", async () => {
+    // u-high outranks the two low-reward programs under best_ev.
+    const items = [item("u-hi"), item("u-lo1"), item("u-lo2")];
+    const { deps } = makeDeps(items);
+    const hydrate = vi.fn(async (it: RadarCatalogItem) =>
+      snap(it, { det: detail(it.uuid, it.uuid === "u-hi" ? 9000 : 100) }),
+    );
+    deps.hydrate = hydrate;
+    const deepHydrate = vi.fn(
+      async (_it: RadarCatalogItem, s: RadarProgramSnapshot) => deepSnap(s),
+    );
+    deps.deepHydrate = deepHydrate;
+    deps.deepLimit = 2;
+    const coord = new coordinator.RadarCoordinator(deps);
+    const run = await coord.start();
+    await coord.waitForIdle();
+
+    expect(run.phase).toBe("done");
+    expect(hydrate).toHaveBeenCalledTimes(3);
+    // Deep analysis touched only the two top-ranked programs.
+    expect(deepHydrate).toHaveBeenCalledTimes(2);
+    const enriched = deepHydrate.mock.calls.map((c) => c[1].uuid).sort();
+    expect(enriched).toHaveLength(2);
+    expect(enriched).toContain("u-hi");
+
+    const db = await store.openRadarStore();
+    const persisted = await store.getRun(db, run.run_id);
+    expect(persisted?.deep_completed_uuids).toHaveLength(2);
+    expect(persisted?.deep_pending_uuids).toEqual([]);
+    expect(persisted?.deep_enriched).toBe(2);
+    // The deep payload is persisted and re-scored under its own hash: the
+    // latest best_ev row for an enriched program carries the deep source_hash
+    // while the un-enriched program keeps its metadata-hash row.
+    const hiSnap = await store.getLatestSnapshot(db, "u-hi");
+    expect(hiSnap?.deep?.status).toBe("complete");
+    const hiScore = await store.getLatestScoreRow(db, "u-hi", "best_ev", "1.2.0");
+    expect(hiScore?.score.source_hash).toBe(hiSnap?.source_hash);
+    db.close();
+  });
+
+  it("without deepHydrate the run goes straight from scoring to done", async () => {
+    const { deps } = makeDeps([item("u-nd1")]);
+    const coord = new coordinator.RadarCoordinator(deps);
+    const run = await coord.start();
+    await coord.waitForIdle();
+    expect(run.phase).toBe("done");
+    expect(run.deep_pending_uuids).toEqual([]);
+    expect(run.deep_completed_uuids).toEqual([]);
+    const db = await store.openRadarStore();
+    const persisted = await store.getRun(db, run.run_id);
+    expect(persisted?.deep_enriched).toBe(0);
+    db.close();
+  });
+
+  it("resumes a persisted deep_enriching run without re-doing completed work", async () => {
+    const db = await store.openRadarStore();
+    const itA = item("u-dp1");
+    const itB = item("u-dp2");
+    await store.putCatalogItems(db, [itA, itB]);
+    const snapA = snap(itA);
+    const snapB = snap(itB);
+    await store.putSnapshot(db, snapA, T0);
+    await store.putSnapshot(db, snapB, T0);
+    await store.putRun(db, {
+      run_id: "run-seeded-deep",
+      phase: "deep_enriching",
+      discovered: 2,
+      enriched: 2,
+      scored: 2,
+      pending_uuids: [],
+      completed_uuids: ["u-dp1", "u-dp2"],
+      deep_pending_uuids: ["u-dp1", "u-dp2"],
+      deep_completed_uuids: [],
+      deep_enriched: 0,
+      warnings: 0,
+      started_at: T0,
+      updated_at: T0,
+      catalog_complete: true,
+      enrichment_failed: 0,
+      warning_details: [],
+      cancel_requested: false,
+    });
+    await store.setLatestRunId(db, "run-seeded-deep");
+
+    const { deps, enumerate } = makeDeps([itA, itB]);
+    const deepHydrate = vi.fn(
+      async (_it: RadarCatalogItem, s: RadarProgramSnapshot) => deepSnap(s),
+    );
+    deps.deepHydrate = deepHydrate;
+    const coord = new coordinator.RadarCoordinator(deps);
+    await coord.resume();
+
+    expect(enumerate).not.toHaveBeenCalled();
+    expect(deepHydrate).toHaveBeenCalledTimes(2);
+    const rec = await store.getRun(db, "run-seeded-deep");
+    expect(rec?.phase).toBe("done");
+    expect(rec?.deep_completed_uuids).toEqual(
+      expect.arrayContaining(["u-dp1", "u-dp2"]),
+    );
+    // Both snapshots were replaced by their deep variants.
+    expect((await store.getLatestSnapshot(db, "u-dp1"))?.deep).not.toBeNull();
+    db.close();
+  });
+
+  it("a shortlisted program with no detail completes without enrichment", async () => {
+    const db = await store.openRadarStore();
+    const itA = item("u-nodetail");
+    await store.putCatalogItems(db, [itA]);
+    await store.putSnapshot(
+      db,
+      snap(itA, { status: "unavailable", error_kind: "forbidden" }),
+      T0,
+    );
+    await store.putRun(db, {
+      run_id: "run-seeded-nodetail",
+      phase: "deep_enriching",
+      discovered: 1,
+      enriched: 0,
+      scored: 0,
+      pending_uuids: [],
+      completed_uuids: ["u-nodetail"],
+      deep_pending_uuids: ["u-nodetail"],
+      deep_completed_uuids: [],
+      deep_enriched: 0,
+      warnings: 0,
+      started_at: T0,
+      updated_at: T0,
+      catalog_complete: true,
+      enrichment_failed: 1,
+      warning_details: [],
+      cancel_requested: false,
+    });
+    await store.setLatestRunId(db, "run-seeded-nodetail");
+
+    const { deps } = makeDeps([itA]);
+    const deepHydrate = vi.fn(
+      async (_it: RadarCatalogItem, s: RadarProgramSnapshot) => deepSnap(s),
+    );
+    deps.deepHydrate = deepHydrate;
+    const coord = new coordinator.RadarCoordinator(deps);
+    await coord.resume();
+
+    expect(deepHydrate).not.toHaveBeenCalled();
+    const rec = await store.getRun(db, "run-seeded-nodetail");
+    expect(rec?.phase).toBe("done");
+    expect(rec?.deep_completed_uuids).toEqual(["u-nodetail"]);
+    expect(rec?.deep_enriched).toBe(0);
     db.close();
   });
 });

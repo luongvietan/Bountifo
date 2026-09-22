@@ -64,6 +64,10 @@ export interface RadarRunState {
   scored: number;
   pending_uuids: string[];
   completed_uuids: string[];
+  /** V1.3 deep stage progress: shortlist queue, finished set, enriched count. */
+  deep_pending_uuids: string[];
+  deep_completed_uuids: string[];
+  deep_enriched: number;
   /** Total warning count (details capped — see RadarScanSummary.warnings). */
   warnings: number;
   started_at: string;
@@ -93,10 +97,6 @@ export type PersistedRadarRun = RadarRunState & {
   enrichment_failed: number;
   warning_details: string[];
   cancel_requested: boolean;
-  /** V1.3 deep stage: uuids shortlisted for Known Issues + semantic diff. */
-  deep_pending_uuids: string[];
-  deep_completed_uuids: string[];
-  deep_enriched: number;
 };
 
 /** One row of the ranked results table returned by getResults. */
@@ -146,6 +146,19 @@ export interface RadarProgramDetail {
 export interface RadarCoordinatorDeps {
   enumerate: () => Promise<CatalogScanResult>;
   hydrate: (item: RadarCatalogItem) => Promise<RadarProgramSnapshot>;
+  /**
+   * V1.3 deep enrichment for one shortlisted program: fetches the Known
+   * Issues summary + previous-changelog semantic diff and returns a NEW
+   * snapshot carrying `deep` (and the joined source_hash). Contract: never
+   * throws — a program-scoped failure returns the snapshot with a failed
+   * deep payload. When absent, the run skips the deep stage entirely.
+   */
+  deepHydrate?: (
+    item: RadarCatalogItem,
+    snapshot: RadarProgramSnapshot,
+  ) => Promise<RadarProgramSnapshot>;
+  /** Max programs deep-analyzed per run (default DEEP_ANALYSIS_LIMIT). */
+  deepLimit?: number;
   openStore: () => Promise<RadarDb>;
   now: () => string;
   concurrency?: number;
@@ -173,6 +186,14 @@ const ALL_PHASES: ReadonlySet<string> = new Set([
 
 const MAX_WARNING_DETAILS = 50;
 const MAX_RESULT_LIMIT = 200;
+
+/**
+ * V1.3 request budget: the deep stage costs 3 site requests per program
+ * (changelog list + previous brief doc + known-issues aggregate). Limiting
+ * it to the top of the best_ev metadata ranking keeps a full-catalog scan
+ * at ~4·N + 3·30 requests instead of ~7·N.
+ */
+export const DEEP_ANALYSIS_LIMIT = 30;
 
 function asCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
@@ -512,6 +533,8 @@ export class RadarCoordinator {
       if (run.phase === "catalog") await this.catalogPhase(db, run);
       if (run.phase === "enriching") await this.enrichPhase(db, run);
       if (run.phase === "scoring") await this.scorePhase(db, run);
+      if (run.phase === "deep_enriching") await this.deepEnrichPhase(db, run);
+      if (run.phase === "deep_scoring") await this.deepScorePhase(db, run);
       if (ACTIVE_PHASES.has(run.phase)) {
         // Unreachable by construction — a phase handler returned without
         // producing a terminal/next phase. Fail closed rather than hang.
@@ -582,12 +605,13 @@ export class RadarCoordinator {
   private async ensureCatalogItems(
     db: RadarDb,
     run: PersistedRadarRun,
+    uuids: readonly string[] = run.pending_uuids,
   ): Promise<void> {
-    if (run.pending_uuids.every((uuid) => this.itemsByUuid.has(uuid))) {
+    if (uuids.every((uuid) => this.itemsByUuid.has(uuid))) {
       return;
     }
     for (const it of await getCatalog(db)) this.itemsByUuid.set(it.uuid, it);
-    if (run.pending_uuids.every((uuid) => this.itemsByUuid.has(uuid))) {
+    if (uuids.every((uuid) => this.itemsByUuid.has(uuid))) {
       return;
     }
     this.addWarnings(run, ["catalog_store_incomplete"]);
@@ -707,6 +731,171 @@ export class RadarCoordinator {
         await putScore(db, score, this.deps.now(), vector);
       }
       run.scored += 1;
+      await this.checkpoint(db, run);
+    }
+
+    // Deep stage (V1.3): when a deepHydrate dep exists, shortlist the top of
+    // this run's best_ev metadata ranking for known-issues + changelog-diff
+    // enrichment. Otherwise (or an empty shortlist) the run ends here.
+    await this.buildDeepShortlist(db, run);
+    if (run.deep_pending_uuids.length > 0) {
+      run.phase = "deep_enriching";
+      await this.checkpoint(db, run);
+      return;
+    }
+    run.phase = "done";
+    this.buildSummary(run);
+    await this.checkpoint(db, run);
+    await setLatestRunId(db, run.run_id);
+  }
+
+  /**
+   * Top-N pick for deep enrichment: rank this run's best_ev metadata scores
+   * and take the first `deepLimit` eligible programs. Eligibility already
+   * encodes the profile's minConfidence floor; only uuids completed by THIS
+   * run qualify (latest-run scoping — stale rows from older runs can't
+   * sneak into the deep queue).
+   */
+  private async buildDeepShortlist(
+    db: RadarDb,
+    run: PersistedRadarRun,
+  ): Promise<void> {
+    if (this.deps.deepHydrate === undefined) return;
+    const profile = getRadarProfile("best_ev");
+    const rows = await getLatestScoreRowsForProfile(
+      db,
+      profile.id,
+      profile.version,
+    );
+    const scope = new Set(run.completed_uuids);
+    const ranked = rankPrograms(
+      rows
+        .filter((row) => scope.has(row.score.engagement_uuid))
+        .map((row) => row.score),
+      profile,
+    );
+    const limit = this.deps.deepLimit ?? DEEP_ANALYSIS_LIMIT;
+    run.deep_pending_uuids = ranked
+      .filter((entry) => entry.eligible)
+      .slice(0, limit)
+      .map((entry) => entry.score.engagement_uuid);
+  }
+
+  private async deepEnrichPhase(
+    db: RadarDb,
+    run: PersistedRadarRun,
+  ): Promise<void> {
+    if (run.phase !== "deep_enriching") return;
+    await this.ensureCatalogItems(db, run, run.deep_pending_uuids);
+    if (run.cancel_requested) {
+      run.phase = "cancelled";
+      await this.checkpoint(db, run);
+      return;
+    }
+    if (run.deep_pending_uuids.length > 0) {
+      const queue = [...run.deep_pending_uuids];
+      const control: { stopped: boolean } = { stopped: false };
+      const workers = Array.from(
+        { length: Math.min(this.concurrency, queue.length) },
+        () => this.deepWorker(db, run, queue, control),
+      );
+      await Promise.all(workers);
+      if (control.stopped) {
+        run.phase = "failed";
+        this.buildSummary(run);
+        await this.checkpoint(db, run);
+        return;
+      }
+      if (run.cancel_requested) {
+        run.phase = "cancelled";
+        await this.checkpoint(db, run);
+        return;
+      }
+    }
+    run.phase = "deep_scoring";
+    await this.checkpoint(db, run);
+  }
+
+  /**
+   * Deep worker: pops a shortlisted uuid, loads its latest snapshot, and
+   * calls the injected deepHydrate (which fetches Known Issues + the
+   * previous changelog doc). The enriched snapshot replaces the latest row
+   * via putSnapshot — deep data is joined into source_hash, so the same
+   * deterministic scoring path re-scores it in deep_scoring. Programs with
+   * no metadata detail are completed without enrichment — deep signals are
+   * never fabricated.
+   */
+  private async deepWorker(
+    db: RadarDb,
+    run: PersistedRadarRun,
+    queue: string[],
+    control: { stopped: boolean },
+  ): Promise<void> {
+    while (!control.stopped && !run.cancel_requested) {
+      const uuid = queue.shift();
+      if (uuid === undefined) return;
+      const markCompleted = async (): Promise<void> => {
+        run.deep_pending_uuids = run.deep_pending_uuids.filter(
+          (u) => u !== uuid,
+        );
+        run.deep_completed_uuids.push(uuid);
+        await this.checkpoint(db, run);
+      };
+      const item = this.itemsByUuid.get(uuid);
+      if (item === undefined) {
+        this.addWarnings(run, [`${uuid}: missing_catalog_item`]);
+        await markCompleted();
+        continue;
+      }
+      const snapshot = await getLatestSnapshot(db, uuid);
+      if (snapshot === null || snapshot.detail === null) {
+        // Nothing to anchor the diff/KI signals to — honest skip.
+        await markCompleted();
+        continue;
+      }
+      let enriched: RadarProgramSnapshot;
+      try {
+        enriched = await this.deps.deepHydrate!(item, snapshot);
+      } catch (err) {
+        // deepHydrate promises never to throw; a throw is a plumbing bug and
+        // treated as fatal (same contract as hydrate).
+        control.stopped = true;
+        this.addWarnings(run, [
+          `${uuid}: ${err instanceof ApiError ? err.kind : "unknown"}`,
+        ]);
+        await this.checkpoint(db, run);
+        return;
+      }
+      await putSnapshot(db, enriched, this.deps.now());
+      if (enriched.deep != null) run.deep_enriched += 1;
+      await markCompleted();
+    }
+  }
+
+  /**
+   * Re-score only the programs whose snapshot gained deep data. The same
+   * deterministic extract+score path produces the deep-informed score under
+   * the new source_hash; uuids completed without deep data are skipped.
+   */
+  private async deepScorePhase(
+    db: RadarDb,
+    run: PersistedRadarRun,
+  ): Promise<void> {
+    const now = this.deps.now();
+    for (const uuid of [...run.deep_completed_uuids]) {
+      if (run.cancel_requested) {
+        run.phase = "cancelled";
+        await this.checkpoint(db, run);
+        return;
+      }
+      const snapshot = await getLatestSnapshot(db, uuid);
+      if (snapshot === null || snapshot.deep == null) continue;
+      const vector = extractProgramFeatures(snapshot, now);
+      for (const profileId of RADAR_PROFILE_IDS) {
+        const profile = getRadarProfile(profileId);
+        const score = scoreProgram(snapshot, vector, profile);
+        await putScore(db, score, this.deps.now(), vector);
+      }
       await this.checkpoint(db, run);
     }
     run.phase = "done";
