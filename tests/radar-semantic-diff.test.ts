@@ -88,6 +88,9 @@ function makeDetail(partial: Partial<ApiEngagementData> = {}): ApiEngagementData
     statistics: {},
     targetGroups: [],
     targets: [],
+    participation: null,
+    credentialsProvided: null,
+    briefText: null,
     observedApiVersion: null,
     ...partial,
   };

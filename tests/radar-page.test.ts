@@ -97,6 +97,8 @@ function resultRow(over: Partial<RadarResultRow> = {}): RadarResultRow {
       freshness: 0.9,
       known_issue_density: null,
       opportunity_change: null,
+      accessibility: null,
+      authz_opportunity: null,
     },
     ...over,
   };

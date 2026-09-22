@@ -90,6 +90,9 @@ function api(overrides: Partial<ApiEngagementData> = {}): ApiEngagementData {
     },
     targetGroups: [apiGroup()],
     targets: [apiTarget()],
+    participation: null,
+    credentialsProvided: null,
+    briefText: null,
     observedApiVersion: "1.1.0",
     ...overrides,
   };

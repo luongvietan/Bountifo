@@ -71,6 +71,9 @@ function detail(overrides: Partial<ApiEngagementData> = {}): ApiEngagementData {
         inScope: true,
       },
     ],
+    participation: null,
+    credentialsProvided: null,
+    briefText: null,
     observedApiVersion: "2026-09-01",
     ...overrides,
   };

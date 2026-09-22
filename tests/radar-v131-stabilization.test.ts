@@ -150,6 +150,9 @@ function detail(uuid: string, o: DetailOpts = {}): ApiEngagementData {
       },
     ],
     targets,
+    participation: null,
+    credentialsProvided: null,
+    briefText: null,
     observedApiVersion: "v1",
   };
 }

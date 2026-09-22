@@ -185,6 +185,12 @@ export interface RadarResultSignals {
   /** V1.3 semantic opportunity change — null unless the program was
    *  deep-analyzed (null ≠ "no change"). */
   opportunity_change: number | null;
+  /** V1.4 entry-friction reading — null until the sourced rubric lands
+   *  (contract stub keeps it unknown). */
+  accessibility: number | null;
+  /** V1.4 authz test-surface reading — null until the sourced rubric
+   *  lands (contract stub keeps it unknown). */
+  authz_opportunity: number | null;
 }
 
 /** Envelope returned by getProgram. */
@@ -708,6 +714,8 @@ export class RadarCoordinator {
           freshness: vector?.freshness.value ?? null,
           known_issue_density: vector?.known_issue_density.value ?? null,
           opportunity_change: vector?.opportunity_change.value ?? null,
+          accessibility: vector?.accessibility.value ?? null,
+          authz_opportunity: vector?.authz_opportunity.value ?? null,
         },
       });
     }

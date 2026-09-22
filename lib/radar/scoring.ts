@@ -74,8 +74,10 @@ const REASON_RULES: Record<RadarFeatureKey, (s: number) => string | null> = {
   // ≥0.7 pressured); opportunity names the two ends of the diff axis —
   // a near-zero score means "analyzed, nothing grew" (text-only), which is
   // a caution, while real scope movement is the benefit this signal buys.
-  // accessibility/authz stay UNKNOWN_* — still no deterministic source.
-  accessibility: () => null,
+  // V1.4 contract: accessibility/authz rules are pinned now — inert while
+  // the contract stubs return null (rules never see a null value).
+  accessibility: (s) =>
+    s >= 0.7 ? "ACCESS_OPEN" : s <= 0.3 ? "ACCESS_GATED" : null,
   known_issue_density: (s) =>
     s <= 0.25 ? "KI_PRESSURE_LOW" : s >= 0.7 ? "KI_PRESSURE_HIGH" : null,
   opportunity_change: (s) =>
@@ -84,7 +86,8 @@ const REASON_RULES: Record<RadarFeatureKey, (s: number) => string | null> = {
       : s <= 0.1
         ? "OPPORTUNITY_TEXT_ONLY"
         : null,
-  authz_opportunity: () => null,
+  authz_opportunity: (s) =>
+    s >= 0.5 ? "AUTHZ_SURFACE" : s <= 0.15 ? "AUTHZ_PROHIBITED" : null,
 };
 
 /**
@@ -118,6 +121,10 @@ export const REASON_TEXT: Record<string, string> = {
   KI_PRESSURE_HIGH: "high known-issue pressure",
   OPPORTUNITY_EXPANDED: "scope expanded in latest diff",
   OPPORTUNITY_TEXT_ONLY: "no scope growth in latest diff",
+  ACCESS_OPEN: "open access program",
+  ACCESS_GATED: "restricted or gated access",
+  AUTHZ_SURFACE: "authenticated authz test surface",
+  AUTHZ_PROHIBITED: "cross-account testing prohibited",
   ...Object.fromEntries(
     RADAR_FEATURE_KEYS.map((key) => [
       `UNKNOWN_${key.toUpperCase()}`,
@@ -137,6 +144,8 @@ const CAUTION_CODES: ReadonlySet<string> = new Set([
   "SATURATION_HIGH",
   "KI_PRESSURE_HIGH",
   "OPPORTUNITY_TEXT_ONLY",
+  "ACCESS_GATED",
+  "AUTHZ_PROHIBITED",
 ]);
 
 /** V1.1 weight normalization: bare number → benefit; object → declared

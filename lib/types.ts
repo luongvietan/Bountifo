@@ -144,6 +144,24 @@ export interface ApiEngagementData {
   statistics: Record<string, { value: string; window: string | null }>;
   targetGroups: ApiTargetGroup[];
   targets: ApiTarget[];
+  /**
+   * V1.4 brief-facts capture — the participation/access posture published on
+   * the brief document (`data.engagementConfiguration.participation`,
+   * falling back to the root `participation`); null when the doc carries
+   * neither.
+   */
+  participation: string | null;
+  /**
+   * V1.4: true when the brief doc's `credentialsUrl` is a non-empty string
+   * (the program ships test credentials); null when the field is absent.
+   */
+  credentialsProvided: boolean | null;
+  /**
+   * V1.4: normalized plaintext of `data.brief.description` + "\n" +
+   * `data.brief.targetsOverview` (see lib/radar/briefText.ts); null when both
+   * are absent/empty.
+   */
+  briefText: string | null;
   observedApiVersion: string | null;
 }
 

@@ -86,6 +86,9 @@ function detail(uuid: string): ApiEngagementData {
         inScope: true,
       },
     ],
+    participation: null,
+    credentialsProvided: null,
+    briefText: null,
     observedApiVersion: "2026-09-20",
   };
 }

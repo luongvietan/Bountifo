@@ -90,6 +90,9 @@ function detail(uuid: string, p1: number | null = 5000): ApiEngagementData {
         inScope: true,
       },
     ],
+    participation: null,
+    credentialsProvided: null,
+    briefText: null,
     observedApiVersion: "2026-09-20",
   };
 }
@@ -826,7 +829,9 @@ describe("RadarCoordinator queries", () => {
     expect(highRow.score).not.toBeNull();
     expect(highRow.signals.reward_potential).not.toBeNull();
     expect(Object.keys(highRow.signals).sort()).toEqual([
+      "accessibility",
       "api_surface",
+      "authz_opportunity",
       "freshness",
       "known_issue_density",
       "meaningful_surface",

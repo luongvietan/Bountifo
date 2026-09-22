@@ -127,22 +127,24 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
   },
   /**
    * V1 meaning: "API-heavy / authenticated-research-friendly candidate" —
-   * NOT a proven IDOR opportunity. `authz_opportunity` stays unweighted
-   * because it is always null in V1 (no deterministic source exists until
-   * deep program analysis lands). API surface is measured two ways so a
+   * NOT a proven IDOR opportunity. API surface is measured two ways so a
    * lone API target cannot fake breadth: share (`api_surface`) and size
    * (`api_surface_size`, saturation over target count). The small cost
    * weight uses the saturation composite rather than raw crowding. V1.3
    * adds a small `opportunity_change` benefit — a diff that just added API
-   * scope is exactly this profile's game.
+   * scope is exactly this profile's game. V1.4 adds `authz_opportunity`
+   * (weight 2, after api_surface_size) — the brief-derived authz-surface
+   * reading the profile was named for; while the contract stub keeps it
+   * null it still contributes UNKNOWN_ coverage, not a score change.
    */
   authz_api: {
     id: "authz_api",
-    version: "1.3.0",
+    version: "1.4.0",
     label: "AuthZ/API",
     weights: {
       api_surface: 1.5,
       api_surface_size: 3,
+      authz_opportunity: 2,
       meaningful_surface: 1.5,
       reward_potential: 1.5,
       freshness: 1,
@@ -174,15 +176,15 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
     minConfidence: 0.4,
   },
   /**
-   * Onboarding hunter. `accessibility` is always null in V1 (account/setup
-   * requirements need deep analysis), so every score here is inherently
-   * provisional and coverage is capped at 6/8 — that honesty is the plan's
-   * intent, not a bug: an entry-friction claim must show it is partly
-   * unknown.
+   * Onboarding hunter. `accessibility` (weight 2, required_any) is sourced
+   * in V1.4 from the brief's participation posture, credentials flag and
+   * signup/friction markers — scores can leave `provisional`. While the
+   * contract stub keeps the signal null the behavior is unchanged:
+   * provisional, coverage capped at 6/8.
    */
   easy_entry: {
     id: "easy_entry",
-    version: "1.1.0",
+    version: "1.4.0",
     label: "Easy Entry",
     weights: {
       accessibility: 2,

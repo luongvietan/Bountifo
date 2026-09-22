@@ -93,15 +93,16 @@ describe("RADAR_PROFILES pinned V1.3 calibration", () => {
     expect(Object.keys(RADAR_PROFILES).sort()).toEqual(
       [...RADAR_PROFILE_IDS].sort(),
     );
-    // Deep-signal-touched profiles bumped to 1.3.0; untouched keep 1.1.0 —
-    // a version asserts the semantics, not a release train.
+    // Deep-signal-touched profiles bumped to 1.3.0; V1.4 sourced-signal
+    // profiles (easy_entry, authz_api) bump to 1.4.0; untouched keep their
+    // versions — a version asserts the semantics, not a release train.
     const versions: Record<string, string> = {
       best_ev: "1.3.0",
       low_competition: "1.3.0",
       high_reward: "1.1.0",
-      authz_api: "1.3.0",
+      authz_api: "1.4.0",
       fresh_programs: "1.3.0",
-      easy_entry: "1.1.0",
+      easy_entry: "1.4.0",
     };
     for (const id of RADAR_PROFILE_IDS) {
       expect(getRadarProfile(id).version).toBe(versions[id]);
@@ -171,13 +172,14 @@ describe("RADAR_PROFILES pinned V1.3 calibration", () => {
     expect(p.required_any).toEqual([["reward_potential"]]);
   });
 
-  it("authz_api — AuthZ/API, minConfidence 0.5, share+size split, small opportunity benefit", () => {
+  it("authz_api — AuthZ/API, minConfidence 0.5, share+size split, V1.4 authz weight", () => {
     const p = getRadarProfile("authz_api");
     expect(p.label).toBe("AuthZ/API");
     expect(p.minConfidence).toBe(0.5);
     expect(p.weights).toEqual({
       api_surface: 1.5,
       api_surface_size: 3,
+      authz_opportunity: 2,
       meaningful_surface: 1.5,
       reward_potential: 1.5,
       freshness: 1,
@@ -188,8 +190,9 @@ describe("RADAR_PROFILES pinned V1.3 calibration", () => {
     expect(p.required_any).toEqual([
       ["api_surface", "api_surface_size"],
     ]);
-    // Always null in V1 — a weight would only manufacture UNKNOWNs.
-    expect(p.weights.authz_opportunity).toBeUndefined();
+    // V1.4: authz_opportunity is weighted (2, right after api_surface_size);
+    // the contract stub keeps it null → UNKNOWN coverage, not a score input.
+    expect(p.weights.authz_opportunity).toBe(2);
   });
 
   it("fresh_programs — relabeled Fresh Opportunity, minConfidence 0.4, opportunity dominates", () => {
@@ -208,7 +211,7 @@ describe("RADAR_PROFILES pinned V1.3 calibration", () => {
     expect(p.required_any).toEqual([["freshness", "opportunity_change"]]);
   });
 
-  it("easy_entry — Easy Entry, minConfidence 0.3, untouched at 1.1.0", () => {
+  it("easy_entry — Easy Entry, minConfidence 0.3, V1.4 accessibility sourced", () => {
     const p = getRadarProfile("easy_entry");
     expect(p.label).toBe("Easy Entry");
     expect(p.minConfidence).toBe(0.3);
@@ -433,7 +436,7 @@ describe("scoreProgram math", () => {
     expect(Object.keys(s.components)).toEqual(Object.keys(p.weights));
   });
 
-  it("caps easy_entry coverage at 0.75 and flags provisional — accessibility is always null by design", () => {
+  it("caps easy_entry coverage at 0.75 and flags provisional while accessibility is null (contract stub)", () => {
     const p = getRadarProfile("easy_entry");
     const s = scoreProgram(
       snapshot("u1"),
@@ -443,7 +446,7 @@ describe("scoreProgram math", () => {
         safe_harbor: 1,
         meaningful_surface: 1,
         reward_potential: 1,
-        // accessibility: null — no V1 source exists.
+        // accessibility: null — the V1.4 contract stub keeps it unknown.
       }),
       p,
     );

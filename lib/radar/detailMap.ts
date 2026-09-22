@@ -1,5 +1,6 @@
 import { ApiError } from "../api/errors";
 import type { ApiEngagementData, ApiTarget, ApiTargetGroup } from "../types";
+import { briefTextFromDoc } from "./briefText";
 
 /**
  * Maps the structured researcher-site brief document onto ApiEngagementData —
@@ -171,6 +172,15 @@ export function mapBriefDocument(
   const engagement = asRecord(data.engagement) ?? {};
   const typeDetail = asRecord(root?.engagementTypeDetail) ?? {};
   const safeHarbor = asRecord(brief.safeHarborStatus) ?? {};
+  const engagementConfiguration = asRecord(data.engagementConfiguration) ?? {};
+  // V1.4: credentialsProvided is true iff the doc publishes a non-empty
+  // credentialsUrl; an absent/null field stays null (unknown — the doc
+  // makes no statement), a present-but-empty/odd value is false.
+  const credentialsUrl = root?.credentialsUrl;
+  const credentialsProvided =
+    credentialsUrl === undefined || credentialsUrl === null
+      ? null
+      : typeof credentialsUrl === "string" && credentialsUrl !== "";
 
   const targetGroups: ApiTargetGroup[] = [];
   const targets: ApiTarget[] = [];
@@ -211,6 +221,13 @@ export function mapBriefDocument(
     })(),
     targetGroups,
     targets,
+    // Participation posture: the typed engagementConfiguration field wins;
+    // the root-level `participation` is the fallback (both observed live).
+    participation:
+      asString(engagementConfiguration.participation) ??
+      asString(root?.participation),
+    credentialsProvided,
+    briefText: briefTextFromDoc(doc),
     observedApiVersion: asString(root?.id),
   };
 }

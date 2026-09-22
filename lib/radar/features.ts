@@ -1,6 +1,9 @@
 import type { ApiEngagementData, ApiTarget, ApiTargetGroup } from "../types";
+import { accessibilitySignal } from "./accessibility";
+import { authzOpportunitySignal } from "./authz";
 import { opportunityChangeScore } from "./diff";
 import { knownIssueDensity as knownIssueDensityValue } from "./knownIssues";
+import { classifyTarget } from "./surface";
 import type {
   ProgramFeatureVector,
   RadarProgramSnapshot,
@@ -84,22 +87,9 @@ const SATURATION_WEIGHTS = {
 // saturation — the composite reports null instead.
 const MIN_SATURATION_COMPONENTS = 2;
 
-// Deterministic surface token sets — exact token membership only, so
-// substring traps ("capitol"⊅"api", "restaurant"⊅"rest") never match.
-const API_TOKENS: ReadonlySet<string> = new Set([
-  "api",
-  "rest",
-  "graphql",
-  "grpc",
-  "webservice",
-  "endpoint",
-]);
-const WEB_TOKENS: ReadonlySet<string> = new Set([
-  "web",
-  "website",
-  "webapp",
-  "webapplication",
-]);
+// The deterministic surface token sets live in ./surface (shared with the
+// semantic differ since V1.4) — exact token membership only, so substring
+// traps ("capitol"⊅"api", "restaurant"⊅"rest") never match.
 
 // Freshness age bands (days → value), evaluated in order; older → 0.15.
 const FRESHNESS_BANDS: ReadonlyArray<readonly [number, number]> = [
@@ -197,6 +187,9 @@ export function extractProgramFeatures(
       freshness: unavailable("engagement_detail"),
       safe_harbor: unavailable("engagement_detail"),
       target_data_quality: unavailable("derived"),
+      // detail === null keeps the V1.4 signals honestly null too — nothing
+      // is inferred from the catalog row even though lifecycle_status
+      // exists (pinned: the sourced stubs are never reached on this path).
       accessibility: notAvailableV1(),
       known_issue_density: unavailable("deep_enrichment"),
       opportunity_change: unavailable("deep_enrichment"),
@@ -247,10 +240,12 @@ export function extractProgramFeatures(
     freshness: freshness(detail, Date.parse(now)),
     safe_harbor: safeHarbor(detail),
     target_data_quality: targetDataQuality(inScopeTargets, inScopeGroups),
-    accessibility: notAvailableV1(),
+    // V1.4 contract stubs — real sources land with Agents A/B; until then
+    // they return the identical honest-null shape notAvailableV1() produced.
+    accessibility: accessibilitySignal(detail, snapshot.catalog),
     known_issue_density: knownIssueDensity(snapshot),
     opportunity_change: opportunityChange(snapshot),
-    authz_opportunity: notAvailableV1(),
+    authz_opportunity: authzOpportunitySignal(detail),
   };
 }
 
@@ -393,44 +388,10 @@ function meaningfulSurface(inScopeTargets: ApiTarget[]): RadarSignal {
 }
 
 /**
- * Token set of a target: category, name and each tag, lowercased and split on
- * non-alphanumeric runs. Exact set membership only — never substring match.
- * `location` is deliberately NOT tokenized: the web fallback reads it as a
- * URL instead.
+ * Surface classification — the shared classifier in ./surface decides each
+ * target's api/web flags; here we only count. A target may be both api and
+ * web; the http(s) fallback fires only when NEITHER token set matched.
  */
-function tokenSet(target: ApiTarget): Set<string> {
-  const out = new Set<string>();
-  const fields: unknown[] = [
-    target.category,
-    target.name,
-    ...(Array.isArray(target.tags) ? target.tags : []),
-  ];
-  for (const field of fields) {
-    if (typeof field !== "string") continue;
-    for (const token of field.toLowerCase().split(/[^a-z0-9]+/)) {
-      if (token !== "") out.add(token);
-    }
-  }
-  return out;
-}
-
-function intersects(a: Set<string>, b: ReadonlySet<string>): boolean {
-  for (const token of a) if (b.has(token)) return true;
-  return false;
-}
-
-/** True iff `location` parses as an http(s) URL — a web target absent other
- *  info. */
-function isHttpUrl(location: string | null): boolean {
-  if (location === null) return false;
-  try {
-    const protocol = new URL(location.trim()).protocol;
-    return protocol === "http:" || protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
 function classifySurfaces(inScopeTargets: ApiTarget[]): {
   api: RadarSignal;
   apiSize: RadarSignal;
@@ -439,13 +400,9 @@ function classifySurfaces(inScopeTargets: ApiTarget[]): {
   let apiCount = 0;
   let webCount = 0;
   for (const target of inScopeTargets) {
-    const tokens = tokenSet(target);
-    const isApi = intersects(tokens, API_TOKENS);
-    const isWeb = intersects(tokens, WEB_TOKENS);
-    if (isApi) apiCount++;
-    if (isWeb) webCount++;
-    // Fallback: matches NEITHER set but location is an http(s) URL → web.
-    if (!isApi && !isWeb && isHttpUrl(target.location)) webCount++;
+    const surface = classifyTarget(target);
+    if (surface.api) apiCount++;
+    if (surface.web) webCount++;
   }
   const total = inScopeTargets.length;
   return {

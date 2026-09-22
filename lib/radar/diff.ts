@@ -1,5 +1,6 @@
 import type { ApiEngagementData, ApiTarget, ApiTargetGroup } from "../types";
 import type { RadarSemanticDiff } from "./deepTypes";
+import { classifyTarget } from "./surface";
 
 // ---------------------------------------------------------------------------
 // Radar V1.3 semantic brief differ — turns "the changelog published again"
@@ -110,73 +111,12 @@ function indexBy<T>(items: T[], key: (item: T) => string): Map<string, T> {
 }
 
 // ---------------------------------------------------------------------------
-// Surface classification — copied VERBATIM from lib/radar/features.ts
-// (API_TOKENS/WEB_TOKENS token sets, tokenSet, intersects, isHttpUrl and the
-// isApi/isWeb/http-fallback counting inside classifySurfaces). The differ
-// must not import features.ts's private helpers, so they are reimplemented
-// identically on purpose: same sets, same exact-token membership (never
-// substring), same http(s)-location web fallback. Keep the two in sync —
-// drift would make added_api_targets/added_web_targets disagree with
-// api_surface/web_surface computed over the same document.
+// Surface classification — shared with features.ts via ./surface since V1.4
+// (the differ used to keep a verbatim private copy). Same token sets, same
+// exact-token membership (never substring), same http(s)-location web
+// fallback — one implementation, so added_api_targets/added_web_targets can
+// never drift from api_surface/web_surface over the same document.
 // ---------------------------------------------------------------------------
-
-const API_TOKENS: ReadonlySet<string> = new Set([
-  "api",
-  "rest",
-  "graphql",
-  "grpc",
-  "webservice",
-  "endpoint",
-]);
-const WEB_TOKENS: ReadonlySet<string> = new Set([
-  "web",
-  "website",
-  "webapp",
-  "webapplication",
-]);
-
-function tokenSet(target: ApiTarget): Set<string> {
-  const out = new Set<string>();
-  const fields: unknown[] = [
-    target.category,
-    target.name,
-    ...(Array.isArray(target.tags) ? target.tags : []),
-  ];
-  for (const field of fields) {
-    if (typeof field !== "string") continue;
-    for (const token of field.toLowerCase().split(/[^a-z0-9]+/)) {
-      if (token !== "") out.add(token);
-    }
-  }
-  return out;
-}
-
-function intersects(a: Set<string>, b: ReadonlySet<string>): boolean {
-  for (const token of a) if (b.has(token)) return true;
-  return false;
-}
-
-function isHttpUrl(location: string | null): boolean {
-  if (location === null) return false;
-  try {
-    const protocol = new URL(location.trim()).protocol;
-    return protocol === "http:" || protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-/** Same counting as classifySurfaces: a target may be both api and web;
- *  the http(s) fallback fires only when NEITHER token set matched. */
-function classifyTarget(target: ApiTarget): { api: boolean; web: boolean } {
-  const tokens = tokenSet(target);
-  const isApi = intersects(tokens, API_TOKENS);
-  const isWeb = intersects(tokens, WEB_TOKENS);
-  return {
-    api: isApi,
-    web: isWeb || (!isApi && !isWeb && isHttpUrl(target.location)),
-  };
-}
 
 /**
  * Diffs the current brief document against a previous version.

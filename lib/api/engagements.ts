@@ -259,6 +259,10 @@ export function parseEngagement(
     statistics: parseStatistics(attrs.statistics),
     targetGroups: rawGroups.map(parseTargetGroup),
     targets: rawTargets.map(parseTarget),
+    // V1.4 brief facts have no org-API source — honestly null.
+    participation: null,
+    credentialsProvided: null,
+    briefText: null,
     observedApiVersion,
   };
 }

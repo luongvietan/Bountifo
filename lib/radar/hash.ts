@@ -72,6 +72,10 @@ function detailProjection(detail: ApiEngagementData) {
       .map(groupProjection)
       .sort(byIdThenContent),
     targets: detail.targets.map(targetProjection).sort(byIdThenContent),
+    // V1.4 brief facts are scoring inputs — they join the preimage.
+    participation: detail.participation,
+    credentialsProvided: detail.credentialsProvided,
+    briefText: detail.briefText,
     // observedApiVersion excluded: volatile response-header bookkeeping.
   };
 }

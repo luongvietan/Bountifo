@@ -119,10 +119,13 @@
         "inScope": false
       }
     ],
+    "participation": null,
+    "credentialsProvided": null,
+    "briefText": null,
     "observedApiVersion": "2026-09-20"
   },
   "enrichment": {
     "status": "complete"
   },
-  "source_hash": "sha256:6680dfe323e4525b50f38475c4a65c8b1bb020650e4b7906278a37d17fea0e26"
+  "source_hash": "sha256:ee3fe4c768fdf41a94f3a7fdfa1c14f6fdcfe78a32838145c52ce76fa425724c"
 }

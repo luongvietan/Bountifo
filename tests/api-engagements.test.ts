@@ -126,6 +126,10 @@ describe("parseEngagement", () => {
           inScope: false,
         },
       ],
+      // V1.4 brief-facts fields: the org-API path has no source — all null.
+      participation: null,
+      credentialsProvided: null,
+      briefText: null,
       observedApiVersion: "1.1.0",
     });
   });

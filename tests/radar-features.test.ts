@@ -124,6 +124,9 @@ function detail(overrides: Partial<ApiEngagementData> = {}): ApiEngagementData {
     statistics: {},
     targetGroups: [],
     targets: [],
+    participation: null,
+    credentialsProvided: null,
+    briefText: null,
     observedApiVersion: null,
     ...overrides,
   };
@@ -940,7 +943,7 @@ describe("target_data_quality composite", () => {
   });
 });
 
-describe("always-null V1 signals", () => {
+describe("V1.4 contract-stub signals", () => {
   it("never fabricates accessibility / known_issue_density / authz_opportunity", () => {
     const v = vector(
       detail({
@@ -954,6 +957,9 @@ describe("always-null V1 signals", () => {
         lastBriefUpdate: daysAgo(1),
       }),
     );
+    // V1.4 contract stubs — sourced modules exist (accessibility.ts /
+    // authz.ts) but return the honest-null shape until Agents A/B land
+    // the real rubrics.
     for (const key of [
       "accessibility",
       "authz_opportunity",
