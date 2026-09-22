@@ -530,12 +530,20 @@ export class RadarCoordinator {
 
   /**
    * The discovered set of the run `meta.latestRunId` points at:
-   * completed ∪ pending uuids. Result queries are always scoped to it —
-   * a program absent from the latest run stops ranking (non-destructively:
-   * its catalog/snapshot/score rows stay cached for future runs), and a
-   * missing run or empty discovery honestly yields an empty set.
+   * completed ∪ pending uuids — plus the uuids that run's deep stage
+   * completed. Result queries are always scoped to it — a program absent
+   * from the latest run stops ranking (non-destructively: its
+   * catalog/snapshot/score rows stay cached for future runs), and a missing
+   * run or empty discovery honestly yields an empty set.
+   *
+   * `deepCompleted` gates the "deep" evidence level: only programs the
+   * LATEST run actually deep-analyzed display deep scores/badges. A stale
+   * deep row from an earlier scan stays cached but is not presented as
+   * current evidence.
    */
-  private async latestRunScope(db: RadarDb): Promise<Set<string> | null> {
+  private async latestRunContext(
+    db: RadarDb,
+  ): Promise<{ scope: Set<string>; deepCompleted: Set<string> } | null> {
     const runId = await getLatestRunId(db);
     if (runId === null) return null;
     const record = await getRun(db, runId);
@@ -543,7 +551,10 @@ export class RadarCoordinator {
     const scope = new Set<string>();
     for (const uuid of asStringList(record.completed_uuids)) scope.add(uuid);
     for (const uuid of asStringList(record.pending_uuids)) scope.add(uuid);
-    return scope;
+    return {
+      scope,
+      deepCompleted: new Set(asStringList(record.deep_completed_uuids)),
+    };
   }
 
   /**
@@ -567,8 +578,8 @@ export class RadarCoordinator {
     mode: RadarResultMode = "metadata",
   ): Promise<RadarResultRow[]> {
     const db = await this.database();
-    const scope = await this.latestRunScope(db);
-    if (scope === null) return [];
+    const ctx = await this.latestRunContext(db);
+    if (ctx === null) return [];
     const profile = getRadarProfile(profileId);
     const staged = await getLatestScoreRowsByStage(
       db,
@@ -576,9 +587,13 @@ export class RadarCoordinator {
       profile.version,
     );
     const inScope = (rows: ScoreRow[]): ScoreRow[] =>
-      rows.filter((row) => scope.has(row.uuid));
+      rows.filter((row) => ctx.scope.has(row.uuid));
     const metaRows = inScope(staged.metadata);
-    const deepRows = inScope(staged.deep);
+    // Deep rows only count when the LATEST run deep-analyzed the program —
+    // otherwise the row is stale evidence from an earlier scan.
+    const deepRows = inScope(staged.deep).filter((row) =>
+      ctx.deepCompleted.has(row.uuid),
+    );
     const metaByUuid = new Map(metaRows.map((row) => [row.uuid, row]));
     const deepByUuid = new Map(deepRows.map((row) => [row.uuid, row]));
     const shown = mode === "deep" ? deepRows : metaRows;
@@ -648,8 +663,8 @@ export class RadarCoordinator {
     profileId: RadarProfileId = "best_ev",
   ): Promise<RadarProgramDetail | null> {
     const db = await this.database();
-    const scope = await this.latestRunScope(db);
-    if (scope === null || !scope.has(uuid)) return null;
+    const ctx = await this.latestRunContext(db);
+    if (ctx === null || !ctx.scope.has(uuid)) return null;
     const profile = getRadarProfile(profileId);
     const [snapshot, catalogItem] = await Promise.all([
       getLatestSnapshot(db, uuid),
@@ -657,10 +672,12 @@ export class RadarCoordinator {
     ]);
     // Latest row per stage for this uuid — the stage filter keeps a deep
     // re-score from hiding the metadata baseline it was computed on top of.
-    const [metaRow, deepRow] = await Promise.all([
-      this.latestStageRow(db, uuid, profile, "metadata"),
-      this.latestStageRow(db, uuid, profile, "deep"),
-    ]);
+    // The deep row is only surfaced when the latest run actually deep-
+    // analyzed the program (same gate as the results table).
+    const metaRow = await this.latestStageRow(db, uuid, profile, "metadata");
+    const deepRow = ctx.deepCompleted.has(uuid)
+      ? await this.latestStageRow(db, uuid, profile, "deep")
+      : null;
     const catalog = catalogItem ?? snapshot?.catalog ?? null;
     const best = deepRow ?? metaRow;
     const score = best?.score ?? null;
@@ -723,6 +740,7 @@ export class RadarCoordinator {
       this.addWarnings(run, [
         err instanceof ApiError ? err.kind : "internal_error",
       ]);
+      this.markDeepIncomplete(run);
       run.phase = "failed";
       this.buildSummary(run);
       try {
@@ -963,6 +981,23 @@ export class RadarCoordinator {
     run.deep_pending_uuids = run.deep_candidates.map((c) => c.uuid);
   }
 
+  /**
+   * Marks the deep verdict "incomplete" when the stage committed candidates
+   * but never reached a frontier verdict (cancel/fail mid-loop). A run that
+   * ended cleanly sets "stable"/"budget_limited" itself — this only fills
+   * the honest default for aborts.
+   */
+  private markDeepIncomplete(run: PersistedRadarRun): void {
+    if (
+      run.deep_stabilization === null &&
+      (run.deep_candidates.length > 0 ||
+        run.deep_completed_uuids.length > 0 ||
+        run.deep_pending_uuids.length > 0)
+    ) {
+      run.deep_stabilization = "incomplete";
+    }
+  }
+
   private async deepEnrichPhase(
     db: RadarDb,
     run: PersistedRadarRun,
@@ -970,6 +1005,7 @@ export class RadarCoordinator {
     if (run.phase !== "deep_enriching") return;
     await this.ensureCatalogItems(db, run, run.deep_pending_uuids);
     if (run.cancel_requested) {
+      this.markDeepIncomplete(run);
       run.phase = "cancelled";
       await this.checkpoint(db, run);
       return;
@@ -983,12 +1019,14 @@ export class RadarCoordinator {
       );
       await Promise.all(workers);
       if (control.stopped) {
+        this.markDeepIncomplete(run);
         run.phase = "failed";
         this.buildSummary(run);
         await this.checkpoint(db, run);
         return;
       }
       if (run.cancel_requested) {
+        this.markDeepIncomplete(run);
         run.phase = "cancelled";
         await this.checkpoint(db, run);
         return;
@@ -1068,6 +1106,7 @@ export class RadarCoordinator {
     const now = this.deps.now();
     for (const uuid of [...run.deep_completed_uuids]) {
       if (run.cancel_requested) {
+        this.markDeepIncomplete(run);
         run.phase = "cancelled";
         await this.checkpoint(db, run);
         return;
@@ -1082,6 +1121,16 @@ export class RadarCoordinator {
       }
       await this.checkpoint(db, run);
     }
+    if (run.cancel_requested) {
+      this.markDeepIncomplete(run);
+      run.phase = "cancelled";
+      await this.checkpoint(db, run);
+      return;
+    }
+    // Single-pass deep stage: no frontier verdict was evaluated, so the run
+    // cannot honestly claim "stable". The V1.3.1 frontier loop replaces this
+    // tail with evaluateFrontier's verdict.
+    run.deep_stabilization = "incomplete";
     run.phase = "done";
     this.buildSummary(run);
     await this.checkpoint(db, run);
