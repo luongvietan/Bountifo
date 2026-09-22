@@ -194,7 +194,7 @@ function renderRows(rows: RadarResultRow[]): void {
   if (views.length === 0) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 10;
+    td.colSpan = 11;
     td.className = "empty";
     td.textContent =
       rows.length === 0
@@ -211,6 +211,7 @@ function renderRows(rows: RadarResultRow[]): void {
     cell(tr, view.rank);
     programCell(tr, view);
     scoreCell(tr, view);
+    cell(tr, view.pct);
     cell(tr, view.reward);
     cell(tr, view.surface);
     cell(tr, view.saturation);
@@ -265,7 +266,12 @@ function renderDetail(detail: RadarProgramDetail, uuid: string): void {
     saturationBody.append(tr);
   }
   deepGroups.replaceChildren();
-  for (const group of detailRows(detail)) {
+  // Percentile is rank context carried by the clicked results row — looked
+  // up from the last fetch; `??` keeps a real 0.0 bottom-of-cohort reading
+  // from collapsing into "—" (only a missing row yields null).
+  const percentile =
+    lastRows.find((row) => row.uuid === uuid)?.percentile ?? null;
+  for (const group of detailRows(detail, percentile)) {
     const heading = document.createElement("h3");
     heading.textContent = group.title;
     const table = document.createElement("table");
