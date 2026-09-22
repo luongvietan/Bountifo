@@ -164,16 +164,34 @@ async function routeRadarMessage(msg: RadarMessage): Promise<RouterResponse> {
 
 // Exported (not just wired into onMessage) so tests can exercise the router
 // without faking a full message dispatch.
+
+/**
+ * Chrome sets `sender.tab` for ANY page hosted in a tab — including this
+ * extension's own pages (radar.html opened via tabs.create, options.html).
+ * The content-script discriminator is therefore the sender's document URL,
+ * not tab presence: only a document outside the extension origin is an
+ * untrusted in-page sender.
+ */
+function isExtensionSender(sender: {
+  url?: string;
+  tab?: { url?: string };
+}): boolean {
+  const url = sender.url ?? sender.tab?.url ?? "";
+  return url.startsWith(browser.runtime.getURL("/"));
+}
+
 export function routeMessage(
   rawMsg: unknown,
-  sender: { id?: string; tab?: { id?: number; url?: string } },
+  sender: { id?: string; url?: string; tab?: { id?: number; url?: string } },
 ): RouterResponse | Promise<RouterResponse> {
   // (a) Named API operations. These exist for extension pages only (options
-  // TEST_TOKEN probe, coordinator-driven fetches); a content-script sender is
-  // identifiable by sender.tab and is always rejected (spec §7.5/§19).
+  // TEST_TOKEN probe, coordinator-driven fetches); a content-script sender
+  // (tab-hosted, non-extension document) is always rejected (spec §7.5/§19).
   const apiReq = parseApiRequest(rawMsg);
   if (apiReq !== null) {
-    if (sender.tab !== undefined) return { ok: false, error: "forbidden" };
+    if (sender.tab !== undefined && !isExtensionSender(sender)) {
+      return { ok: false, error: "forbidden" };
+    }
     return routeApiRequest(apiReq);
   }
   // (b) Popup operations — Task 9 wires job ops, Task 10 wires token ops.
@@ -213,10 +231,12 @@ export function routeMessage(
     }
   }
   // (c) Radar scan operations — trusted extension pages only, identical
-  // sender.tab rule to the API ops above (spec §7.5/§19, Task 16).
+  // sender rule to the API ops above (spec §7.5/§19, Task 16).
   const radarMsg = parseRadarMessage(rawMsg);
   if (radarMsg !== null) {
-    if (sender.tab !== undefined) return { ok: false, error: "forbidden" };
+    if (sender.tab !== undefined && !isExtensionSender(sender)) {
+      return { ok: false, error: "forbidden" };
+    }
     return routeRadarMessage(radarMsg);
   }
   // (d) Job-scoped content-script messages — sender validated against the

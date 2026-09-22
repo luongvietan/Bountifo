@@ -32,7 +32,7 @@ type RouterResponse = {
 
 let routeMessage: (
   msg: unknown,
-  sender: { id?: string; tab?: { id?: number; url?: string } },
+  sender: { id?: string; url?: string; tab?: { id?: number; url?: string } },
 ) => RouterResponse | Promise<RouterResponse>;
 let fetchMock: ReturnType<typeof vi.fn>;
 let coordinator: { start: (tabId: number) => Promise<unknown> };
@@ -54,7 +54,17 @@ let radar: {
 const extensionPageSender = { id: fakeBrowser.runtime.id };
 const contentScriptSender = {
   id: fakeBrowser.runtime.id,
+  url: "https://bugcrowd.com/engagements/acme-corp-bb",
   tab: { id: 7, url: "https://bugcrowd.com/engagements/acme-corp-bb" },
+};
+// Chrome sets sender.tab for ANY tab-hosted page — including this
+// extension's own pages opened via tabs.create. A tab-hosted extension
+// page is identified by its extension-origin sender URL, not by the
+// absence of sender.tab.
+const tabHostedExtensionSender = {
+  id: fakeBrowser.runtime.id,
+  url: fakeBrowser.runtime.getURL("/radar.html"),
+  tab: { id: 9, url: fakeBrowser.runtime.getURL("/radar.html") },
 };
 
 beforeEach(async () => {
@@ -108,6 +118,16 @@ describe("routeMessage API op sender restriction", () => {
     expect(res).toEqual({ ok: false, error: "forbidden" });
     expect(start).not.toHaveBeenCalled();
     start.mockRestore();
+  });
+
+  it("accepts API ops from an extension page hosted in a tab", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [] }));
+    const res = await routeMessage(
+      { op: "LIST_ENGAGEMENTS", params: { page: 1 } },
+      tabHostedExtensionSender,
+    );
+    expect(res.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("accepts the same ops from an extension page (no sender.tab)", async () => {
@@ -289,6 +309,18 @@ describe("routeMessage radar ops", () => {
     const res = await routeMessage(
       { op: "RADAR_START_SCAN" },
       extensionPageSender,
+    );
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(res).toEqual({ ok: true, run: fakeRun });
+    start.mockRestore();
+  });
+
+  it("RADAR ops from a tab-hosted extension page are accepted", async () => {
+    const fakeRun = { run_id: "radar_tabhost", phase: "catalog" };
+    const start = vi.spyOn(radar, "start").mockResolvedValue(fakeRun as never);
+    const res = await routeMessage(
+      { op: "RADAR_START_SCAN" },
+      tabHostedExtensionSender,
     );
     expect(start).toHaveBeenCalledTimes(1);
     expect(res).toEqual({ ok: true, run: fakeRun });
