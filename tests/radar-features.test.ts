@@ -957,19 +957,21 @@ describe("V1.4 contract-stub signals", () => {
         lastBriefUpdate: daysAgo(1),
       }),
     );
-    // V1.4 contract stubs — sourced modules exist (accessibility.ts /
-    // authz.ts) but return the honest-null shape until Agents A/B land
-    // the real rubrics.
-    for (const key of [
-      "accessibility",
-      "authz_opportunity",
-    ] as const) {
-      expect(v[key]).toEqual({
-        value: null,
-        source: "derived",
-        reason_code: "not_available_v1",
-      });
-    }
+    // accessibility is still a contract stub on this branch — Agent A's
+    // rubric lands separately; it keeps the V1 honest-null shape.
+    expect(v.accessibility).toEqual({
+      value: null,
+      source: "derived",
+      reason_code: "not_available_v1",
+    });
+    // authz_opportunity is sourced (Agent B): a detail with no credentials,
+    // no signup marker and no authz-policy sentence reads the honest
+    // no-evidence null — the retired not_available_v1 stub shape is gone.
+    expect(v.authz_opportunity).toEqual({
+      value: null,
+      source: "engagement_detail",
+      reason_code: "no_authz_evidence",
+    });
     // V1.3 deep signals: a snapshot that never received a deep pass reads
     // not_deep_analyzed — never a fabricated 0.
     for (const key of [
