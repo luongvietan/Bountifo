@@ -1,19 +1,31 @@
 import { describe, expect, it } from "vitest";
 import type {
+  RadarProgramDetail,
   RadarResultRow,
   RadarRunState,
 } from "../lib/radar/coordinator";
-import type { ProgramScore } from "../lib/radar/types";
+import type { ProgramFeatureVector, ProgramScore } from "../lib/radar/types";
 import {
+  API_HEAVY_MIN,
   buildRow,
   buildRows,
   componentRows,
+  densityBand,
+  densityText,
+  detailMetaText,
+  detailRows,
+  detailSlugSource,
+  detailTitleText,
+  engagementUrl,
   errorText,
+  filterRows,
   formatCoverage,
   formatScore,
   formatSignal,
   formatWeight,
   isActive,
+  opportunityBand,
+  opportunityText,
   phaseLabel,
   programLabel,
   profileOptions,
@@ -107,6 +119,8 @@ describe("phaseLabel / isActive", () => {
     ["catalog", "Catalog scan"],
     ["enriching", "Enriching"],
     ["scoring", "Scoring"],
+    ["deep_enriching", "Deep analysis of shortlist"],
+    ["deep_scoring", "Deep scoring"],
     ["done", "Done"],
     ["failed", "Failed"],
     ["cancelled", "Cancelled"],
@@ -114,12 +128,15 @@ describe("phaseLabel / isActive", () => {
     expect(phaseLabel(phase)).toBe(label);
   });
 
-  it.each(["catalog", "enriching", "scoring"] as const)(
-    "phase %s is active",
-    (phase) => {
-      expect(isActive(runState({ phase }))).toBe(true);
-    },
-  );
+  it.each([
+    "catalog",
+    "enriching",
+    "scoring",
+    "deep_enriching",
+    "deep_scoring",
+  ] as const)("phase %s is active", (phase) => {
+    expect(isActive(runState({ phase }))).toBe(true);
+  });
 
   it.each(["done", "failed", "cancelled"] as const)(
     "phase %s is terminal",
@@ -141,6 +158,12 @@ describe("statusText", () => {
   it("shows phase and counts while running", () => {
     expect(statusText(runState())).toBe(
       "Enriching — 40 discovered · 12 enriched · 0 scored · 1 warning",
+    );
+  });
+
+  it("reads deep_enriching as deep analysis of the shortlist", () => {
+    expect(statusText(runState({ phase: "deep_enriching" }))).toBe(
+      "Deep analysis of shortlist — 40 discovered · 12 enriched · 0 scored · 1 warning",
     );
   });
 
@@ -290,20 +313,34 @@ describe("buildRow / buildRows", () => {
       uuid: UUID,
       rank: "1",
       program: "Acme Corp",
-      score: "82.4",
-      coverage: "75%",
+      programUrl: "https://bugcrowd.com/engagements/acme",
+      score: "82.4 (cov 75%)",
       reward: "0.82",
       surface: "0.60 (api 0.40 · web 0.30)",
       saturation: "0.25 · Moderate-low",
-      freshness: "0.90",
+      dup: "—",
+      opportunity: "—",
+      dupAnalyzed: false,
+      opportunityAnalyzed: false,
       eligible: true,
       provisional: false,
     });
   });
 
+  it("renders the V1.3 deep signals with bands when analyzed", () => {
+    const row = resultRow();
+    row.signals.known_issue_density = 0.61;
+    row.signals.opportunity_change = 0.3;
+    const view = buildRow(row, 1);
+    expect(view.dup).toBe("0.61 · High");
+    expect(view.opportunity).toBe("0.30 · Moderate");
+    expect(view.dupAnalyzed).toBe(true);
+    expect(view.opportunityAnalyzed).toBe(true);
+  });
+
   it("flags provisional scores in the score cell", () => {
     const view = buildRow(resultRow({ provisional: true }), 1);
-    expect(view.score).toBe("82.4 provisional");
+    expect(view.score).toBe("82.4 (cov 75%) provisional");
     expect(view.provisional).toBe(true);
   });
 
@@ -426,5 +463,345 @@ describe("errorText", () => {
     expect(errorText(null)).toBe("unknown error");
     expect(errorText({})).toBe("unknown error");
     expect(errorText({ kind: "rate_limited" })).toBe("rate_limited");
+  });
+});
+
+describe("densityText / densityBand", () => {
+  it("renders null as an em dash — never 0 or n/a", () => {
+    expect(densityText(null)).toBe("—");
+  });
+
+  it("renders the value plus an honest band label", () => {
+    expect(densityText(0.1)).toBe("0.10 · Low");
+    expect(densityText(0.4)).toBe("0.40 · Moderate");
+    expect(densityText(0.61)).toBe("0.61 · High");
+  });
+
+  it("pins band boundaries", () => {
+    expect(densityBand(0)).toBe("Low");
+    expect(densityBand(0.25)).toBe("Moderate");
+    expect(densityBand(0.6)).toBe("High");
+    expect(densityBand(1)).toBe("High");
+  });
+});
+
+describe("opportunityText / opportunityBand", () => {
+  it("renders null as an em dash — never 0", () => {
+    expect(opportunityText(null)).toBe("—");
+  });
+
+  it("renders the value plus an honest band label", () => {
+    expect(opportunityText(0.1)).toBe("0.10 · Low");
+    expect(opportunityText(0.3)).toBe("0.30 · Moderate");
+    expect(opportunityText(0.9)).toBe("0.90 · High");
+  });
+
+  it("pins band boundaries", () => {
+    expect(opportunityBand(0)).toBe("Low");
+    expect(opportunityBand(0.25)).toBe("Moderate");
+    expect(opportunityBand(0.6)).toBe("High");
+    expect(opportunityBand(1)).toBe("High");
+  });
+});
+
+describe("engagementUrl", () => {
+  it("builds the canonical engagement URL from the code slug", () => {
+    expect(engagementUrl(resultRow())).toBe(
+      "https://bugcrowd.com/engagements/acme",
+    );
+  });
+
+  it("falls back to the uuid when no code exists", () => {
+    expect(engagementUrl(resultRow({ code: null }))).toBe(
+      `https://bugcrowd.com/engagements/${UUID}`,
+    );
+  });
+
+  it("refuses to build a URL for an unsafe slug", () => {
+    expect(engagementUrl(resultRow({ code: "bad slug" }))).toBeNull();
+    expect(engagementUrl(resultRow({ code: "../admin" }))).toBeNull();
+    expect(engagementUrl(resultRow({ code: "" }))).toBeNull();
+    expect(
+      engagementUrl(resultRow({ code: null, uuid: "not a slug!" })),
+    ).toBeNull();
+  });
+});
+
+function programDetail(over: Partial<RadarProgramDetail> = {}): RadarProgramDetail {
+  return {
+    snapshot: {
+      schema_version: 1,
+      uuid: UUID,
+      code: "acme",
+      catalog: {
+        uuid: UUID,
+        code: "acme",
+        name: "Acme Corp",
+        lifecycle_status: "live",
+        engagement_type: "bug_bounty",
+        discovered_at: "2026-09-20T00:00:00Z",
+      },
+      detail: null,
+      enrichment: { status: "complete" },
+      deep: {
+        status: "complete",
+        known_issues: {
+          status: "complete",
+          unique_count: 90,
+          total_count: 224,
+        },
+        semantic_diff: {
+          status: "complete",
+          from_version: "3f5d9ee5aaaa",
+          to_version: "9c1f2b34bbbb",
+          added_targets: 7,
+          removed_targets: 2,
+          added_in_scope_targets: 5,
+          removed_in_scope_targets: 1,
+          moved_in_scope: 0,
+          moved_out_of_scope: 0,
+          added_api_targets: 3,
+          added_web_targets: 2,
+          added_groups: 1,
+          reward_increase: true,
+          reward_decrease: false,
+          safe_harbor_changed: false,
+          status_changed: false,
+          only_administrative_changes: false,
+        },
+      },
+      source_hash: "deadbeef",
+    },
+    score: null,
+    vector: {
+      known_issue_density: { value: 0.61 },
+      opportunity_change: { value: 0.3 },
+      freshness: { value: 0.9 },
+    } as unknown as ProgramFeatureVector,
+    explanation: [],
+    catalog: null,
+    ...over,
+  };
+}
+
+describe("detailSlugSource / detailTitleText", () => {
+  it("prefers the catalog identity, code for the slug", () => {
+    const detail = programDetail({
+      catalog: {
+        uuid: "cat-uuid",
+        code: "catcode",
+        name: "Catalog Name",
+        lifecycle_status: null,
+        engagement_type: null,
+        discovered_at: "2026-09-20T00:00:00Z",
+      },
+    });
+    expect(detailSlugSource(detail, "fallback")).toEqual({
+      uuid: "cat-uuid",
+      code: "catcode",
+    });
+    expect(detailTitleText(detail, "fallback")).toBe("Catalog Name");
+  });
+
+  it("falls back to the snapshot catalog/code then the uuid", () => {
+    const detail = programDetail();
+    expect(detailSlugSource(detail, "fallback")).toEqual({
+      uuid: UUID,
+      code: "acme",
+    });
+    expect(detailTitleText(detail, "fallback")).toBe("Acme Corp");
+    expect(detailTitleText(programDetail({ snapshot: null }), "fallback")).toBe(
+      "fallback",
+    );
+  });
+});
+
+describe("detailMetaText", () => {
+  it("keeps freshness visible in the detail pane", () => {
+    const score: ProgramScore = {
+      schema_version: 1,
+      engagement_uuid: UUID,
+      profile: "best_ev",
+      scoring_version: "1.0.0",
+      score: 82.4,
+      confidence: 0.75,
+      provisional: false,
+      components: {},
+      reasons: [],
+      source_hash: "x",
+    };
+    expect(detailMetaText(programDetail({ score }))).toBe(
+      "Score 82.4 · coverage 75% · freshness 0.90",
+    );
+  });
+
+  it("omits freshness when unknown and reports an unscored profile", () => {
+    const detail = programDetail({ vector: null });
+    expect(detailMetaText(detail)).toBe("No score stored for this profile.");
+  });
+
+  it("still shows freshness when no score is stored", () => {
+    expect(detailMetaText(programDetail())).toBe(
+      "No score stored for this profile · freshness 0.90",
+    );
+  });
+});
+
+describe("filterRows", () => {
+  const rows = [
+    resultRow({ uuid: "a", name: "A" }),
+    resultRow({ uuid: "b", name: "B" }),
+  ];
+  rows[0]!.signals.research_saturation = 0.1;
+  rows[0]!.signals.known_issue_density = 0.2;
+  rows[0]!.signals.opportunity_change = 0.7;
+  rows[0]!.signals.reward_potential = 0.9;
+  rows[0]!.signals.api_surface = 0.6;
+  rows[1]!.signals.research_saturation = 0.8;
+  rows[1]!.signals.known_issue_density = 0.5;
+  rows[1]!.signals.opportunity_change = 0.2;
+  rows[1]!.signals.reward_potential = 0.4;
+  rows[1]!.signals.api_surface = 0.1;
+
+  it("passes everything when no criterion is set", () => {
+    expect(filterRows(rows, {})).toHaveLength(2);
+    expect(
+      filterRows(rows, {
+        maxSaturation: null,
+        maxDup: null,
+        minOpportunity: null,
+        minReward: null,
+        apiHeavy: false,
+      }),
+    ).toHaveLength(2);
+  });
+
+  it("applies each numeric criterion honestly", () => {
+    expect(filterRows(rows, { maxSaturation: 0.5 })).toEqual([rows[0]]);
+    expect(filterRows(rows, { maxDup: 0.3 })).toEqual([rows[0]]);
+    expect(filterRows(rows, { minOpportunity: 0.5 })).toEqual([rows[0]]);
+    expect(filterRows(rows, { minReward: 0.8 })).toEqual([rows[0]]);
+  });
+
+  it("treats boundary values as inclusive", () => {
+    expect(filterRows(rows, { maxSaturation: 0.8 })).toHaveLength(2);
+    expect(filterRows(rows, { minReward: 0.9 })).toEqual([rows[0]]);
+  });
+
+  it("fails rows whose signal is null — unknown cannot pass a threshold", () => {
+    const unknown = resultRow({ uuid: "u" });
+    unknown.signals.known_issue_density = null;
+    unknown.signals.opportunity_change = null;
+    unknown.signals.research_saturation = null;
+    unknown.signals.reward_potential = null;
+    const all = [...rows, unknown];
+    expect(filterRows(all, { maxDup: 0.9 })).toHaveLength(2);
+    expect(filterRows(all, { minOpportunity: 0 })).toHaveLength(2);
+    expect(filterRows(all, { maxSaturation: 1 })).toHaveLength(2);
+    expect(filterRows(all, { minReward: 0 })).toHaveLength(2);
+    // …but with no criterion set the unknown row still shows.
+    expect(filterRows(all, {})).toHaveLength(3);
+  });
+
+  it(`api-heavy keeps api_surface >= ${API_HEAVY_MIN}, fails null`, () => {
+    expect(API_HEAVY_MIN).toBe(0.4);
+    expect(filterRows(rows, { apiHeavy: true })).toEqual([rows[0]]);
+    const unknown = resultRow({ uuid: "u" });
+    unknown.signals.api_surface = null;
+    expect(filterRows([unknown], { apiHeavy: true })).toHaveLength(0);
+  });
+
+  it("combines criteria conjunctively", () => {
+    expect(
+      filterRows(rows, {
+        maxSaturation: 0.5,
+        maxDup: 0.3,
+        minOpportunity: 0.5,
+        minReward: 0.8,
+        apiHeavy: true,
+      }),
+    ).toEqual([rows[0]]);
+    expect(
+      filterRows(rows, { maxSaturation: 0.5, minReward: 0.95 }),
+    ).toHaveLength(0);
+  });
+});
+
+describe("detailRows", () => {
+  it("renders both diagnostic groups from a deep-analyzed snapshot", () => {
+    const groups = detailRows(programDetail());
+    expect(groups.map((g) => g.title)).toEqual([
+      "Duplicate intelligence",
+      "Opportunity changes",
+    ]);
+    expect(groups[0]!.rows).toEqual([
+      { label: "Unique known issues", value: "90" },
+      { label: "Total (incl. duplicates)", value: "224" },
+      { label: "Known issue density", value: "0.61 · High" },
+      { label: "Source status", value: "complete" },
+    ]);
+    expect(groups[1]!.rows).toEqual([
+      { label: "Current version", value: "9c1f2b34" },
+      { label: "Baseline version", value: "3f5d9ee5" },
+      { label: "Targets added", value: "7 (5 in scope)" },
+      { label: "Targets removed", value: "2 (1 in scope)" },
+      { label: "API targets added", value: "3" },
+      { label: "Reward change", value: "↑" },
+      { label: "Status change", value: "no" },
+      { label: "Safe harbor change", value: "no" },
+      { label: "Opportunity change", value: "0.30 · Moderate" },
+      { label: "Source status", value: "complete" },
+    ]);
+  });
+
+  it("reads 'not analyzed' + dashes when no deep pass ran", () => {
+    const detail = programDetail({ vector: null });
+    detail.snapshot!.deep = null;
+    const groups = detailRows(detail);
+    for (const group of groups) {
+      for (const row of group.rows) {
+        expect(row.value === "—" || row.value === "not analyzed").toBe(true);
+      }
+    }
+    expect(groups[0]!.rows[3]!.value).toBe("not analyzed");
+    expect(groups[1]!.rows[9]!.value).toBe("not analyzed");
+  });
+
+  it("carries source status words through honestly", () => {
+    const detail = programDetail();
+    detail.snapshot!.deep = {
+      status: "partial",
+      known_issues: { status: "unavailable", unique_count: null, total_count: null },
+      semantic_diff: {
+        status: "no_baseline",
+        from_version: null,
+        to_version: "9c1f2b34bbbb",
+        added_targets: null,
+        removed_targets: null,
+        added_in_scope_targets: null,
+        removed_in_scope_targets: null,
+        moved_in_scope: null,
+        moved_out_of_scope: null,
+        added_api_targets: null,
+        added_web_targets: null,
+        added_groups: null,
+        reward_increase: null,
+        reward_decrease: null,
+        safe_harbor_changed: null,
+        status_changed: null,
+        only_administrative_changes: null,
+      },
+    };
+    const groups = detailRows(detail);
+    expect(groups[0]!.rows).toEqual([
+      { label: "Unique known issues", value: "—" },
+      { label: "Total (incl. duplicates)", value: "—" },
+      { label: "Known issue density", value: "0.61 · High" },
+      { label: "Source status", value: "unavailable" },
+    ]);
+    expect(groups[1]!.rows[1]!.value).toBe("—"); // no baseline version
+    expect(groups[1]!.rows[0]!.value).toBe("9c1f2b34"); // current still shown
+    expect(groups[1]!.rows[5]!.value).toBe("—"); // reward change unknown
+    expect(groups[1]!.rows[9]!.value).toBe("no baseline");
   });
 });

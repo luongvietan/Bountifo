@@ -9,13 +9,19 @@ import type { RadarProfileId } from "../../lib/radar/types";
 import {
   buildRows,
   componentRows,
+  detailMetaText,
+  detailRows,
+  detailSlugSource,
+  detailTitleText,
+  engagementUrl,
   errorText,
-  formatCoverage,
-  formatScore,
+  filterRows,
   isActive,
   profileOptions,
   saturationRows,
   statusText,
+  type FilterCriteria,
+  type RowView,
 } from "./view";
 
 // ---------------------------------------------------------------------------
@@ -48,14 +54,24 @@ const componentsBody =
   document.querySelector<HTMLTableSectionElement>("#components-body")!;
 const saturationBody =
   document.querySelector<HTMLTableSectionElement>("#saturation-body")!;
+const deepGroups = document.querySelector<HTMLElement>("#deep-groups")!;
 const explanationList =
   document.querySelector<HTMLUListElement>("#explanation")!;
+const fSaturation =
+  document.querySelector<HTMLInputElement>("#f-saturation")!;
+const fDup = document.querySelector<HTMLInputElement>("#f-dup")!;
+const fOpportunity =
+  document.querySelector<HTMLInputElement>("#f-opportunity")!;
+const fReward = document.querySelector<HTMLInputElement>("#f-reward")!;
+const fApiHeavy = document.querySelector<HTMLInputElement>("#f-apiheavy")!;
 
 const RESULT_LIMIT = 50;
 const POLL_MS = 1000;
 
 let currentProfile: RadarProfileId = "best_ev";
 let pollTimer: number | null = null;
+/** Last fetched (unfiltered) rows — filters re-render without re-fetching. */
+let lastRows: RadarResultRow[] = [];
 
 async function send(msg: RadarMessage): Promise<RouterResponse> {
   return (await browser.runtime.sendMessage(msg)) as RouterResponse;
@@ -72,15 +88,64 @@ function cell(tr: HTMLTableRowElement, text: string): void {
   tr.append(td);
 }
 
+/** Program name cell — a deep link when the slug is site-safe, else text. */
+function programCell(tr: HTMLTableRowElement, view: RowView): void {
+  const td = document.createElement("td");
+  if (view.programUrl === null) {
+    td.textContent = view.program;
+  } else {
+    const a = document.createElement("a");
+    a.href = view.programUrl;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = view.program;
+    // Row click opens the detail pane — a link click must not also select.
+    a.addEventListener("click", (ev) => ev.stopPropagation());
+    td.append(a);
+  }
+  tr.append(td);
+}
+
+/** Deep-signal cell: null renders "—" plus a subtle `unanalyzed` marker. */
+function signalCell(
+  tr: HTMLTableRowElement,
+  text: string,
+  analyzed: boolean,
+): void {
+  const td = document.createElement("td");
+  td.textContent = text;
+  if (!analyzed) td.classList.add("unanalyzed");
+  tr.append(td);
+}
+
+/** Numeric filter input → criterion value; empty/unparseable = no filter. */
+function numOrNull(el: HTMLInputElement): number | null {
+  const v = el.valueAsNumber;
+  return Number.isFinite(v) ? v : null;
+}
+
+function readCriteria(): FilterCriteria {
+  return {
+    maxSaturation: numOrNull(fSaturation),
+    maxDup: numOrNull(fDup),
+    minOpportunity: numOrNull(fOpportunity),
+    minReward: numOrNull(fReward),
+    apiHeavy: fApiHeavy.checked,
+  };
+}
+
 function renderRows(rows: RadarResultRow[]): void {
   resultsBody.replaceChildren();
-  const views = buildRows(rows);
+  const views = buildRows(filterRows(rows, readCriteria()));
   if (views.length === 0) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
     td.colSpan = 8;
     td.className = "empty";
-    td.textContent = "No scored programs yet — run a scan.";
+    td.textContent =
+      rows.length === 0
+        ? "No scored programs yet — run a scan."
+        : "No programs match the current filters.";
     tr.append(td);
     resultsBody.append(tr);
     return;
@@ -89,18 +154,14 @@ function renderRows(rows: RadarResultRow[]): void {
     const tr = document.createElement("tr");
     if (!view.eligible) tr.classList.add("ineligible");
     if (view.provisional) tr.classList.add("provisional");
-    for (const text of [
-      view.rank,
-      view.program,
-      view.score,
-      view.coverage,
-      view.reward,
-      view.surface,
-      view.saturation,
-      view.freshness,
-    ]) {
-      cell(tr, text);
-    }
+    cell(tr, view.rank);
+    programCell(tr, view);
+    cell(tr, view.score);
+    cell(tr, view.reward);
+    cell(tr, view.surface);
+    cell(tr, view.saturation);
+    signalCell(tr, view.dup, view.dupAnalyzed);
+    signalCell(tr, view.opportunity, view.opportunityAnalyzed);
     tr.addEventListener("click", () => void selectProgram(view.uuid));
     resultsBody.append(tr);
   }
@@ -108,15 +169,22 @@ function renderRows(rows: RadarResultRow[]): void {
 
 function renderDetail(detail: RadarProgramDetail, uuid: string): void {
   detailSection.hidden = false;
-  detailTitle.textContent =
-    detail.catalog?.name ??
-    detail.catalog?.code ??
-    detail.snapshot?.code ??
-    uuid;
-  detailMeta.textContent =
-    detail.score === null
-      ? "No score stored for this profile."
-      : `Score ${formatScore(detail.score.score)} · coverage ${formatCoverage(detail.score.confidence)}${detail.score.provisional ? " · PROVISIONAL" : ""}`;
+  // Title doubles as the canonical engagement deep link when the slug is
+  // site-safe; otherwise it stays plain text (never an arbitrary URL).
+  const title = detailTitleText(detail, uuid);
+  const url = engagementUrl(detailSlugSource(detail, uuid));
+  detailTitle.replaceChildren();
+  if (url === null) {
+    detailTitle.textContent = title;
+  } else {
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = title;
+    detailTitle.append(a);
+  }
+  detailMeta.textContent = detailMetaText(detail);
   componentsBody.replaceChildren();
   if (detail.score !== null) {
     for (const component of componentRows(detail.score)) {
@@ -139,6 +207,21 @@ function renderDetail(detail: RadarProgramDetail, uuid: string): void {
       cell(tr, text);
     }
     saturationBody.append(tr);
+  }
+  deepGroups.replaceChildren();
+  for (const group of detailRows(detail)) {
+    const heading = document.createElement("h3");
+    heading.textContent = group.title;
+    const table = document.createElement("table");
+    const tbody = document.createElement("tbody");
+    for (const row of group.rows) {
+      const tr = document.createElement("tr");
+      cell(tr, row.label);
+      cell(tr, row.value);
+      tbody.append(tr);
+    }
+    table.append(tbody);
+    deepGroups.append(heading, table);
   }
   explanationList.replaceChildren();
   if (detail.explanation.length === 0) {
@@ -178,7 +261,8 @@ async function refreshResults(): Promise<void> {
     limit: RESULT_LIMIT,
   });
   if (resp.ok === true) {
-    renderRows(resp.rows ?? []);
+    lastRows = resp.rows ?? [];
+    renderRows(lastRows);
   } else {
     feedback.textContent = `Could not load results: ${errorText(resp.error)}`;
   }
@@ -250,6 +334,12 @@ cancelButton.addEventListener("click", async () => {
 });
 
 refreshButton.addEventListener("click", () => void refresh());
+
+// Filter controls re-render the last fetched rows — no new messages.
+for (const el of [fSaturation, fDup, fOpportunity, fReward]) {
+  el.addEventListener("input", () => renderRows(lastRows));
+}
+fApiHeavy.addEventListener("change", () => renderRows(lastRows));
 
 profileSelect.addEventListener("change", () => {
   currentProfile = profileSelect.value as RadarProfileId;
