@@ -6,6 +6,7 @@ import type {
   RadarResultRow,
   RadarRunState,
 } from "../../lib/radar/coordinator";
+import { evidenceBadge } from "../../lib/radar/stage";
 import type { RadarProfileId } from "../../lib/radar/types";
 import {
   buildRows,
@@ -143,7 +144,9 @@ function scoreCell(tr: HTMLTableRowElement, view: RowView): void {
   const td = document.createElement("td");
   const badge = document.createElement("span");
   badge.className = `ev ${view.evidence}`;
-  badge.textContent = view.evidence === "deep" ? "DEEP" : "META";
+  // evidenceBadge() marks elevated evidence ("DEEP"); metadata is the
+  // baseline every row holds, surfaced here as the explicit "META" label.
+  badge.textContent = evidenceBadge(view.evidence) ?? "META";
   badge.title =
     view.evidence === "deep"
       ? "Deep-stage score — re-scored after deep enrichment (known issues + changelog diff)."

@@ -14,6 +14,7 @@ import type {
   RadarSemanticDiff,
 } from "../../lib/radar/deepTypes";
 import { RADAR_PROFILES } from "../../lib/radar/profiles";
+import { formatScoreDelta } from "../../lib/radar/stage";
 import {
   DEEP_PROFILE_IDS,
   RADAR_PROFILE_IDS,
@@ -118,11 +119,11 @@ export function formatCoverage(confidence: number): string {
  * "+3.2", "−11.4", "+0.0". The minus is U+2212 so it doesn't read as a
  * hyphen/dash; −0 collapses to "+0.0" rather than showing a sign lie.
  * Callers handle the null case — a delta is never fabricated from one side.
+ * Rounding/sign come from lib/radar/stage.ts (single source of truth);
+ * this layer only swaps the ASCII minus for U+2212.
  */
 export function formatDelta(delta: number): string {
-  // Same rounding as the coordinator's score_delta (round1 = toFixed(1)).
-  const rounded = Number(delta.toFixed(1));
-  return rounded < 0 ? `−${(-rounded).toFixed(1)}` : `+${rounded.toFixed(1)}`;
+  return formatScoreDelta(delta).replace("-", "−");
 }
 
 /**

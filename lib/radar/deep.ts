@@ -20,8 +20,9 @@ import type { RadarCatalogItem, RadarProgramSnapshot } from "./types";
 //   GET /engagements/<slug>/changelog.json                → latest + baseline id
 //   GET /engagements/<slug>/changelog/<baseline>.json     → previous brief doc
 //
-// 3 site requests per program; the coordinator caps the stage at
-// DEEP_ANALYSIS_LIMIT so a catalog scan stays ~4·N + 3·30 requests.
+// 3 site requests per program; the coordinator bounds the stage at
+// MAX_DEEP_PROGRAMS (60) unique candidates so a catalog scan stays
+// ~4·N + 3·≤60 requests.
 //
 // Contract: NEVER throws. A program-scoped failure lands in the affected
 // sub-object's status and the envelope degrades honestly — nothing here is

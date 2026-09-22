@@ -15,16 +15,23 @@ import type {
 // coordinator's enumerate/hydrate seams — the whole metadata pipeline runs
 // for real, only the wire is fake.
 //
-// BUDGET (per docs/superpowers/plans/2026-09-22-radar-v1.3.md):
-//   V1.2 = ~4·N siteRequests + pages            (changelog + brief doc +
-//                                                statistics + recently_joined,
-//                                                plus 1 LIST_INDEX per page)
-//   V1.3 = ~4·N + pages + 3·min(N, DEEP_LIMIT)  (deep stage adds changelog
-//                                                re-fetch + previous-version
-//                                                brief doc + known-issues JSON
-//                                                per SHORTLISTED program only)
-//   DEEP_LIMIT (plan: DEEP_ANALYSIS_LIMIT) defaults to 30 eligible best_ev
-//   rows.
+// BUDGET (V1.3.1 — docs/superpowers/plans/2026-09-24-radar-v1.3.1.md):
+//   metadata = ~4·N siteRequests + pages       (changelog + brief doc +
+//                                               statistics + recently_joined,
+//                                               plus 1 LIST_INDEX per page)
+//   deep     = 3·U                            (changelog re-fetch +
+//                                               previous-version brief doc +
+//                                               known-issues JSON per
+//                                               candidate-union program)
+//   U = unique deep-analyzed programs ≤ MAX_DEEP_PROGRAMS (60). The union
+//   draws Top-20 metadata ranks from each deep-dependent profile, then the
+//   stabilization frontier may add batches of ≤10 until each profile's
+//   Top-(20+10) metadata window is fully deep-analyzed.
+//
+//   These fixtures feed every program IDENTICAL metadata, so all four
+//   profiles rank identically: union = 20 uuids, frontier window 30 →
+//   +10 in round 2 → U = min(N, 30) for N ≥ 20. The 60-program bound is
+//   what the contract guarantees; 30 is what this data shape produces.
 //
 // Because the deep stage lands via merge, assertions are bounds, not
 // equalities: every bound is green today (deep calls = 0) and holds the
@@ -50,7 +57,11 @@ import { openRadarStore, getRun } from "../lib/radar/store";
 
 const T0 = "2026-09-21T00:00:00.000Z";
 const PAGE_LIMIT = 24;
-const DEEP_LIMIT = 30; // plan: DEEP_ANALYSIS_LIMIT default
+// V1.3.1 hard bound on unique deep-analyzed programs (types.ts).
+const MAX_DEEP = 60;
+// This file's fixtures are identical per program → identical per-profile
+// rankings → union 20 + frontier window 30 → expected deep count.
+const EXPECTED_DEEP_IDENTICAL = 30;
 
 let runSeq = 0;
 
@@ -313,8 +324,9 @@ describe("metadata request budget (V1.2 floor — green today and post-merge)", 
       }
     }
 
-    // Global bound: V1.2 floor + V1.3 deep allowance.
-    const bound = 4 * slugs.length + 1 + 3 * Math.min(slugs.length, DEEP_LIMIT);
+    // Global bound: metadata floor + V1.3.1 deep allowance (≤3/candidate,
+    // ≤MAX_DEEP unique candidates).
+    const bound = 4 * slugs.length + 1 + 3 * Math.min(slugs.length, MAX_DEEP);
     expect(calls().length).toBeLessThanOrEqual(bound);
   });
 
@@ -328,7 +340,7 @@ describe("metadata request budget (V1.2 floor — green today and post-merge)", 
 
     expect(countWhere((c) => c.operation === "LIST_INDEX")).toBe(2);
     const n = page1.length + page2.length;
-    const bound = 4 * n + 2 + 3 * Math.min(n, DEEP_LIMIT);
+    const bound = 4 * n + 2 + 3 * Math.min(n, MAX_DEEP);
     expect(calls().length).toBeLessThanOrEqual(bound);
     // Metadata floor is exact: stats + joined are fetched exactly once each
     // per program, deep stage or not.
@@ -345,8 +357,10 @@ describe("deep-stage request budget (V1.3)", () => {
     expect(phase).toBe("done");
 
     const deep = deepSlugs(slugs);
-    // The shortlist is bounded by DEEP_ANALYSIS_LIMIT and by the catalog.
-    expect(deep.size).toBeLessThanOrEqual(Math.min(slugs.length, DEEP_LIMIT));
+    // The candidate union is bounded by MAX_DEEP_PROGRAMS and by the catalog.
+    expect(deep.size).toBeLessThanOrEqual(
+      Math.min(slugs.length, MAX_DEEP),
+    );
     for (const slug of deep) {
       const c = perSlug(slug);
       const extra = c.length - 4;
@@ -366,24 +380,25 @@ describe("deep-stage request budget (V1.3)", () => {
       expect(perSlug(slug)).toHaveLength(4);
     }
 
-    // INTEGRATION ASSERTION (red today — no deep stage exists yet):
-    // with five fully-eligible programs the shortlist is min(5, 30) = 5.
-    expect(deep.size).toBe(Math.min(slugs.length, DEEP_LIMIT));
+    // Five fully-eligible identical programs: union = all 5 (each profile's
+    // Top-20 covers them all), frontier adds nothing — deep count = 5.
+    expect(deep.size).toBe(Math.min(slugs.length, MAX_DEEP));
   });
 
-  it("the deep shortlist is capped at DEEP_ANALYSIS_LIMIT (30) for large catalogs", async () => {
+  it("the deep candidate set is bounded by MAX_DEEP_PROGRAMS for large catalogs", async () => {
     const page1 = Array.from({ length: PAGE_LIMIT }, (_, i) => `b-c1-${i}`);
     const page2 = Array.from({ length: 11 }, (_, i) => `b-c2-${i}`);
-    const slugs = [...page1, ...page2]; // 35 > DEEP_LIMIT
+    const slugs = [...page1, ...page2]; // 35 > frontier window (30)
     mockSite([page1, page2]);
     const phase = await runScan(slugs);
     expect(phase).toBe("done");
 
     const deep = deepSlugs(slugs);
-    expect(deep.size).toBeLessThanOrEqual(DEEP_LIMIT);
-    // INTEGRATION ASSERTION (red today): with all 35 programs eligible the
-    // shortlist saturates the cap — min(35, 30) = 30 deep passes.
-    expect(deep.size).toBe(DEEP_LIMIT);
+    expect(deep.size).toBeLessThanOrEqual(MAX_DEEP);
+    // Identical fixtures → identical per-profile rankings: candidate union
+    // = 20 uuids; the Top-30 frontier window then owes ranks 21–30 →
+    // +10 in round 2 → exactly 30 deep passes, stable.
+    expect(deep.size).toBe(EXPECTED_DEEP_IDENTICAL);
   });
 
   it("deep bookkeeping lands on the persisted run record", async () => {
