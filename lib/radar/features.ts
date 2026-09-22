@@ -1,4 +1,6 @@
 import type { ApiEngagementData, ApiTarget, ApiTargetGroup } from "../types";
+import { opportunityChangeScore } from "./diff";
+import { knownIssueDensity as knownIssueDensityValue } from "./knownIssues";
 import type {
   ProgramFeatureVector,
   RadarProgramSnapshot,
@@ -59,9 +61,11 @@ const SUBMISSION_ACTIVITY_K = 500;
 
 /**
  * Components of the research_saturation composite — the evidence a program
- * has already drawn sustained research attention. `known_issue_density` is
- * declared for V1.3 wiring: it has no cheap source yet, so it carries no
- * V1.2 weight, but adding it later changes only the weight table.
+ * has already drawn sustained research attention. `known_issue_density`
+ * stays declared but deliberately UNWEIGHTED in V1.3: the composite is
+ * metadata-only so catalog-wide programs that never get a deep pass are
+ * comparable, and deep-analyzed programs carry the signal once — as a
+ * standalone profile cost, never twice (see profiles.ts).
  */
 export type SaturationComponentKey =
   | "recent_crowding"
@@ -261,11 +265,16 @@ function notAvailableV1(): RadarSignal {
 }
 
 /**
- * V1.3 wiring seam for Known Issues — the signal is honest about analysis
- * state: programs outside the deep shortlist read "not_deep_analyzed", an
- * analyzed-but-unavailable endpoint reads "ki_<status>", and a complete
- * Known Issues summary feeds the density formula (wired by the scoring
- * integration; until then it reports null rather than a fake value).
+ * V1.3 Known Issues signal — honest about analysis state: programs outside
+ * the deep shortlist read "not_deep_analyzed"; an analyzed-but-unavailable
+ * or failed endpoint reads "ki_<status>" and stays null; only a COMPLETE
+ * summary feeds the density formula (Agent A's `knownIssueDensity`).
+ *
+ * `meaningfulTargetCount` is the same denominator `meaningful_surface`
+ * uses — in-scope targets with usable identity — so density is "known
+ * issues per meaningful target", never per raw row. detail===null is
+ * unreachable here (the extractor short-circuits above); the empty list
+ * keeps the helper self-contained.
  */
 function knownIssueDensity(snapshot: RadarProgramSnapshot): RadarSignal {
   const ki = snapshot.deep?.known_issues;
@@ -275,13 +284,21 @@ function knownIssueDensity(snapshot: RadarProgramSnapshot): RadarSignal {
   if (ki.status !== "complete") {
     return sig(null, "deep_enrichment", `ki_${ki.status}`);
   }
-  return sig(null, "deep_enrichment", "ki_density_unwired");
+  const inScopeTargets =
+    snapshot.detail === null ? [] : inScopeOnly(snapshot.detail.targets);
+  const meaningfulTargetCount = inScopeTargets.filter(usableIdentity).length;
+  return sig(
+    knownIssueDensityValue(ki, meaningfulTargetCount),
+    "deep_enrichment",
+    "ki_density",
+  );
 }
 
 /**
- * V1.3 wiring seam for semantic opportunity change — same honesty rules:
- * no deep pass → "not_deep_analyzed"; a completed diff feeds the
- * opportunity formula; unavailable/no_baseline diffs stay null.
+ * V1.3 semantic opportunity change — same honesty rules: no deep pass →
+ * "not_deep_analyzed"; unavailable/no_baseline diffs stay null; only a
+ * COMPLETE diff feeds Agent B's `opportunityChangeScore`. A complete diff
+ * scoring 0 is a real reading (text-only update), not an unknown.
  */
 function opportunityChange(snapshot: RadarProgramSnapshot): RadarSignal {
   const diff = snapshot.deep?.semantic_diff;
@@ -291,7 +308,11 @@ function opportunityChange(snapshot: RadarProgramSnapshot): RadarSignal {
   if (diff.status !== "complete") {
     return sig(null, "deep_enrichment", `diff_${diff.status}`);
   }
-  return sig(null, "deep_enrichment", "opportunity_unwired");
+  return sig(
+    opportunityChangeScore(diff),
+    "deep_enrichment",
+    "diff_score",
+  );
 }
 
 function inScopeOnly<T extends { inScope: boolean }>(items: T[] | undefined): T[] {

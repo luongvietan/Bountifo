@@ -70,12 +70,20 @@ const REASON_RULES: Record<RadarFeatureKey, (s: number) => string | null> = {
           ? "SAFE_HARBOR_ABSENT"
           : null,
   target_data_quality: (s) => (s <= 0.4 ? "DATA_INCOMPLETE" : null),
-  // No V1 threshold codes — accessibility/authz stay UNKNOWN_* today.
-  // known_issue_density / opportunity_change get real codes when their V1.3
-  // deep sources are wired into the weight tables.
+  // V1.3 deep signals. Density mirrors the saturation bands (≤0.25 quiet,
+  // ≥0.7 pressured); opportunity names the two ends of the diff axis —
+  // a near-zero score means "analyzed, nothing grew" (text-only), which is
+  // a caution, while real scope movement is the benefit this signal buys.
+  // accessibility/authz stay UNKNOWN_* — still no deterministic source.
   accessibility: () => null,
-  known_issue_density: () => null,
-  opportunity_change: () => null,
+  known_issue_density: (s) =>
+    s <= 0.25 ? "KI_PRESSURE_LOW" : s >= 0.7 ? "KI_PRESSURE_HIGH" : null,
+  opportunity_change: (s) =>
+    s >= 0.5
+      ? "OPPORTUNITY_EXPANDED"
+      : s <= 0.1
+        ? "OPPORTUNITY_TEXT_ONLY"
+        : null,
   authz_opportunity: () => null,
 };
 
@@ -106,6 +114,10 @@ export const REASON_TEXT: Record<string, string> = {
   SAFE_HARBOR_PARTIAL: "partial safe harbor",
   SAFE_HARBOR_ABSENT: "no safe harbor",
   DATA_INCOMPLETE: "incomplete program data",
+  KI_PRESSURE_LOW: "low known-issue pressure",
+  KI_PRESSURE_HIGH: "high known-issue pressure",
+  OPPORTUNITY_EXPANDED: "scope expanded in latest diff",
+  OPPORTUNITY_TEXT_ONLY: "no scope growth in latest diff",
   ...Object.fromEntries(
     RADAR_FEATURE_KEYS.map((key) => [
       `UNKNOWN_${key.toUpperCase()}`,
@@ -123,6 +135,8 @@ const CAUTION_CODES: ReadonlySet<string> = new Set([
   "DATA_INCOMPLETE",
   "SUBMISSION_ACTIVITY_HIGH",
   "SATURATION_HIGH",
+  "KI_PRESSURE_HIGH",
+  "OPPORTUNITY_TEXT_ONLY",
 ]);
 
 /** V1.1 weight normalization: bare number → benefit; object → declared

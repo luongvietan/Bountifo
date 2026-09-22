@@ -1,9 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   extractProgramFeatures,
   normReward,
   parseStatValue,
 } from "../lib/radar/features";
+import { opportunityChangeScore } from "../lib/radar/diff";
+import { knownIssueDensity } from "../lib/radar/knownIssues";
+import type {
+  RadarDeepEnrichment,
+  RadarKnownIssueSummary,
+  RadarSemanticDiff,
+} from "../lib/radar/deepTypes";
 import {
   programFeatureVectorSchema,
   RADAR_FEATURE_KEYS,
@@ -14,6 +21,53 @@ import type {
   ApiTargetGroup,
 } from "../lib/types";
 import type { RadarProgramSnapshot } from "../lib/radar/types";
+
+// ---------------------------------------------------------------------------
+// The V1.3 seam modules (lib/radar/knownIssues.ts = Agent A, lib/radar/diff.ts
+// = Agent B) are contract stubs on this branch — they throw if reached.
+// Deterministic fakes substitute for them so the COMPLETE-path wiring is
+// exercised for real and stays exercised after the genuine formulas land.
+// The fakes must be shape-compatible only: feature extraction owns status
+// dispatch + rounding + source/reason honesty, the seams own the numbers.
+// ---------------------------------------------------------------------------
+vi.mock("../lib/radar/knownIssues", () => ({
+  // Density saturates unique issues against the meaningful-target
+  // denominator; null count or empty denominator → null (still honest).
+  knownIssueDensity: vi.fn(
+    (
+      summary: { unique_count: number | null },
+      meaningfulTargetCount: number,
+    ): number | null =>
+      summary.unique_count === null || meaningfulTargetCount <= 0
+        ? null
+        : summary.unique_count /
+          (summary.unique_count + meaningfulTargetCount),
+  ),
+}));
+
+vi.mock("../lib/radar/diff", () => ({
+  // 0 for an administrative-only diff (the text-only case), otherwise
+  // saturates on in-scope/API additions — enough to distinguish
+  // "analyzed, nothing grew" from "scope expanded".
+  opportunityChangeScore: vi.fn(
+    (diff: {
+      added_in_scope_targets: number | null;
+      added_api_targets: number | null;
+      only_administrative_changes: boolean | null;
+    }): number | null =>
+      diff.only_administrative_changes === true
+        ? 0
+        : Math.min(
+            1,
+            ((diff.added_in_scope_targets ?? 0) +
+              (diff.added_api_targets ?? 0)) /
+              4,
+          ),
+  ),
+}));
+
+const kiDensityMock = vi.mocked(knownIssueDensity);
+const oppChangeMock = vi.mocked(opportunityChangeScore);
 
 // Fixed reference time — freshness bands are calibrated against this and
 // tests never touch the wall clock.
@@ -75,7 +129,10 @@ function detail(overrides: Partial<ApiEngagementData> = {}): ApiEngagementData {
   };
 }
 
-function snapshot(detailValue: ApiEngagementData | null): RadarProgramSnapshot {
+function snapshot(
+  detailValue: ApiEngagementData | null,
+  deep?: RadarDeepEnrichment | null,
+): RadarProgramSnapshot {
   return {
     schema_version: 1,
     uuid: "uuid-1",
@@ -93,7 +150,47 @@ function snapshot(detailValue: ApiEngagementData | null): RadarProgramSnapshot {
       detailValue === null
         ? { status: "failed", error_kind: "http" }
         : { status: "complete" },
+    // `deep` omitted entirely when undefined — absent and null are distinct
+    // contract shapes and tests exercise both.
+    ...(deep === undefined ? {} : { deep }),
     source_hash: `sha256:${"0".repeat(64)}`,
+  };
+}
+
+/** Deep payload builders — every fact field must be explicit (strict). */
+function kiSummary(
+  overrides: Partial<RadarKnownIssueSummary> = {},
+): RadarKnownIssueSummary {
+  return {
+    status: "complete",
+    unique_count: 4,
+    total_count: 10,
+    ...overrides,
+  };
+}
+
+function semanticDiff(
+  overrides: Partial<RadarSemanticDiff> = {},
+): RadarSemanticDiff {
+  return {
+    status: "complete",
+    from_version: "v-prev",
+    to_version: "v-cur",
+    added_targets: 0,
+    removed_targets: 0,
+    added_in_scope_targets: 0,
+    removed_in_scope_targets: 0,
+    moved_in_scope: 0,
+    moved_out_of_scope: 0,
+    added_api_targets: 0,
+    added_web_targets: 0,
+    added_groups: 0,
+    reward_increase: false,
+    reward_decrease: false,
+    safe_harbor_changed: false,
+    status_changed: false,
+    only_administrative_changes: true,
+    ...overrides,
   };
 }
 
@@ -879,6 +976,260 @@ describe("always-null V1 signals", () => {
         reason_code: "not_deep_analyzed",
       });
     }
+  });
+});
+
+describe("deep-enrichment signals (V1.3)", () => {
+  beforeEach(() => {
+    kiDensityMock.mockClear();
+    oppChangeMock.mockClear();
+  });
+
+  it("deep absent / null / empty sub-objects all read not_deep_analyzed", () => {
+    for (const deep of [
+      undefined,
+      null,
+      { status: "failed", known_issues: null, semantic_diff: null },
+      { status: "unavailable", known_issues: null, semantic_diff: null },
+    ] as const) {
+      const v = extractProgramFeatures(snapshot(detail(), deep), NOW);
+      for (const key of [
+        "known_issue_density",
+        "opportunity_change",
+      ] as const) {
+        expect(v[key]).toEqual({
+          value: null,
+          source: "deep_enrichment",
+          reason_code: "not_deep_analyzed",
+        });
+      }
+    }
+    expect(kiDensityMock).not.toHaveBeenCalled();
+    expect(oppChangeMock).not.toHaveBeenCalled();
+  });
+
+  it("ki status unavailable/failed → distinct ki_<status> codes, seam untouched", () => {
+    for (const status of ["unavailable", "failed"] as const) {
+      const v = extractProgramFeatures(
+        snapshot(detail(), {
+          status: "partial",
+          known_issues: kiSummary({
+            status,
+            unique_count: null,
+            total_count: null,
+          }),
+          semantic_diff: null,
+        }),
+        NOW,
+      );
+      expect(v.known_issue_density).toEqual({
+        value: null,
+        source: "deep_enrichment",
+        reason_code: `ki_${status}`,
+      });
+    }
+    expect(kiDensityMock).not.toHaveBeenCalled();
+  });
+
+  it("diff status unavailable/no_baseline → distinct diff_<status> codes, seam untouched", () => {
+    for (const status of ["unavailable", "no_baseline"] as const) {
+      const v = extractProgramFeatures(
+        snapshot(detail(), {
+          status: "partial",
+          known_issues: null,
+          semantic_diff: semanticDiff({ status }),
+        }),
+        NOW,
+      );
+      expect(v.opportunity_change).toEqual({
+        value: null,
+        source: "deep_enrichment",
+        reason_code: `diff_${status}`,
+      });
+    }
+    expect(oppChangeMock).not.toHaveBeenCalled();
+  });
+
+  it("absent vs unavailable vs failed are distinct honest codes", () => {
+    const codes = [
+      extractProgramFeatures(snapshot(detail()), NOW).known_issue_density
+        .reason_code,
+      extractProgramFeatures(
+        snapshot(detail(), {
+          status: "partial",
+          known_issues: kiSummary({
+            status: "unavailable",
+            unique_count: null,
+            total_count: null,
+          }),
+          semantic_diff: null,
+        }),
+        NOW,
+      ).known_issue_density.reason_code,
+      extractProgramFeatures(
+        snapshot(detail(), {
+          status: "partial",
+          known_issues: kiSummary({
+            status: "failed",
+            unique_count: null,
+            total_count: null,
+          }),
+          semantic_diff: null,
+        }),
+        NOW,
+      ).known_issue_density.reason_code,
+    ];
+    expect(codes).toEqual([
+      "not_deep_analyzed",
+      "ki_unavailable",
+      "ki_failed",
+    ]);
+    expect(new Set(codes).size).toBe(3);
+  });
+
+  it("complete KI summary calls the seam with summary + meaningfulTargetCount", () => {
+    // 2 usable in-scope identities; a blank-identity and an out-of-scope
+    // target must not inflate the density denominator.
+    const d = detail({
+      targets: [
+        target({ id: "t1", location: "https://a.example" }),
+        target({ id: "t2", name: "Admin panel" }),
+        target({ id: "t3", location: "  ", name: "" }), // blank identity
+        target({ id: "t4", location: "https://b.example", inScope: false }),
+      ],
+    });
+    const ki = kiSummary({ unique_count: 4 });
+    const v = extractProgramFeatures(
+      snapshot(d, {
+        status: "complete",
+        known_issues: ki,
+        semantic_diff: null,
+      }),
+      NOW,
+    );
+    expect(kiDensityMock).toHaveBeenCalledTimes(1);
+    expect(kiDensityMock).toHaveBeenCalledWith(ki, 2);
+    // Fake: 4/(4+2) = 0.6667 — the extractor rounds and tags the value.
+    expect(v.known_issue_density).toEqual({
+      value: 0.6667,
+      source: "deep_enrichment",
+      reason_code: "ki_density",
+    });
+  });
+
+  it("complete diff calls the seam; a text-only diff scores a real 0, not null", () => {
+    const textOnly = semanticDiff({ only_administrative_changes: true });
+    const v = extractProgramFeatures(
+      snapshot(detail(), {
+        status: "complete",
+        known_issues: null,
+        semantic_diff: textOnly,
+      }),
+      NOW,
+    );
+    expect(oppChangeMock).toHaveBeenCalledWith(textOnly);
+    expect(v.opportunity_change).toEqual({
+      value: 0,
+      source: "deep_enrichment",
+      reason_code: "diff_score",
+    });
+
+    const expanded = semanticDiff({
+      only_administrative_changes: false,
+      added_in_scope_targets: 4,
+    });
+    const v2 = extractProgramFeatures(
+      snapshot(detail(), {
+        status: "complete",
+        known_issues: null,
+        semantic_diff: expanded,
+      }),
+      NOW,
+    );
+    expect(v2.opportunity_change.value).toBe(1);
+  });
+
+  it("a complete summary whose seam returns null keeps the signal honestly null", () => {
+    const v = extractProgramFeatures(
+      snapshot(detail(), {
+        status: "complete",
+        // Contract-legal: complete status with a null count → the formula
+        // cannot produce a density; null flows through untouched.
+        known_issues: kiSummary({ unique_count: null }),
+        semantic_diff: null,
+      }),
+      NOW,
+    );
+    expect(kiDensityMock).toHaveBeenCalledTimes(1);
+    expect(v.known_issue_density).toEqual({
+      value: null,
+      source: "deep_enrichment",
+      reason_code: "ki_density",
+    });
+  });
+
+  it("the envelope status is never read for truth — sub-object status decides", () => {
+    const v = extractProgramFeatures(
+      snapshot(detail(), {
+        status: "complete", // envelope lies: ki failed, diff worked
+        known_issues: kiSummary({
+          status: "failed",
+          unique_count: null,
+          total_count: null,
+        }),
+        semantic_diff: semanticDiff({
+          only_administrative_changes: false,
+          added_in_scope_targets: 2,
+        }),
+      }),
+      NOW,
+    );
+    expect(v.known_issue_density.reason_code).toBe("ki_failed");
+    expect(v.known_issue_density.value).toBeNull();
+    expect(v.opportunity_change.value).toBe(0.5); // fake: 2/4
+  });
+
+  it("detail:null short-circuits before the deep seams run", () => {
+    const v = extractProgramFeatures(
+      snapshot(null, {
+        status: "complete",
+        known_issues: kiSummary(),
+        semantic_diff: semanticDiff(),
+      }),
+      NOW,
+    );
+    for (const key of [
+      "known_issue_density",
+      "opportunity_change",
+    ] as const) {
+      expect(v[key]).toEqual({
+        value: null,
+        source: "deep_enrichment",
+        reason_code: "detail_unavailable",
+      });
+    }
+    expect(kiDensityMock).not.toHaveBeenCalled();
+    expect(oppChangeMock).not.toHaveBeenCalled();
+  });
+
+  it("stays pure and deterministic with a deep payload attached", () => {
+    const snap = snapshot(
+      detail({ targets: [target({ category: "api", location: "https://a" })] }),
+      {
+        status: "complete",
+        known_issues: kiSummary({ unique_count: 2 }),
+        semantic_diff: semanticDiff({
+          only_administrative_changes: false,
+          added_in_scope_targets: 1,
+        }),
+      },
+    );
+    const a = extractProgramFeatures(snap, NOW);
+    const b = extractProgramFeatures(snap, NOW);
+    expect(a).toEqual(b);
+    expect(programFeatureVectorSchema.safeParse(a).success).toBe(true);
+    expect(a.known_issue_density.value).not.toBeNull();
+    expect(a.opportunity_change.value).not.toBeNull();
   });
 });
 

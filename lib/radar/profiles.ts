@@ -37,29 +37,40 @@ export interface RadarProfile {
 }
 
 /**
- * V1.2 calibration — profiles touched by Research Saturation are version
- * "1.2.0" (cost weight moves from raw recent crowding to the composite
- * `research_saturation`; low_competition relabels to Low Saturation).
- * Untouched profiles keep "1.1.0" — a version asserts the semantics, not a
- * release train. Do not retune without a version bump.
+ * V1.3 calibration — profiles touched by the deep-enrichment signals are
+ * version "1.3.0": `known_issue_density` enters as a cost (duplicate
+ * pressure) and `opportunity_change` as a benefit that out-weights raw
+ * `freshness` where opportunity is the point of the profile. Untouched
+ * profiles keep "1.1.0" — a version asserts the semantics, not a release
+ * train. Do not retune without a version bump.
+ *
+ * Double-counting rule: `known_issue_density` is NOT also a component of
+ * the `research_saturation` composite. The composite stays metadata-only
+ * so catalog-wide (never deep-analyzed) programs remain comparable, and a
+ * deep-analyzed program pays the cost exactly once — here, as a declared
+ * profile weight.
  */
 export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
   /**
    * Balanced expected-value hunter: reward first, then surface, a moderate
-   * cost weight on observed research saturation, and a light recency factor
-   * (brief recency ≠ new opportunity — semantic diffing is not in V1). The
-   * composite replaces raw researcher_competition so crowding evidence is
-   * not double-counted.
+   * cost weight on observed research saturation, and a light recency factor.
+   * V1.3: `opportunity_change` (semantic scope movement) supersedes raw
+   * `freshness` — a wording edit and a scope expansion used to look
+   * identical — and `known_issue_density` prices duplicate pressure
+   * alongside, not inside, the saturation composite so deep-analyzed
+   * programs are never double-penalized.
    */
   best_ev: {
     id: "best_ev",
-    version: "1.2.0",
+    version: "1.3.0",
     label: "Best EV",
     weights: {
       reward_potential: 3,
       meaningful_surface: 2,
-      freshness: 0.75,
+      freshness: 0.5,
+      opportunity_change: 1.25,
       research_saturation: { weight: 1.5, direction: "cost" },
+      known_issue_density: { weight: 1, direction: "cost" },
       api_surface: 1,
       web_surface: 1,
       reward_breadth: 1,
@@ -73,18 +84,21 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
     minConfidence: 0.6,
   },
   /**
-   * Unsaturated-program hunter: dominant cost weight on the saturation
-   * composite plus freshness and surface. This is NOT a
+   * Unsaturated-program hunter: dominant cost weights on the saturation
+   * composite AND known-issue density (two independent duplicate-pressure
+   * reads), with freshness and a small opportunity bonus. This is NOT a
    * duplicate-probability estimate — saturation is observed attention, not
    * proof that bugs are gone.
    */
   low_competition: {
     id: "low_competition",
-    version: "1.2.0",
+    version: "1.3.0",
     label: "Low Saturation",
     weights: {
       research_saturation: { weight: 3, direction: "cost" },
-      freshness: 2,
+      known_issue_density: { weight: 2, direction: "cost" },
+      freshness: 1.5,
+      opportunity_change: 1,
       meaningful_surface: 1.5,
       reward_potential: 1,
       target_data_quality: 0.5,
@@ -118,11 +132,13 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
    * deep program analysis lands). API surface is measured two ways so a
    * lone API target cannot fake breadth: share (`api_surface`) and size
    * (`api_surface_size`, saturation over target count). The small cost
-   * weight uses the saturation composite rather than raw crowding.
+   * weight uses the saturation composite rather than raw crowding. V1.3
+   * adds a small `opportunity_change` benefit — a diff that just added API
+   * scope is exactly this profile's game.
    */
   authz_api: {
     id: "authz_api",
-    version: "1.2.0",
+    version: "1.3.0",
     label: "AuthZ/API",
     weights: {
       api_surface: 1.5,
@@ -130,6 +146,7 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
       meaningful_surface: 1.5,
       reward_potential: 1.5,
       freshness: 1,
+      opportunity_change: 0.75,
       safe_harbor: 0.5,
       research_saturation: { weight: 0.5, direction: "cost" },
     },
@@ -137,20 +154,23 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
     minConfidence: 0.5,
   },
   /**
-   * Recency hunter: freshness dominates; a light saturation cost replaces
-   * raw crowding so a recently-updated-but-saturated program still loses.
+   * Opportunity hunter (V1.3 relabel — id `fresh_programs` is persisted so
+   * it stays): `opportunity_change` slightly out-weights raw `freshness`
+   * because a text-only diff must not read as a fresh opportunity; a light
+   * saturation cost keeps a recently-updated-but-saturated program losing.
    */
   fresh_programs: {
     id: "fresh_programs",
-    version: "1.2.0",
-    label: "Fresh Programs",
+    version: "1.3.0",
+    label: "Fresh Opportunity",
     weights: {
-      freshness: 5,
+      freshness: 2.5,
+      opportunity_change: 3,
       meaningful_surface: 1,
       research_saturation: { weight: 1, direction: "cost" },
       reward_potential: 0.5,
     },
-    required_any: [["freshness"]],
+    required_any: [["freshness", "opportunity_change"]],
     minConfidence: 0.4,
   },
   /**
