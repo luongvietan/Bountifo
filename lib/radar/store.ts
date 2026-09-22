@@ -3,6 +3,7 @@ import type {
   ProgramFeatureVector,
   ProgramScore,
   RadarCatalogItem,
+  RadarEvidenceLevel,
   RadarProgramSnapshot,
 } from "./types";
 
@@ -48,6 +49,14 @@ export interface ScoreRow {
    * coordinator landed.
    */
   vector?: ProgramFeatureVector;
+  /**
+   * V1.3.1 evidence level: which enrichment stage produced this score.
+   * "metadata" rows are written by the scoring phase; "deep" rows by the
+   * deep re-scoring phase (under the deep-joined source_hash). Absent on
+   * rows written before V1.3.1 — resolve those via `scoreRowStage`, which
+   * derives the stage from the referenced snapshot's `deep` payload.
+   */
+  stage?: RadarEvidenceLevel;
 }
 
 /**
@@ -165,6 +174,7 @@ export async function putScore(
   score: ProgramScore,
   storedAt: string = new Date().toISOString(),
   vector?: ProgramFeatureVector,
+  stage: RadarEvidenceLevel = "metadata",
 ): Promise<void> {
   const row: ScoreRow = {
     uuid: score.engagement_uuid,
@@ -174,8 +184,81 @@ export async function putScore(
     stored_at: storedAt,
     score,
     ...(vector === undefined ? {} : { vector }),
+    stage,
   };
   await db.put("scores", row);
+}
+
+/**
+ * Resolves a score row's evidence stage. New rows carry `stage` explicitly;
+ * rows written before V1.3.1 resolve via the snapshot they scored — a score
+ * whose source_hash belongs to a snapshot carrying `deep` IS a deep score.
+ * An orphaned row (snapshot gone) resolves to "metadata": the score's
+ * embedded vector is the weaker evidence either way.
+ */
+export async function scoreRowStage(
+  db: RadarDb,
+  row: ScoreRow,
+): Promise<RadarEvidenceLevel> {
+  if (row.stage === "deep" || row.stage === "metadata") return row.stage;
+  const snap = (await db.get("snapshots", [row.uuid, row.source_hash])) as
+    | SnapshotRow
+    | undefined;
+  return snap?.snapshot.deep != null ? "deep" : "metadata";
+}
+
+/** The latest score row per uuid at profile+version, split by stage. */
+export interface StagedScoreRows {
+  metadata: ScoreRow[];
+  deep: ScoreRow[];
+}
+
+/**
+ * Like getLatestScoreRowsForProfile but returns one latest row per uuid PER
+ * STAGE — the metadata score and the deep score are separate evidence
+ * levels, so deep re-scoring never overwrites the metadata baseline. Rows
+ * without an explicit `stage` resolve through the snapshot map (a single
+ * store scan, shared across all unresolved rows).
+ */
+export async function getLatestScoreRowsByStage(
+  db: RadarDb,
+  profile: string,
+  scoringVersion: string,
+): Promise<StagedScoreRows> {
+  const rows = (await db.getAll("scores")) as ScoreRow[];
+  const candidates = rows.filter(
+    (row) => row.profile === profile && row.scoring_version === scoringVersion,
+  );
+  // Snapshot deep-flag map — loaded only when legacy rows need resolving.
+  let deepHashes: Map<string, boolean> | null = null;
+  const snapshotHasDeep = async (row: ScoreRow): Promise<boolean> => {
+    if (deepHashes === null) {
+      deepHashes = new Map(
+        ((await db.getAll("snapshots")) as SnapshotRow[]).map((s) => [
+          `${s.uuid}${s.source_hash}`,
+          s.snapshot.deep != null,
+        ]),
+      );
+    }
+    return deepHashes.get(`${row.uuid}${row.source_hash}`) === true;
+  };
+  const latest = new Map<string, ScoreRow>(); // key: `${stage}${uuid}`
+  for (const row of candidates) {
+    const stage: RadarEvidenceLevel =
+      row.stage ??
+      ((await snapshotHasDeep(row)) ? "deep" : "metadata");
+    const key = `${stage}${row.uuid}`;
+    const current = latest.get(key);
+    if (current === undefined || compareBookkeeping(row, current) > 0) {
+      latest.set(key, row);
+    }
+  }
+  const out: StagedScoreRows = { metadata: [], deep: [] };
+  for (const [key, row] of latest) {
+    if (key.startsWith("deep")) out.deep.push(row);
+    else out.metadata.push(row);
+  }
+  return out;
 }
 
 /** All stored score ROWS for one engagement under one profile (any version). */
@@ -258,7 +341,7 @@ export async function getLatestScoresForProfile(
 }
 
 /** Latest-write ordering: stored_at first, then key fields for stability. */
-function compareBookkeeping(
+export function compareBookkeeping(
   a: { stored_at: string; source_hash: string },
   b: { stored_at: string; source_hash: string },
 ): number {

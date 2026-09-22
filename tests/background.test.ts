@@ -365,7 +365,12 @@ describe("routeMessage radar ops", () => {
       },
       extensionPageSender,
     );
-    expect(getResults).toHaveBeenCalledWith("low_competition", 25, 0.7);
+    expect(getResults).toHaveBeenCalledWith(
+      "low_competition",
+      25,
+      0.7,
+      undefined,
+    );
     expect(res).toEqual({ ok: true, rows: [] });
     getResults.mockRestore();
   });
@@ -378,7 +383,7 @@ describe("routeMessage radar ops", () => {
       { op: "RADAR_GET_RESULTS", profile: "best_ev" },
       extensionPageSender,
     );
-    expect(getResults).toHaveBeenCalledWith("best_ev", 50, undefined);
+    expect(getResults).toHaveBeenCalledWith("best_ev", 50, undefined, undefined);
     getResults.mockRestore();
   });
 

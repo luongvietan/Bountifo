@@ -150,6 +150,7 @@ async function routeRadarMessage(msg: RadarMessage): Promise<RouterResponse> {
             msg.profile,
             msg.limit,
             msg.minConfidence,
+            msg.mode,
           ),
         };
       case "RADAR_GET_PROGRAM":

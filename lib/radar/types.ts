@@ -134,6 +134,74 @@ export type RadarFeatureKey = Exclude<
   "schema_version"
 >;
 
+// ---------------------------------------------------------------------------
+// V1.3.1 — evidence levels + deep-stage orchestration types.
+//
+// RadarEvidenceLevel marks which evidence a score was computed from:
+//   "metadata" — the always-on catalog/brief enrichment signals only
+//   "deep"     — the deep-enriched vector (known_issue_density +
+//                opportunity_change populated from real evidence or
+//                honestly null)
+// A program can hold BOTH scores: the deep re-score writes under the joined
+// source_hash, so the metadata row survives for before/after comparison.
+//
+// DeepStabilization is the run's honest verdict on iterative deepening:
+//   "stable"         — every deep-dependent profile's metadata frontier is
+//                      fully deep-analyzed (within STABLE_TOP_K + buffer)
+//   "budget_limited" — MAX_DEEP_PROGRAMS exhausted with frontier gaps left
+//   "incomplete"     — the deep stage ran but did not reach a verdict
+//                      (cancelled/failed mid-loop)
+// ---------------------------------------------------------------------------
+
+export type RadarEvidenceLevel = "metadata" | "deep";
+export type DeepStabilization = "stable" | "budget_limited" | "incomplete";
+
+/**
+ * The profiles whose weights consume deep signals — deep analysis is only
+ * meaningful for these. Order is meaningful: it is the documented priority
+ * used to order candidate-union provenance and stabilization batches.
+ * high_reward and easy_entry weight no deep signal, so a deep pass cannot
+ * change their scores.
+ */
+export const DEEP_PROFILE_IDS: readonly RadarProfileId[] = [
+  "best_ev",
+  "fresh_programs",
+  "low_competition",
+  "authz_api",
+];
+
+/** Signal keys that only deep enrichment can populate. */
+export const DEEP_SIGNAL_KEYS: readonly RadarFeatureKey[] = [
+  "known_issue_density",
+  "opportunity_change",
+];
+
+/** Per-profile metadata Top-N admitted into the deep candidate union. */
+export const PROFILE_CANDIDATE_DEPTH = 20;
+/** The Top-K the stabilization loop tries to make fully deep-analyzed. */
+export const STABLE_TOP_K = 20;
+/**
+ * Extra metadata-rank margin beyond STABLE_TOP_K: deep-score drops can admit
+ * programs ranked just below K, so the frontier watches K + buffer.
+ */
+export const STABILITY_BUFFER = 10;
+/** Hard cap on unique programs deep-analyzed per run (~3 requests each). */
+export const MAX_DEEP_PROGRAMS = 60;
+/** Programs added per stabilization round. */
+export const DEEP_BATCH_SIZE = 10;
+
+/** Why a program entered the deep candidate set (per contributing profile). */
+export interface DeepCandidateReason {
+  profile: RadarProfileId;
+  metadata_rank: number;
+}
+
+/** One shortlisted program plus its selection provenance. */
+export interface DeepCandidate {
+  uuid: string;
+  reasons: DeepCandidateReason[];
+}
+
 /** The 17 signal keys, in interface order. */
 export const RADAR_FEATURE_KEYS: readonly RadarFeatureKey[] = [
   "reward_potential",

@@ -99,6 +99,9 @@ export const RadarMsg = z.discriminatedUnion("op", [
       profile: radarProfileSchema,
       limit: z.number().int().min(1).max(200).default(50),
       minConfidence: z.number().min(0).max(1).optional(),
+      /** V1.3.1 evidence-level view: "deep" ranks only deep-analyzed rows;
+       *  "metadata" (default) ranks the full metadata stage. */
+      mode: z.enum(["metadata", "deep"]).optional(),
     })
     .strict(),
   z

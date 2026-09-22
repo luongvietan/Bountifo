@@ -4,26 +4,35 @@ import { extractProgramFeatures } from "./features";
 import { getRadarProfile } from "./profiles";
 import { explainScore, rankPrograms, scoreProgram } from "./scoring";
 import {
+  compareBookkeeping,
   getCatalog,
   getCatalogItem,
   getLatestRunId,
-  getLatestScoreRow,
-  getLatestScoreRowsForProfile,
+  getLatestScoreRowsByStage,
   getLatestSnapshot,
   getRun,
+  getScoreRows,
   putCatalogItems,
   putRun,
   putScore,
   putSnapshot,
+  scoreRowStage,
   setLatestRunId,
   type RadarDb,
   type RadarRunRecord,
+  type ScoreRow,
 } from "./store";
+import { annotateEvidence } from "./stage";
 import {
+  DEEP_PROFILE_IDS,
+  MAX_DEEP_PROGRAMS,
   RADAR_PROFILE_IDS,
+  type DeepCandidate,
+  type DeepStabilization,
   type ProgramFeatureVector,
   type ProgramScore,
   type RadarCatalogItem,
+  type RadarEvidenceLevel,
   type RadarProfileId,
   type RadarProgramSnapshot,
 } from "./types";
@@ -68,6 +77,16 @@ export interface RadarRunState {
   deep_pending_uuids: string[];
   deep_completed_uuids: string[];
   deep_enriched: number;
+  /**
+   * V1.3.1 iterative deepening: the profile-aware candidate union (with
+   * per-profile metadata ranks), the current enrichment round, the run's
+   * deep budget, and the terminal stabilization verdict (null while the
+   * deep stage is running or never ran).
+   */
+  deep_candidates: DeepCandidate[];
+  deep_round: number;
+  deep_budget: number;
+  deep_stabilization: DeepStabilization | null;
   /** Total warning count (details capped — see RadarScanSummary.warnings). */
   warnings: number;
   started_at: string;
@@ -85,6 +104,13 @@ export interface RadarScanSummary {
   enrichment_failed: number;
   scored: number;
   warnings: string[];
+  /** V1.3.1 deep-stage outcome — absent on summaries written by V1.3 runs
+   *  and on runs whose deep stage never started (no deepHydrate dep). */
+  deep_candidates?: number;
+  deep_analyzed?: number;
+  deep_rounds?: number;
+  deep_budget?: number;
+  deep_stabilization?: DeepStabilization | null;
 }
 
 /**
@@ -99,13 +125,33 @@ export type PersistedRadarRun = RadarRunState & {
   cancel_requested: boolean;
 };
 
+/**
+ * The two result-table modes (V1.3.1):
+ *   "metadata" — every in-scope program, ranked by its metadata-stage
+ *                score; rows that were also deep-analyzed carry the DEEP
+ *                badge plus deep_score/score_delta.
+ *   "deep"     — deep-analyzed programs ONLY, ranked by their deep score;
+ *                ordinal ranks are comparable because every row carries the
+ *                same evidence level.
+ */
+export type RadarResultMode = "metadata" | "deep";
+
 /** One row of the ranked results table returned by getResults. */
 export interface RadarResultRow {
   uuid: string;
   code: string | null;
   name: string | null;
+  /** The score at the requested evidence level (deep score in "deep" mode,
+   *  metadata score in "metadata" mode). */
   score: number | null;
   confidence: number;
+  /** "deep" iff a deep-stage score exists for this program+profile —
+   *  independent of the current view mode. */
+  evidence_level: RadarEvidenceLevel;
+  /** Both scores when they exist — enables Meta/Deep/Δ display. */
+  metadata_score: number | null;
+  deep_score: number | null;
+  score_delta: number | null;
   /** True when a profile-declared required signal group is entirely
    *  unknown — the row displays flagged, never silently final. */
   provisional: boolean;
@@ -134,9 +180,15 @@ export interface RadarResultSignals {
 /** Envelope returned by getProgram. */
 export interface RadarProgramDetail {
   snapshot: RadarProgramSnapshot | null;
+  /** The best available score: deep-stage when present, else metadata. */
   score: ProgramScore | null;
-  /** The feature vector embedded on the score row — lets the detail pane
-   *  show unweighted signals (e.g. saturation inputs) without a re-read. */
+  /** V1.3.1: both stage scores side by side — either may be null when the
+   *  program was never scored at that stage. */
+  metadata_score: ProgramScore | null;
+  deep_score: ProgramScore | null;
+  /** The feature vector embedded on the best score row — lets the detail
+   *  pane show unweighted signals (e.g. saturation inputs) without a
+   *  re-read. */
   vector: ProgramFeatureVector | null;
   explanation: string[];
   catalog: RadarCatalogItem | null;
@@ -157,8 +209,20 @@ export interface RadarCoordinatorDeps {
     item: RadarCatalogItem,
     snapshot: RadarProgramSnapshot,
   ) => Promise<RadarProgramSnapshot>;
-  /** Max programs deep-analyzed per run (default DEEP_ANALYSIS_LIMIT). */
+  /** Hard cap on unique deep-analyzed programs per run
+   *  (default MAX_DEEP_PROGRAMS; the candidate union and stabilization
+   *  batches share it). */
   deepLimit?: number;
+  /** Per-profile metadata Top-N admitted to the deep candidate union
+   *  (default PROFILE_CANDIDATE_DEPTH). */
+  deepCandidateDepth?: number;
+  /** Top-K the stabilization loop tries to keep fully deep-analyzed
+   *  (default STABLE_TOP_K). */
+  stableTopK?: number;
+  /** Frontier margin beyond stableTopK (default STABILITY_BUFFER). */
+  stabilityBuffer?: number;
+  /** Programs added per stabilization round (default DEEP_BATCH_SIZE). */
+  deepBatchSize?: number;
   openStore: () => Promise<RadarDb>;
   now: () => string;
   concurrency?: number;
@@ -217,6 +281,52 @@ function isSummary(value: unknown): value is RadarScanSummary {
   return status === "complete" || status === "partial" || status === "failed";
 }
 
+const STABILIZATION_VALUES: ReadonlySet<string> = new Set([
+  "stable",
+  "budget_limited",
+  "incomplete",
+]);
+
+function asStabilization(value: unknown): DeepStabilization | null {
+  return typeof value === "string" && STABILIZATION_VALUES.has(value)
+    ? (value as DeepStabilization)
+    : null;
+}
+
+/** Loose persisted deep_candidates → typed (bad entries dropped, never
+ *  fabricated). */
+function asDeepCandidates(value: unknown): DeepCandidate[] {
+  if (!Array.isArray(value)) return [];
+  const out: DeepCandidate[] = [];
+  for (const entry of value) {
+    if (entry === null || typeof entry !== "object") continue;
+    const uuid = (entry as { uuid?: unknown }).uuid;
+    if (typeof uuid !== "string" || uuid === "") continue;
+    const reasons: DeepCandidate["reasons"] = [];
+    const rawReasons = (entry as { reasons?: unknown }).reasons;
+    if (Array.isArray(rawReasons)) {
+      for (const r of rawReasons) {
+        if (r === null || typeof r !== "object") continue;
+        const profile = (r as { profile?: unknown }).profile;
+        const rank = (r as { metadata_rank?: unknown }).metadata_rank;
+        if (
+          typeof profile === "string" &&
+          (RADAR_PROFILE_IDS as readonly string[]).includes(profile) &&
+          typeof rank === "number" &&
+          Number.isFinite(rank)
+        ) {
+          reasons.push({
+            profile: profile as RadarProfileId,
+            metadata_rank: Math.floor(rank),
+          });
+        }
+      }
+    }
+    out.push({ uuid, reasons });
+  }
+  return out;
+}
+
 /** Loose RadarRunRecord → normalized PersistedRadarRun (resume path). */
 function normalizeRunRecord(
   record: RadarRunRecord,
@@ -245,6 +355,10 @@ function normalizeRunRecord(
     deep_pending_uuids: asStringList(record.deep_pending_uuids),
     deep_completed_uuids: asStringList(record.deep_completed_uuids),
     deep_enriched: asCount(record.deep_enriched),
+    deep_candidates: asDeepCandidates(record.deep_candidates),
+    deep_round: asCount(record.deep_round),
+    deep_budget: asCount(record.deep_budget),
+    deep_stabilization: asStabilization(record.deep_stabilization),
   };
 }
 
@@ -355,6 +469,10 @@ export class RadarCoordinator {
       deep_pending_uuids: [],
       deep_completed_uuids: [],
       deep_enriched: 0,
+      deep_candidates: [],
+      deep_round: 0,
+      deep_budget: 0,
+      deep_stabilization: null,
     };
     await this.checkpoint(db, this.run);
     await setLatestRunId(db, this.run.run_id);
@@ -429,27 +547,44 @@ export class RadarCoordinator {
   }
 
   /**
-   * Ranked results rows for one profile: latest score per engagement at the
-   * profile's current version, scoped to the latest run's discovered set,
-   * joined with catalog identity and the stored feature vector's six
-   * display signals. `rankPrograms` supplies ordering; `minConfidence` is an
-   * optional extra filter; `limit` clamps to ≤200.
+   * Ranked results rows for one profile, at one evidence level:
+   *
+   *   mode "metadata" — every in-scope program ranked by its metadata-stage
+   *     score; rows that were also deep-analyzed are annotated with
+   *     evidence_level "deep" plus deep_score/score_delta.
+   *   mode "deep" — ONLY programs holding a deep-stage score, ranked among
+   *     themselves. Metadata-only programs never share this rank: the
+   *     ordinal ordering would compare different evidence levels.
+   *
+   * For profiles without deep weights no deep rows are written, so "deep"
+   * mode is honestly empty. `rankPrograms` supplies ordering;
+   * `minConfidence` is an optional extra filter; `limit` clamps to ≤200.
    */
   async getResults(
     profileId: RadarProfileId,
     limit: number = 50,
     minConfidence?: number,
+    mode: RadarResultMode = "metadata",
   ): Promise<RadarResultRow[]> {
     const db = await this.database();
     const scope = await this.latestRunScope(db);
     if (scope === null) return [];
     const profile = getRadarProfile(profileId);
-    const rows = (
-      await getLatestScoreRowsForProfile(db, profile.id, profile.version)
-    ).filter((row) => scope.has(row.uuid));
-    const byUuid = new Map(rows.map((row) => [row.uuid, row]));
+    const staged = await getLatestScoreRowsByStage(
+      db,
+      profile.id,
+      profile.version,
+    );
+    const inScope = (rows: ScoreRow[]): ScoreRow[] =>
+      rows.filter((row) => scope.has(row.uuid));
+    const metaRows = inScope(staged.metadata);
+    const deepRows = inScope(staged.deep);
+    const metaByUuid = new Map(metaRows.map((row) => [row.uuid, row]));
+    const deepByUuid = new Map(deepRows.map((row) => [row.uuid, row]));
+    const shown = mode === "deep" ? deepRows : metaRows;
+    const shownByUuid = new Map(shown.map((row) => [row.uuid, row]));
     const ranked = rankPrograms(
-      rows.map((row) => row.score),
+      shown.map((row) => row.score),
       profile,
     );
     const catalog = new Map(
@@ -463,7 +598,15 @@ export class RadarCoordinator {
         continue;
       }
       const uuid = score.engagement_uuid;
-      const vector = byUuid.get(uuid)?.vector;
+      const ann = annotateEvidence(
+        metaByUuid.get(uuid)?.score ?? null,
+        deepByUuid.get(uuid)?.score ?? null,
+      );
+      // Richest vector wins: the deep vector carries the same metadata
+      // signals plus real deep values, so a deep-analyzed row shows real
+      // KI Pressure/Opportunity numbers even in metadata mode.
+      const vector =
+        deepByUuid.get(uuid)?.vector ?? shownByUuid.get(uuid)?.vector;
       const cat = catalog.get(uuid);
       out.push({
         uuid,
@@ -471,6 +614,10 @@ export class RadarCoordinator {
         name: cat?.name ?? null,
         score: score.score,
         confidence: score.confidence,
+        evidence_level: ann.evidence_level,
+        metadata_score: ann.metadata_score,
+        deep_score: ann.deep_score,
+        score_delta: ann.score_delta,
         provisional: score.provisional,
         eligible,
         signals: {
@@ -490,10 +637,11 @@ export class RadarCoordinator {
   }
 
   /**
-   * Per-program drill-down: latest snapshot, latest score for `profileId`
-   * (defaults to best_ev) at the profile's current version, its rendered
-   * explanation, and the catalog row. Null envelope when nothing is stored —
-   * or when no latest run exists / the uuid sits outside its discovered set.
+   * Per-program drill-down: latest snapshot, BOTH stage scores for
+   * `profileId` at its current version (metadata + deep — the deep row is
+   * preferred for `score`/`vector`/`explanation`), and the catalog row.
+   * Null envelope when nothing is stored — or when no latest run exists /
+   * the uuid sits outside its discovered set.
    */
   async getProgram(
     uuid: string,
@@ -503,21 +651,49 @@ export class RadarCoordinator {
     const scope = await this.latestRunScope(db);
     if (scope === null || !scope.has(uuid)) return null;
     const profile = getRadarProfile(profileId);
-    const [snapshot, scoreRow, catalogItem] = await Promise.all([
+    const [snapshot, catalogItem] = await Promise.all([
       getLatestSnapshot(db, uuid),
-      getLatestScoreRow(db, uuid, profile.id, profile.version),
       getCatalogItem(db, uuid),
     ]);
+    // Latest row per stage for this uuid — the stage filter keeps a deep
+    // re-score from hiding the metadata baseline it was computed on top of.
+    const [metaRow, deepRow] = await Promise.all([
+      this.latestStageRow(db, uuid, profile, "metadata"),
+      this.latestStageRow(db, uuid, profile, "deep"),
+    ]);
     const catalog = catalogItem ?? snapshot?.catalog ?? null;
-    const score = scoreRow?.score ?? null;
+    const best = deepRow ?? metaRow;
+    const score = best?.score ?? null;
     if (snapshot === null && score === null && catalog === null) return null;
     return {
       snapshot,
       score,
-      vector: scoreRow?.vector ?? null,
+      metadata_score: metaRow?.score ?? null,
+      deep_score: deepRow?.score ?? null,
+      vector: best?.vector ?? null,
       explanation: score === null ? [] : explainScore(score),
       catalog,
     };
+  }
+
+  /** The newest score row for one uuid at one stage (stage resolved the
+   *  same way as the results table — explicit field, else snapshot deep). */
+  private async latestStageRow(
+    db: RadarDb,
+    uuid: string,
+    profile: ReturnType<typeof getRadarProfile>,
+    stage: RadarEvidenceLevel,
+  ): Promise<ScoreRow | null> {
+    const rows = await getScoreRows(db, uuid, profile.id);
+    let latest: ScoreRow | null = null;
+    for (const row of rows) {
+      if (row.scoring_version !== profile.version) continue;
+      if ((await scoreRowStage(db, row)) !== stage) continue;
+      if (latest === null || compareBookkeeping(row, latest) > 0) {
+        latest = row;
+      }
+    }
+    return latest;
   }
 
   private kickoff(): void {
@@ -728,7 +904,7 @@ export class RadarCoordinator {
       for (const profileId of RADAR_PROFILE_IDS) {
         const profile = getRadarProfile(profileId);
         const score = scoreProgram(snapshot, vector, profile);
-        await putScore(db, score, this.deps.now(), vector);
+        await putScore(db, score, this.deps.now(), vector, "metadata");
       }
       run.scored += 1;
       await this.checkpoint(db, run);
@@ -750,11 +926,12 @@ export class RadarCoordinator {
   }
 
   /**
-   * Top-N pick for deep enrichment: rank this run's best_ev metadata scores
-   * and take the first `deepLimit` eligible programs. Eligibility already
-   * encodes the profile's minConfidence floor; only uuids completed by THIS
-   * run qualify (latest-run scoping — stale rows from older runs can't
-   * sneak into the deep queue).
+   * Top-N pick for deep enrichment: rank this run's best_ev metadata-stage
+   * scores and take the first `deepLimit` eligible programs. Eligibility
+   * already encodes the profile's minConfidence floor; only uuids completed
+   * by THIS run qualify (latest-run scoping — stale rows from older runs
+   * can't sneak into the deep queue). Selection provenance is persisted on
+   * run.deep_candidates for diagnostics.
    */
   private async buildDeepShortlist(
     db: RadarDb,
@@ -762,23 +939,28 @@ export class RadarCoordinator {
   ): Promise<void> {
     if (this.deps.deepHydrate === undefined) return;
     const profile = getRadarProfile("best_ev");
-    const rows = await getLatestScoreRowsForProfile(
+    const staged = await getLatestScoreRowsByStage(
       db,
       profile.id,
       profile.version,
     );
     const scope = new Set(run.completed_uuids);
     const ranked = rankPrograms(
-      rows
+      staged.metadata
         .filter((row) => scope.has(row.score.engagement_uuid))
         .map((row) => row.score),
       profile,
     );
     const limit = this.deps.deepLimit ?? DEEP_ANALYSIS_LIMIT;
-    run.deep_pending_uuids = ranked
-      .filter((entry) => entry.eligible)
+    const eligible = ranked.filter((entry) => entry.eligible);
+    run.deep_candidates = eligible
       .slice(0, limit)
-      .map((entry) => entry.score.engagement_uuid);
+      .map((entry, index) => ({
+        uuid: entry.score.engagement_uuid,
+        reasons: [{ profile: "best_ev", metadata_rank: index + 1 }],
+      }));
+    run.deep_budget = limit;
+    run.deep_pending_uuids = run.deep_candidates.map((c) => c.uuid);
   }
 
   private async deepEnrichPhase(
@@ -873,9 +1055,11 @@ export class RadarCoordinator {
   }
 
   /**
-   * Re-score only the programs whose snapshot gained deep data. The same
-   * deterministic extract+score path produces the deep-informed score under
-   * the new source_hash; uuids completed without deep data are skipped.
+   * Re-score only the programs whose snapshot gained deep data, and only
+   * the deep-dependent profiles — high_reward/easy_entry weight no deep
+   * signal, so a deep row would duplicate the metadata score without adding
+   * evidence (profile isolation). Deep rows are written under stage "deep"
+   * at the joined source_hash; the metadata score row is never overwritten.
    */
   private async deepScorePhase(
     db: RadarDb,
@@ -891,10 +1075,10 @@ export class RadarCoordinator {
       const snapshot = await getLatestSnapshot(db, uuid);
       if (snapshot === null || snapshot.deep == null) continue;
       const vector = extractProgramFeatures(snapshot, now);
-      for (const profileId of RADAR_PROFILE_IDS) {
+      for (const profileId of DEEP_PROFILE_IDS) {
         const profile = getRadarProfile(profileId);
         const score = scoreProgram(snapshot, vector, profile);
-        await putScore(db, score, this.deps.now(), vector);
+        await putScore(db, score, this.deps.now(), vector, "deep");
       }
       await this.checkpoint(db, run);
     }
@@ -928,6 +1112,17 @@ export class RadarCoordinator {
         overflow > 0
           ? [...run.warning_details, `…and ${overflow} more`]
           : [...run.warning_details],
+      // Deep-stage bookkeeping — only present when the deep stage ran at
+      // all (a run without deepHydrate leaves the fields absent).
+      ...(run.deep_candidates.length > 0 || run.deep_completed_uuids.length > 0
+        ? {
+            deep_candidates: run.deep_candidates.length,
+            deep_analyzed: run.deep_completed_uuids.length,
+            deep_rounds: run.deep_round,
+            deep_budget: run.deep_budget,
+            deep_stabilization: run.deep_stabilization,
+          }
+        : {}),
     };
   }
 }
