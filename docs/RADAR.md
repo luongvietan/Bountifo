@@ -2,13 +2,17 @@
 
 Deterministic program triage over the Bugcrowd engagement catalog. Radar
 enumerates every engagement visible to the browser session, hydrates each
-program's structured brief document, reduces it to a fixed 16-signal feature vector, and
+program's structured brief document, reduces it to a fixed 17-signal feature vector, and
 ranks programs under six versioned weight profiles. No LLM participates in
 collection, extraction, scoring, ranking, or explanation. The output is a
-**Metadata Opportunity Score** — a candidate-pool ranking over cheap
-metadata, not a true expected-value estimate; the signals that would make
-it EV (duplicate pressure, accessibility, real authz opportunity) are
-still unsourced in V1.
+two-stage **Opportunity Score** — V1.3 runs a cheap metadata pass over the
+whole catalog, then a bounded deep-enrichment pass (Known Issues aggregate
++ semantic changelog diff) over the top of the best_ev shortlist. Deep
+signals stay `null` for programs that were never deep-analyzed — missing
+data is never coerced into a favorable or unfavorable value. This is still
+a candidate-pool ranking, not a true expected-value estimate; the signals
+that would make it EV (duplicate probability, accessibility, real authz
+opportunity) remain partially unsourced.
 
 ```text
 GET /engagements.json?page=N    GET /engagements/<slug>/changelog.json
@@ -29,7 +33,7 @@ GET /engagements.json?page=N    GET /engagements/<slug>/changelog.json
               pure — `now` passed in, no clock/network/storage
                                     │
                                     ▼
-               ProgramFeatureVector — 16 signals, 0..1 or null
+               ProgramFeatureVector — 17 signals, 0..1 or null
                                     │
               scoreProgram × 6 profiles (lib/radar/profiles.ts,
               lib/radar/scoring.ts) — pure, deterministic
@@ -38,6 +42,16 @@ GET /engagements.json?page=N    GET /engagements/<slug>/changelog.json
               ProgramScore {score, confidence, provisional,
                             components, reasons}
                                     │
+              ┌─────────────────────┴──────────────────────┐
+              │ V1.3 deep stage — Top-N best_ev shortlist  │
+              │ (DEEP_ANALYSIS_LIMIT = 30, eligible only): │
+              │   GET …/engagement_known_issues.json       │
+              │   GET …/changelog.json  (re-fetch)         │
+              │   GET …/changelog/<baseline>.json          │
+              │     → hydrateRadarDeep (lib/radar/deep.ts) │
+              │     → snapshot.deep + joined source_hash   │
+              │     → re-score deep-completed uuids        │
+              └─────────────────────┬──────────────────────┘
                                     ▼
                   IndexedDB `bce-radar` (lib/radar/store.ts)
                                     │
@@ -65,6 +79,8 @@ instead of aborting the run.
 | Detail | `GET /engagements/{slug}/changelog/{version}.json` | `ApiEngagementData` via `lib/radar/detailMap.ts`: identity (`data.engagement.code`), `engagementTypeDetail.productLabel`, `statusLabel`, `data.engagement.startsAt`/`endsAt`, `lastTransitionAt`, `publishedAt` → `lastBriefUpdate`, `brief.safeHarborStatus.status`, scope groups (`inScope`, `rewardRange.pNMaxCents` — cents→dollars), targets (`uri`, `category`, `tags`) |
 | Stats | `GET /engagements/{slug}/statistics.json` | `statistics` — `rewardedVulnerabilities` → `vulnerabilities_rewarded`, `averagePayout` → `average_payout`, `validationWithin`, `validSubmissionCount` → `valid_submission_count` (present in the schema but currently `null` on every observed program — consumed honestly when Bugcrowd populates it) |
 | Joined | `GET /engagements/{slug}/recently_joined_users.json` | `statistics.researchers_participating` ← `total` (recent-joiner count — the recent-crowding proxy, NOT lifetime participation). Absent/`total` missing → key omitted, never invented. |
+| Known Issues (deep only) | `GET /engagements/{slug}/engagement_known_issues.json` → `{"unique":int,"total":int}` — verified live | `deep.known_issues` — `total` includes duplicates of the `unique` accepted issues; both exclude out-of-scope and cover P1–P4 in Triaged/Unresolved/Informational. Non-2xx/parse failure → `unavailable`/`failed`, never zero. |
+| Baseline brief (deep only) | `GET /engagements/{slug}/changelog/{prevId}.json` — every listed version id is fetchable with the identical document shape (verified live) | `deep.semantic_diff` — structured diff of the previous version vs the current detail (see Semantic diff below). The baseline is the entry immediately preceding `Latest` in the newest-first changelog list. |
 
 The detail chain is pure JSON end-to-end — the brief's rendered page is a
 client-side SPA shell whose markup carries no scope content, so nothing on
@@ -136,9 +152,13 @@ preimage `"radar-source-v1:" + canonicalJson(projection)`.
 `extractProgramFeatures(snapshot, now)` is pure: no network, storage,
 `Date.now()`, or randomness. Every emitted value is rounded to 4 decimals;
 `null` means unknown and is never fabricated. When `snapshot.detail` is
-`null`, the thirteen detail-derived signals are `null` with reason code
-`detail_unavailable` — nothing is inferred from the catalog row — and the
-three V1-unavailable signals keep `not_available_v1`.
+`null`, the detail-derived signals are `null` with reason code
+`detail_unavailable` — nothing is inferred from the catalog row — and
+`accessibility`/`authz_opportunity` keep `not_available_v1`. The two deep
+signals read `snapshot.deep`: absent/null deep data → `not_deep_analyzed`;
+a sub-source status (`unavailable`, `failed`, `no_baseline`) surfaces as
+`ki_<status>` / `diff_<status>`; only `status === "complete"` produces a
+value.
 
 ### Signal definitions
 
@@ -158,7 +178,8 @@ three V1-unavailable signals keep `not_available_v1`.
 | `safe_harbor` | `engagement_detail` | `safe_harbor_field` | `safeHarborLevel` field only: contains `full` → 1.0, `partial` → 0.5, `none`/`absent` → 0.0 (case-insensitive); anything else or missing → `null`. |
 | `target_data_quality` | `derived` | `field_completeness_mix` | Mean of four parts: fraction of in-scope targets with non-empty `category`; fraction with usable location/name; 1 iff ≥1 in-scope group exists; fraction of in-scope groups carrying ≥1 non-null reward value (a recorded 0 counts). Empty denominators score 0. `null` only when zero in-scope targets AND zero in-scope groups. |
 | `accessibility` | `derived` | `not_available_v1` | Always `null` in V1 — setup/account requirements need deep analysis. |
-| `known_issue_density` | `derived` | `not_available_v1` | Always `null` in V1 — Known Issues are not fetched at catalog scale. |
+| `known_issue_density` | `deep_enrichment` | `not_deep_analyzed` / `ki_<status>` / `ki_density` | **Duplicate-pressure proxy** (V1.3): `0.5·(u/(u+50)) + 0.5·(d/(d+5))` where `u` = `unique_count` and `d = u / meaningfulTargetCount` (in-scope targets with usable identity; absent/degenerate surface → volume term only). Monotone nondecreasing in `u`; `u=0` → a real `0`. `null` unless `deep.known_issues.status === "complete"` — missing Known Issues never read as "no issues". NOT a duplicate-probability estimate: `total_count` (which embeds dup share) is captured for display but deliberately excluded from the signal. |
+| `opportunity_change` | `deep_enrichment` | `not_deep_analyzed` / `diff_<status>` / `opportunity_score` | **Semantic opportunity gained in the latest publish** (V1.3): `min(1, 0.35·ai/(ai+3) + 0.30·api/(api+2) + 0.10·ag/(ag+1) + 0.15·[reward_increase] + 0.10·mi/(mi+2))` over the diff facts (ai = added in-scope targets, api = added API targets, ag = added groups, mi = moved in-scope). `only_administrative_changes` → a real `0` — a wording edit scores nothing, which is the entire point versus `freshness`. `null` unless `deep.semantic_diff.status === "complete"`. |
 | `authz_opportunity` | `derived` | `not_available_v1` | Always `null` in V1 — no deterministic source until deep analysis. |
 
 ### Normalization curves
@@ -180,9 +201,24 @@ activity), 10 (API target count).
 **Research saturation composite** — `Σ w_i·c_i / Σ w_i` over known
 components only, weights `recent_crowding 0.30 / submission_activity
 0.40 / rewarded_activity 0.30` (pinned V1.2 calibration). Fewer than 2
-known components → `null`. `known_issue_density` is a declared component
-slot for V1.3 — it carries no weight yet, so wiring it later changes
-only the weight table.
+known components → `null`. `known_issue_density` is deliberately NOT a
+component: the composite stays metadata-only so catalog-wide programs
+(never deep-analyzed) remain comparable, and a deep-analyzed program pays
+the duplicate-pressure cost exactly once — as a profile weight.
+
+**Semantic diff (V1.3)** — `diffBriefDocuments(prev, curr)` over MAPPED
+`ApiEngagementData`: targets match by `id` (fallback composite
+`location|name|category`), groups by `id` (fallback `name`). Facts:
+added/removed targets (overall and in-scope), `moved_in_scope`/
+`moved_out_of_scope` (same key, flipped `inScope` — covers both a group
+flip and a relist under another group), `added_api_targets`/
+`added_web_targets` (the same token sets as `api_surface`/`web_surface`),
+`added_groups`, `reward_increase`/`reward_decrease` (shared in-scope
+groups only; null→x and x→null are data gaps, not raises/cuts),
+`safe_harbor_changed`, `status_changed`, `only_administrative_changes`.
+`prev === null` → `no_baseline` with every fact null. Reductions score
+zero opportunity — the signal measures opportunity gained, never
+penalizes shrinkage.
 
 **Freshness bands** — evaluated in order on age in days:
 
@@ -211,9 +247,9 @@ are too noisy for a fixed curve.
 
 ## Scoring profiles
 
-Six profiles; the four touched by Research Saturation are version `1.2.0`,
-the untouched two keep `1.1.0` — a version asserts the semantics, not a
-release train. Retuning requires a version bump.
+Six profiles; the four touched by the V1.3 deep signals are version
+`1.3.0`, the untouched two keep `1.1.0` — a version asserts the semantics,
+not a release train. Retuning requires a version bump.
 Weight semantics: every weight is **non-negative** and carries a
 `direction` — `benefit` (default; bare-number shorthand) contributes
 `w·s`, `cost` contributes `w·(1−s)`. Signals absent from a profile
@@ -221,7 +257,7 @@ contribute nothing. `required_any` declares groups of alternative signals
 the profile considers essential: a score is `provisional` when every
 alternative in a group is null. `minConfidence` is the eligibility floor.
 
-| Signal | `best_ev` 1.2.0 | `low_competition` 1.2.0 | `high_reward` 1.1.0 | `authz_api` 1.2.0 | `fresh_programs` 1.2.0 | `easy_entry` 1.1.0 |
+| Signal | `best_ev` 1.3.0 | `low_competition` 1.3.0 | `high_reward` 1.1.0 | `authz_api` 1.3.0 | `fresh_programs` 1.3.0 | `easy_entry` 1.1.0 |
 |---|---|---|---|---|---|---|
 | `reward_potential` | 3 | 1 | 4 | 1.5 | 0.5 | 1 |
 | `reward_breadth` | 1 | — | 3 | — | — | 1.5 |
@@ -232,14 +268,15 @@ alternative in a group is null. `minConfidence` is the eligibility floor.
 | `research_saturation` | 1.5 cost | 3 cost | — | 0.5 cost | 1 cost | — |
 | `researcher_competition` | — | — | — | — | — | — |
 | `rewarded_activity` | 1 | — | 1.5 | — | — | — |
-| `freshness` | 0.75 | 2 | — | 1 | 5 | 1.5 |
+| `freshness` | 0.5 | 1.5 | — | 1 | 2.5 | 1.5 |
 | `safe_harbor` | 0.5 | — | — | 0.5 | — | 1 |
 | `target_data_quality` | 0.5 | 0.5 | 0.5 | — | — | — |
 | `accessibility` | — | — | — | — | — | 2 |
-| `known_issue_density` | — | — | — | — | — | — |
+| `known_issue_density` | 1 cost | 2 cost | — | — | — | — |
+| `opportunity_change` | 1.25 | 1 | — | 0.75 | 3 | — |
 | `authz_opportunity` | — | — | — | — | — | — |
-| **Σw** | **12.25** | **8** | **9** | **9.5** | **7.5** | **8** |
-| **required_any** | `saturation` ∨ `competition` ∨ `known_issue` | `saturation` ∨ `competition` ∨ `known_issue` | `reward_potential` | `api_surface` ∨ `api_size` | `freshness` | `accessibility` |
+| **Σw** | **14.25** | **10.5** | **9** | **10.25** | **8** | **8** |
+| **required_any** | `saturation` ∨ `competition` ∨ `known_issue` | `saturation` ∨ `competition` ∨ `known_issue` | `reward_potential` | `api_surface` ∨ `api_size` | `freshness` ∨ `opportunity` | `accessibility` |
 | **minConfidence** | **0.6** | **0.5** | **0.5** | **0.5** | **0.4** | **0.3** |
 
 No profile weights `research_saturation` AND its constituent
@@ -247,22 +284,29 @@ No profile weights `research_saturation` AND its constituent
 in the score so crowding evidence is never double-counted. The raw signal
 survives only as a `required_any` fallback (a composite with < 2 known
 components is null, but crowding alone still proves the group has data).
+`known_issue_density` likewise never enters the composite: it is a second,
+independent duplicate-pressure read priced as its own profile weight — a
+deep-analyzed program pays the cost once, and a metadata-only program is
+never penalized for lacking a fetch that never ran.
 
-Intended reading: `best_ev` — balanced metadata opportunity;
+Intended reading: `best_ev` — balanced opportunity;
 `low_competition` (labelled **Low Saturation**) — unsaturated programs by
-observed attention, not duplicate probability; `high_reward` — payout
-ceiling plus breadth plus proven payment activity; `authz_api` —
-API-heavy candidate, measuring share AND size so a lone API target cannot
-fake breadth; `fresh_programs` — recency-dominated; `easy_entry` —
-onboarding, whose `accessibility` weight is always unknown in V1, capping
-achievable coverage at 6/8 = 0.75 and rendering every score provisional
-by design.
+observed attention AND known-issue pressure, not duplicate probability;
+`high_reward` — payout ceiling plus breadth plus proven payment activity;
+`authz_api` — API-heavy candidate, measuring share AND size so a lone API
+target cannot fake breadth, plus a small semantic-expansion bonus;
+`fresh_programs` (labelled **Fresh Opportunity**) — opportunity-dominated,
+where `opportunity_change` out-weights raw recency so a text-only publish
+can never read as fresh surface; `easy_entry` — onboarding, whose
+`accessibility` weight is always unknown in V1, capping achievable
+coverage at 6/8 = 0.75 and rendering every score provisional by design.
 
-`freshness` carries a deliberately small `best_ev` weight: it measures
-brief/status recency, not new opportunity — wording fixes and
-administrative edits also refresh it. A semantic `opportunity_change`
-signal (new surface/target/scope diff) is planned separately and is the
-only recency-shaped input that should ever carry a large EV weight.
+`freshness` carries a deliberately small `best_ev` weight (0.5): it
+measures brief/status recency, not new opportunity — wording fixes and
+administrative edits also refresh it. `opportunity_change` is now the
+recency-shaped input with real EV weight: it is null for non-deep-analyzed
+programs and 0 for text-only diffs, so administrative churn can no longer
+masquerade as new hunting surface.
 
 ## Score and data coverage
 
@@ -335,13 +379,18 @@ the value sits between thresholds (silence is a valid answer):
 | | = 0.5 | `SAFE_HARBOR_PARTIAL` | `+ partial safe harbor` |
 | | = 0 | `SAFE_HARBOR_ABSENT` | `- no safe harbor` |
 | `target_data_quality` | ≤ 0.4 | `DATA_INCOMPLETE` | `- incomplete program data` |
+| `known_issue_density` | ≤ 0.25 | `KI_PRESSURE_LOW` | `+ low known-issue pressure` |
+| | ≥ 0.7 | `KI_PRESSURE_HIGH` | `- high known-issue pressure` |
+| `opportunity_change` | ≥ 0.5 | `OPPORTUNITY_EXPANDED` | `+ scope expanded in latest diff` |
+| | ≤ 0.1 | `OPPORTUNITY_TEXT_ONLY` | `- no scope growth in latest diff` |
 | any weighted signal | value `null` | `UNKNOWN_<KEY>` | `? <key> unavailable` |
 
 `explainScore` renders `+ ` for positives, `- ` for cautions
 (`REWARD_LOW`, `COMPETITION_HIGH`, `STALE_PROGRAM`, `SAFE_HARBOR_ABSENT`,
-`DATA_INCOMPLETE`, `SUBMISSION_ACTIVITY_HIGH`, `SATURATION_HIGH`),
+`DATA_INCOMPLETE`, `SUBMISSION_ACTIVITY_HIGH`, `SATURATION_HIGH`,
+`KI_PRESSURE_HIGH`, `OPPORTUNITY_TEXT_ONLY`),
 `? ` for unknowns — in the score's stored `reasons`
-order. The three always-null signals emit no threshold codes, only
+order. The always-null signals emit no threshold codes, only
 `UNKNOWN_*` when a profile weights them.
 
 ## Ranking rules
@@ -357,8 +406,9 @@ order. The three always-null signals emit no threshold codes, only
 `getResults` returns the latest score row per engagement at the profile's
 *current* version, **scoped to the discovered set of the run
 `meta.latestRunId` points at** — its `completed_uuids ∪ pending_uuids` —
-joined with catalog identity and the vector's six display signals
-(reward, surface trio, **research saturation**, freshness); an
+joined with catalog identity and the vector's eight display signals
+(reward, surface trio, **research saturation**, freshness,
+known-issue density, opportunity change); an
 optional `minConfidence` argument filters further, and `limit` is clamped
 to 1–200 (default 50). Ineligible rows rank after all eligible ones —
 dimmed in the UI, never hidden.
@@ -376,10 +426,23 @@ Result scoping is staleness-honest but non-destructive:
 
 ## Scan lifecycle and resume
 
-Phases: `catalog` → `enriching` → `scoring` → `done` | `failed` |
-`cancelled`. MV3 service workers may die mid-scan, so every phase
-transition and every per-program step checkpoints the run record into the
-`runs` store; `meta.latestRunId` points at the newest run.
+Phases: `catalog` → `enriching` → `scoring` → `deep_enriching` →
+`deep_scoring` → `done` | `failed` | `cancelled`. The deep phases run only
+when a `deepHydrate` dependency is wired and the shortlist is non-empty;
+otherwise the run ends after `scoring` exactly as before (pre-V1.3
+persisted runs resume cleanly). MV3 service workers may die mid-scan, so
+every phase transition and every per-program step checkpoints the run
+record into the `runs` store; `meta.latestRunId` points at the newest run.
+
+The deep stage (V1.3): after metadata scoring, the top
+`DEEP_ANALYSIS_LIMIT` (30) *eligible* `best_ev` rows of THIS run become
+`deep_pending_uuids`. The same worker-pool discipline fetches
+`engagement_known_issues.json` + re-reads `changelog.json` + fetches the
+baseline `changelog/<id>.json` — **3 requests per shortlisted program** —
+writes a NEW snapshot whose `deep` payload joins `source_hash`, then
+`deep_scoring` re-scores only `deep_completed_uuids` through the identical
+deterministic path. A program without a metadata detail is completed
+without enrichment; deep signals are never fabricated.
 
 - `start()` is idempotent — an active run (in memory or persisted) is
   adopted and continued, never duplicated.
@@ -438,12 +501,12 @@ sender's document URL against the extension origin instead.
 
 ## Limitations
 
-- **This is a Metadata Opportunity Score, not expected value.** The
-  ranked list is a candidate pool for deeper analysis (top ~50 → top ~20
-  → deep analyze: policy, known issues, account friction, target
-  taxonomy, recent scope changes → real EV ranking). Three signals that
-  would carry true EV are unsourced in V1: `known_issue_density`,
-  `accessibility`, `authz_opportunity`.
+- **This is a Metadata Opportunity Score plus a bounded deep pass, not
+  expected value.** The ranked list is a candidate pool for deeper human
+  analysis. V1.3 sources `known_issue_density` and `opportunity_change`
+  for the deep-analyzed shortlist only; `accessibility` and
+  `authz_opportunity` remain unsourced, and no signal estimates duplicate
+  probability or guarantees undiscovered bugs.
 - **`research_saturation` is not duplicate probability.** It is a
   metadata heuristic for *observed research attention*: a fixed-weight
   composite of recent crowding, valid-submission volume, and rewarded
@@ -462,8 +525,8 @@ sender's document URL against the extension origin instead.
   components, or stays `null` itself when they too are missing.
 - **`freshness` is brief recency, not opportunity change.** A wording
   fix, contact update, or administrative edit refreshes it exactly like a
-  scope expansion. `best_ev` therefore weights it lightly (0.75) until
-  semantic diffing lands.
+  scope expansion — that is why `opportunity_change` now out-weights it in
+  every profile where opportunity matters.
 - **`authz_api` is not proof of authorization vulnerabilities.** It ranks
   API-heavy candidates by share and target count. `authz_opportunity`
   is unweighted and always `null` in V1 — no deterministic source exists
@@ -477,9 +540,17 @@ sender's document URL against the extension origin instead.
   not derivable from cheap metadata; the signal stays `null`, which is why
   `easy_entry` can never exceed 0.75 coverage and always scores
   provisional.
-- **Known Issues are not in cheap scoring.** `known_issue_density` is
-  always `null`; the exporter's per-program Known Issues pipeline does not
-  run at catalog scale.
+- **Known Issues are deep-stage only.** `engagement_known_issues.json`
+  is fetched for the ≤30-program shortlist, never catalog-wide (~1 extra
+  request per shortlisted program — verified `{"unique","total"}` shape).
+  `known_issue_density` is a duplicate-PRESSURE proxy over `unique`
+  counts blended with per-target density; it is not a duplicate
+  probability, and a program whose fetch fails reads `null`, never 0.
+- **Semantic diff covers the latest publish only.** The baseline is the
+  single predecessor of `Latest`; multi-version arcs (gradual scope creep
+  over five publishes) are not accumulated, and per-target Known Issues
+  (`target_groups/<gid>/known_issue_stats`, verified live) are not yet
+  consumed.
 - **No AI participates in V1 ranking.** Collection, feature extraction,
   scoring, ranking, and reason text are deterministic code. AI analysis is
   a downstream consumer of the ranked shortlist, not an input to it.
