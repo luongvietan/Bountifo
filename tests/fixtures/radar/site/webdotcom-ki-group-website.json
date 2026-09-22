@@ -1,0 +1,42 @@
+[
+  {
+    "id": "grp-website",
+    "targetGroup": { "name": "Website" },
+    "knownIssues": {
+      "stats": [
+        {
+          "name": "Cross Site Scripting (XSS)",
+          "uniqueCount": 60,
+          "duplicateCount": 25,
+          "children": [
+            {
+              "name": "Reflected",
+              "uniqueCount": 30,
+              "duplicateCount": 12,
+              "children": []
+            },
+            {
+              "name": "Stored",
+              "uniqueCount": 30,
+              "duplicateCount": 13,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Broken Access Control",
+          "uniqueCount": 20,
+          "duplicateCount": 5,
+          "children": []
+        },
+        {
+          "name": "Server Security Misconfiguration",
+          "uniqueCount": 10,
+          "duplicateCount": 0,
+          "children": []
+        }
+      ],
+      "totals": { "unique": 90, "duplicate": 30 }
+    }
+  }
+]
