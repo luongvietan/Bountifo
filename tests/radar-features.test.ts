@@ -944,7 +944,7 @@ describe("target_data_quality composite", () => {
 });
 
 describe("V1.4 contract-stub signals", () => {
-  it("never fabricates accessibility / known_issue_density / authz_opportunity", () => {
+  it("sourced accessibility / stub authz / deep signals stay honest", () => {
     const v = vector(
       detail({
         targets: [target({ category: "api", location: "https://a" })],
@@ -957,11 +957,16 @@ describe("V1.4 contract-stub signals", () => {
         lastBriefUpdate: daysAgo(1),
       }),
     );
-    // V1.4 contract stubs — sourced modules exist (accessibility.ts /
-    // authz.ts) but return the honest-null shape until Agents A/B land
-    // the real rubrics.
+    // V1.4: accessibility is sourced (Agent A) — the fixture's
+    // participation is null so the catalog fallback `lifecycle_status:
+    // "live"` reads as a stated-but-unclassified posture → base 0.5.
+    expect(v.accessibility).toEqual({
+      value: 0.5,
+      source: "engagement_detail",
+      reason_code: "participation_access_rubric",
+    });
+    // authz_opportunity stays a contract stub (Agent B lands the rubric).
     for (const key of [
-      "accessibility",
       "authz_opportunity",
     ] as const) {
       expect(v[key]).toEqual({
