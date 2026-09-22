@@ -88,16 +88,17 @@ const REASON_RULES: Record<RadarFeatureKey, (s: number) => string | null> = {
         : null,
   authz_opportunity: (s) =>
     s >= 0.5 ? "AUTHZ_SURFACE" : s <= 0.15 ? "AUTHZ_PROHIBITED" : null,
-  // V1.5: payout_realized mirrors the reward-band cut at the 0.5 anchor
-  // ($2k average payout). scope_momentum names the arc-window ends like
-  // opportunity_change names the single-step ends; ki_concentration marks
-  // concentrated pressure (unmined taxonomy — benefit) vs dispersed
-  // (every VRT class contested — caution).
-  payout_realized: (s) => (s >= 0.5 ? "PAYOUT_REALIZED" : null),
+  // V1.5: payout_realized bands against the realized-average curve (≥0.7 ≈
+  // ~$6k+ avg payout; ≤0.2 ≈ ~$300 or less). scope_momentum names the
+  // arc-window ends like opportunity_change names the single-step ends;
+  // ki_concentration marks concentrated pressure (unmined taxonomy —
+  // benefit) vs spread (every VRT class contested — caution).
+  payout_realized: (s) =>
+    s >= 0.7 ? "PAYOUT_HIGH" : s <= 0.2 ? "PAYOUT_LOW" : null,
   scope_momentum: (s) =>
-    s >= 0.5 ? "SCOPE_MOMENTUM" : s <= 0.1 ? "SCOPE_MOMENTUM_FLAT" : null,
+    s >= 0.5 ? "SCOPE_GROWING" : s <= 0.1 ? "SCOPE_FLAT" : null,
   ki_concentration: (s) =>
-    s >= 0.6 ? "KI_CONCENTRATED" : s <= 0.3 ? "KI_DISPERSED" : null,
+    s >= 0.7 ? "KI_CONCENTRATED" : s <= 0.3 ? "KI_SPREAD" : null,
 };
 
 /**
@@ -135,11 +136,12 @@ export const REASON_TEXT: Record<string, string> = {
   ACCESS_GATED: "restricted or gated access",
   AUTHZ_SURFACE: "authenticated authz test surface",
   AUTHZ_PROHIBITED: "cross-account testing prohibited",
-  PAYOUT_REALIZED: "strong realized average payout",
-  SCOPE_MOMENTUM: "scope grew across recent publishes",
-  SCOPE_MOMENTUM_FLAT: "flat scope across recent publishes",
+  PAYOUT_HIGH: "high average payout",
+  PAYOUT_LOW: "low average payout",
+  SCOPE_GROWING: "sustained scope growth",
+  SCOPE_FLAT: "no net scope growth",
   KI_CONCENTRATED: "known issues concentrated in one class",
-  KI_DISPERSED: "known issues spread across classes",
+  KI_SPREAD: "known issues spread across classes",
   ...Object.fromEntries(
     RADAR_FEATURE_KEYS.map((key) => [
       `UNKNOWN_${key.toUpperCase()}`,
@@ -161,8 +163,9 @@ const CAUTION_CODES: ReadonlySet<string> = new Set([
   "OPPORTUNITY_TEXT_ONLY",
   "ACCESS_GATED",
   "AUTHZ_PROHIBITED",
-  "SCOPE_MOMENTUM_FLAT",
-  "KI_DISPERSED",
+  "PAYOUT_LOW",
+  "SCOPE_FLAT",
+  "KI_SPREAD",
 ]);
 
 /** V1.1 weight normalization: bare number → benefit; object → declared

@@ -685,18 +685,22 @@ export class RadarCoordinator {
     const cap = Number.isFinite(limit)
       ? Math.max(1, Math.min(Math.floor(limit), MAX_RESULT_LIMIT))
       : MAX_RESULT_LIMIT;
-    // V1.5: percentile is a property of the row inside the profile's
-    // eligible cohort — computed before the minConfidence filter and the
-    // limit cap so neither UI knob shifts it.
-    const cohortSize = ranked.filter((r) => r.eligible).length;
+    // V1.5: percentile ranks inside the cohort the table actually compares
+    // — eligible rows that also pass the minConfidence argument — computed
+    // before the `limit` cap so truncating the page cannot inflate it.
+    const cohortSize = ranked.filter(
+      (r) =>
+        r.eligible &&
+        (minConfidence === undefined || r.score.confidence >= minConfidence),
+    ).length;
     let eligiblePos = 0;
     const out: RadarResultRow[] = [];
     for (const { score, eligible } of ranked) {
       if (out.length >= cap) break;
-      if (eligible) eligiblePos++;
       if (minConfidence !== undefined && score.confidence < minConfidence) {
         continue;
       }
+      if (eligible) eligiblePos++;
       const uuid = score.engagement_uuid;
       const ann = annotateEvidence(
         metaByUuid.get(uuid)?.score ?? null,

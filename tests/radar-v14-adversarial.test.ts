@@ -194,7 +194,7 @@ describe("detail===null — V1.4 signals are never catalog-inferred", () => {
     expect(score.confidence).toBe(0);
     expect(score.provisional).toBe(true);
     expect(score.reasons).toContain("UNKNOWN_ACCESSIBILITY");
-    expect(score.scoring_version).toBe("1.5.0");
+    expect(score.scoring_version).toBe("1.4.0");
   });
 });
 
@@ -566,12 +566,9 @@ describe("end-to-end — sourced signals through extract and score", () => {
     const v = extractProgramFeatures(snap, NOW);
     const profile = getRadarProfile("easy_entry");
     const score = scoreProgram(snap, v, profile);
-    expect(score.scoring_version).toBe("1.5.0");
+    expect(score.scoring_version).toBe("1.4.0");
     expect(score.provisional).toBe(false); // accessibility known → required met
-    // V1.5: payout_realized is a seventh weight (0.5) still honestly null —
-    // coverage 8/8.5. The score denominator only counts known weights, so
-    // 86.6 is unchanged.
-    expect(score.confidence).toBe(0.9412);
+    expect(score.confidence).toBe(1); // all six weights known — 8/8, not 6/8
     expect(score.score).toBe(86.6);
     expect(score.reasons).toEqual([
       "ACCESS_OPEN",
@@ -579,7 +576,6 @@ describe("end-to-end — sourced signals through extract and score", () => {
       "REWARD_BROAD",
       "SAFE_HARBOR_PRESENT",
       "REWARD_MEDIUM",
-      "UNKNOWN_PAYOUT_REALIZED",
     ]);
     expect(score.reasons).not.toContain("UNKNOWN_ACCESSIBILITY");
     expect(score.components.accessibility).toEqual({
@@ -593,8 +589,8 @@ describe("end-to-end — sourced signals through extract and score", () => {
 
   it("easy_entry stays provisional when accessibility is honestly unknown", () => {
     // participation null + catalog lifecycle null → no_access_evidence.
-    // Every OTHER easy_entry signal is known except the still-stubbed
-    // payout_realized, so the cap is 6/8.5 = 0.7059.
+    // Every OTHER easy_entry signal is known, so the cap is exactly the
+    // remaining six weights: 6/8 = 0.75.
     const snap = snapshot(
       detail({
         safeHarborLevel: "full",
@@ -613,7 +609,7 @@ describe("end-to-end — sourced signals through extract and score", () => {
     const score = scoreProgram(snap, v, getRadarProfile("easy_entry"));
     expect(score.provisional).toBe(true);
     expect(score.reasons).toContain("UNKNOWN_ACCESSIBILITY");
-    expect(score.confidence).toBe(0.7059);
+    expect(score.confidence).toBe(0.75);
   });
 
   it("a gated catalog row alone can de-provisional easy_entry — the fallback is real", () => {
@@ -639,8 +635,7 @@ describe("end-to-end — sourced signals through extract and score", () => {
     const score = scoreProgram(snap, v, profile);
     expect(score.scoring_version).toBe("1.5.0");
     // Weight 2 sits directly after api_surface_size — declared order is
-    // component order AND reason order. V1.5 appends scope_momentum +
-    // payout_realized at the end.
+    // component order AND reason order. V1.5 appends scope_momentum last.
     expect(Object.keys(score.components)).toEqual([
       "api_surface",
       "api_surface_size",
@@ -652,7 +647,6 @@ describe("end-to-end — sourced signals through extract and score", () => {
       "safe_harbor",
       "research_saturation",
       "scope_momentum",
-      "payout_realized",
     ]);
     expect(score.components.authz_opportunity).toEqual({
       signal: 1,
@@ -672,12 +666,11 @@ describe("end-to-end — sourced signals through extract and score", () => {
       "UNKNOWN_OPPORTUNITY_CHANGE",
       "UNKNOWN_RESEARCH_SATURATION",
       "UNKNOWN_SCOPE_MOMENTUM",
-      "UNKNOWN_PAYOUT_REALIZED",
     ]);
     expect(score.reasons).not.toContain("UNKNOWN_AUTHZ_OPPORTUNITY");
-    // Σw 13.5; known weight 11.0 (opportunity_change + research_saturation
-    // + V1.5 stubbed scope_momentum + payout_realized unknown) → 11/13.5.
-    expect(score.confidence).toBe(0.8148);
+    // Σw 13; known weight 11.0 (opportunity_change + research_saturation
+    // + V1.5 stubbed scope_momentum unknown) → 11/13.
+    expect(score.confidence).toBe(0.8462);
     expect(score.score).toBe(73);
     expect(explainScore(score)).toContain(
       "+ authenticated authz test surface",
@@ -724,17 +717,18 @@ describe("end-to-end — sourced signals through extract and score", () => {
           acc + (typeof w === "number" ? w : (w?.weight ?? 0)),
         0,
       );
-    // V1.5: every profile gained a weighted signal → all bump to 1.5.0.
+    // V1.5: profiles weighting a new signal bump to 1.5.0; easy_entry
+    // gains none and keeps 1.4.0.
     expect(RADAR_PROFILES.authz_api.version).toBe("1.5.0");
-    expect(RADAR_PROFILES.easy_entry.version).toBe("1.5.0");
-    expect(sum("authz_api")).toBeCloseTo(13.5, 10); // 12.25 + 0.75 + 0.5
-    expect(sum("easy_entry")).toBeCloseTo(8.5, 10);
+    expect(sum("authz_api")).toBeCloseTo(13, 10); // 12.25 + scope 0.75
+    expect(RADAR_PROFILES.easy_entry.version).toBe("1.4.0");
+    expect(sum("easy_entry")).toBeCloseTo(8, 10);
     expect(RADAR_PROFILES.best_ev.version).toBe("1.5.0");
-    expect(sum("best_ev")).toBeCloseTo(17.25, 10); // 14.25 + 3
+    expect(sum("best_ev")).toBeCloseTo(16.5, 10); // 14.25 + 0.5 + 1 + 0.75
     expect(RADAR_PROFILES.low_competition.version).toBe("1.5.0");
-    expect(sum("low_competition")).toBeCloseTo(13, 10); // 10.5 + 2.5
+    expect(sum("low_competition")).toBeCloseTo(12.25, 10); // 10.5 + 1.75
     expect(RADAR_PROFILES.fresh_programs.version).toBe("1.5.0");
-    expect(sum("fresh_programs")).toBeCloseTo(9.5, 10);
+    expect(sum("fresh_programs")).toBeCloseTo(10, 10); // 8 + scope 2
     expect(RADAR_PROFILES.high_reward.version).toBe("1.5.0");
     expect(sum("high_reward")).toBeCloseTo(11, 10);
   });

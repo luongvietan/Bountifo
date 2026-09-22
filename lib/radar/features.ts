@@ -275,15 +275,15 @@ function opportunityChange(snapshot: RadarProgramSnapshot): RadarSignal {
 
 /**
  * V1.5 scope momentum — the arc-window counterpart to opportunity_change.
- * Same honesty doctrine: absent scope_arc (pre-V1.5 deep payload) reads
- * "arc_absent"; an unavailable/no_baseline arc reads "arc_<status>"; only a
- * COMPLETE arc feeds `scopeMomentumScore` — a complete text-only arc scoring
- * 0 is a real reading, not an unknown.
+ * Same honesty doctrine: absent scope_arc (pre-V1.5 deep payload, or no
+ * deep pass) reads "not_deep_analyzed"; an unavailable/no_baseline arc
+ * reads "arc_<status>"; only a COMPLETE arc feeds `scopeMomentumScore` — a
+ * complete text-only arc scoring 0 is a real reading, not an unknown.
  */
 function scopeMomentum(snapshot: RadarProgramSnapshot): RadarSignal {
   const arc = snapshot.deep?.scope_arc;
   if (arc === undefined || arc === null) {
-    return sig(null, "deep_enrichment", "arc_absent");
+    return sig(null, "deep_enrichment", "not_deep_analyzed");
   }
   if (arc.status !== "complete") {
     return sig(null, "deep_enrichment", `arc_${arc.status}`);

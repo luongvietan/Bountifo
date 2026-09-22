@@ -35,7 +35,7 @@ export type SiteRequestOptions =
   | { operation: "GET_BRIEF_STATS"; slug: string }
   | { operation: "GET_RECENTLY_JOINED"; slug: string }
   | { operation: "GET_ENGAGEMENT_KNOWN_ISSUES"; slug: string }
-  | { operation: "GET_GROUP_KNOWN_ISSUE_STATS"; slug: string; groupId: string };
+  | { operation: "GET_GROUP_KI_STATS"; slug: string; groupId: string };
 
 export interface SiteResponse<T> {
   data: T;
@@ -108,12 +108,12 @@ function buildUrl(opts: SiteRequestOptions): string {
       return `${BUGCROWD_SITE}/engagements/${requireSlug(opts.slug, opts.operation)}/recently_joined_users.json`;
     case "GET_ENGAGEMENT_KNOWN_ISSUES":
       return `${BUGCROWD_SITE}/engagements/${requireSlug(opts.slug, opts.operation)}/engagement_known_issues.json`;
-    case "GET_GROUP_KNOWN_ISSUE_STATS": {
+    case "GET_GROUP_KI_STATS": {
       const slug = requireSlug(opts.slug, opts.operation);
       const groupId = opts.groupId;
       if (typeof groupId !== "string" || !/^[A-Za-z0-9_-]+$/.test(groupId)) {
         throw new TypeError(
-          "siteRequest: GET_GROUP_KNOWN_ISSUE_STATS requires a groupId",
+          "siteRequest: GET_GROUP_KI_STATS requires a groupId",
         );
       }
       return `${BUGCROWD_SITE}/engagements/${slug}/target_groups/${groupId}/known_issue_stats`;

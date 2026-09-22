@@ -55,7 +55,8 @@ export async function fetchScopeArc(
  * opportunityChangeScore with window-scaled half-saturations:
  *   min(1, 0.35·ai/(ai+8) + 0.25·api/(api+4) + 0.10·ag/(ag+2)
  *        + 0.15·[reward_increase] + 0.15·mi/(mi+4))
- * null unless the diff completed; a complete text-only arc is a real 0.
+ * status !== "complete" → null; only_administrative_changes → a real 0 —
+ * an analyzed arc with no net scope growth is a reading, not an unknown.
  */
 export function scopeMomentumScore(diff: RadarSemanticDiff): number | null {
   void diff;

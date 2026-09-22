@@ -93,16 +93,15 @@ describe("RADAR_PROFILES pinned V1.3 calibration", () => {
     expect(Object.keys(RADAR_PROFILES).sort()).toEqual(
       [...RADAR_PROFILE_IDS].sort(),
     );
-    // V1.5: every profile gained at least one weighted signal
-    // (payout_realized / scope_momentum / ki_concentration), so all six
-    // versions bump to 1.5.0 — a version asserts the semantics.
+    // V1.5: profiles weighting a new signal bump to 1.5.0; easy_entry
+    // gains none and keeps 1.4.0 — a version asserts the semantics.
     const versions: Record<string, string> = {
       best_ev: "1.5.0",
       low_competition: "1.5.0",
       high_reward: "1.5.0",
       authz_api: "1.5.0",
       fresh_programs: "1.5.0",
-      easy_entry: "1.5.0",
+      easy_entry: "1.4.0",
     };
     for (const id of RADAR_PROFILE_IDS) {
       expect(getRadarProfile(id).version).toBe(versions[id]);
@@ -127,9 +126,9 @@ describe("RADAR_PROFILES pinned V1.3 calibration", () => {
       rewarded_activity: 1,
       safe_harbor: 0.5,
       target_data_quality: 0.5,
-      payout_realized: 1,
+      payout_realized: 0.5,
       scope_momentum: 1,
-      ki_concentration: { weight: 1, direction: "cost" },
+      ki_concentration: 0.75,
     });
     // required_any falls back to the raw crowding signal and known-issue
     // density when the composite has < 2 components.
@@ -155,8 +154,8 @@ describe("RADAR_PROFILES pinned V1.3 calibration", () => {
       meaningful_surface: 1.5,
       reward_potential: 1,
       target_data_quality: 0.5,
-      scope_momentum: 1,
-      ki_concentration: { weight: 1.5, direction: "cost" },
+      scope_momentum: 0.75,
+      ki_concentration: 1,
     });
     expect(p.required_any).toEqual([
       ["research_saturation", "researcher_competition", "known_issue_density"],
@@ -193,7 +192,6 @@ describe("RADAR_PROFILES pinned V1.3 calibration", () => {
       safe_harbor: 0.5,
       research_saturation: { weight: 0.5, direction: "cost" },
       scope_momentum: 0.75,
-      payout_realized: 0.5,
     });
     expect(p.required_any).toEqual([
       ["api_surface", "api_surface_size"],
@@ -214,7 +212,7 @@ describe("RADAR_PROFILES pinned V1.3 calibration", () => {
       meaningful_surface: 1,
       research_saturation: { weight: 1, direction: "cost" },
       reward_potential: 0.5,
-      scope_momentum: 1.5,
+      scope_momentum: 2,
     });
     // Either signal satisfies the group: raw recency OR a real diff read.
     expect(p.required_any).toEqual([["freshness", "opportunity_change"]]);
@@ -231,7 +229,6 @@ describe("RADAR_PROFILES pinned V1.3 calibration", () => {
       safe_harbor: 1,
       meaningful_surface: 1,
       reward_potential: 1,
-      payout_realized: 0.5,
     });
     expect(p.required_any).toEqual([["accessibility"]]);
   });
@@ -457,11 +454,10 @@ describe("scoreProgram math", () => {
         meaningful_surface: 1,
         reward_potential: 1,
         // accessibility: null — the V1.4 contract stub keeps it unknown.
-        // payout_realized: null — the V1.5 contract stub keeps it unknown.
       }),
       p,
     );
-    expect(s.confidence).toBe(0.7059); // 6/8.5 — visibly reduced, intentionally
+    expect(s.confidence).toBe(0.75); // 6/8 — visibly reduced, intentionally
     expect(s.score).toBe(100);
     expect(s.provisional).toBe(true);
     expect(s.reasons).toContain("UNKNOWN_ACCESSIBILITY");
