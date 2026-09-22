@@ -49,6 +49,8 @@ export type RadarRunPhase =
   | "catalog"
   | "enriching"
   | "scoring"
+  | "deep_enriching"
+  | "deep_scoring"
   | "done"
   | "failed"
   | "cancelled";
@@ -91,6 +93,10 @@ export type PersistedRadarRun = RadarRunState & {
   enrichment_failed: number;
   warning_details: string[];
   cancel_requested: boolean;
+  /** V1.3 deep stage: uuids shortlisted for Known Issues + semantic diff. */
+  deep_pending_uuids: string[];
+  deep_completed_uuids: string[];
+  deep_enriched: number;
 };
 
 /** One row of the ranked results table returned by getResults. */
@@ -107,7 +113,7 @@ export interface RadarResultRow {
   signals: RadarResultSignals;
 }
 
-/** The six display columns of the results table (signal values or null). */
+/** The display columns of the results table (signal values or null). */
 export interface RadarResultSignals {
   reward_potential: number | null;
   meaningful_surface: number | null;
@@ -117,6 +123,12 @@ export interface RadarResultSignals {
    *  researcher count and not duplicate probability. */
   research_saturation: number | null;
   freshness: number | null;
+  /** V1.3 duplicate-pressure proxy from Known Issues — null unless the
+   *  program was deep-analyzed (null ≠ "no issues"). */
+  known_issue_density: number | null;
+  /** V1.3 semantic opportunity change — null unless the program was
+   *  deep-analyzed (null ≠ "no change"). */
+  opportunity_change: number | null;
 }
 
 /** Envelope returned by getProgram. */
@@ -144,12 +156,16 @@ const ACTIVE_PHASES: ReadonlySet<RadarRunPhase> = new Set([
   "catalog",
   "enriching",
   "scoring",
+  "deep_enriching",
+  "deep_scoring",
 ]);
 
 const ALL_PHASES: ReadonlySet<string> = new Set([
   "catalog",
   "enriching",
   "scoring",
+  "deep_enriching",
+  "deep_scoring",
   "done",
   "failed",
   "cancelled",
@@ -205,6 +221,9 @@ function normalizeRunRecord(
     enrichment_failed: asCount(record.enrichment_failed),
     warning_details: asStringList(record.warning_details),
     cancel_requested: record.cancel_requested === true,
+    deep_pending_uuids: asStringList(record.deep_pending_uuids),
+    deep_completed_uuids: asStringList(record.deep_completed_uuids),
+    deep_enriched: asCount(record.deep_enriched),
   };
 }
 
@@ -312,6 +331,9 @@ export class RadarCoordinator {
       enrichment_failed: 0,
       warning_details: [],
       cancel_requested: false,
+      deep_pending_uuids: [],
+      deep_completed_uuids: [],
+      deep_enriched: 0,
     };
     await this.checkpoint(db, this.run);
     await setLatestRunId(db, this.run.run_id);
@@ -438,6 +460,8 @@ export class RadarCoordinator {
           research_saturation:
             vector?.research_saturation.value ?? null,
           freshness: vector?.freshness.value ?? null,
+          known_issue_density: vector?.known_issue_density.value ?? null,
+          opportunity_change: vector?.opportunity_change.value ?? null,
         },
       });
     }

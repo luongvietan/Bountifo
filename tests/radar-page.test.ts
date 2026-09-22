@@ -60,6 +60,8 @@ function resultRow(over: Partial<RadarResultRow> = {}): RadarResultRow {
       web_surface: 0.3,
       research_saturation: 0.25,
       freshness: 0.9,
+      known_issue_density: null,
+      opportunity_change: null,
     },
     ...over,
   };

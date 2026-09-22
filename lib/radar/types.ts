@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ApiEngagementData } from "../types";
+import { radarDeepEnrichmentSchema } from "./deepTypes";
 
 /**
  * Engagement Radar domain model. All scoring is deterministic — signals are
@@ -31,6 +32,7 @@ export const radarSignalSchema = z
       "engagement_detail",
       "statistics",
       "derived",
+      "deep_enrichment",
     ]),
     reason_code: z.string().min(1),
   })
@@ -82,16 +84,25 @@ export const radarProgramSnapshotSchema = z
         error_kind: z.string().min(1).optional(),
       })
       .strict(),
+    /**
+     * V1.3 deep-enrichment output (Known Issues summary + changelog
+     * semantic diff). Absent/null on snapshots that never received a deep
+     * pass — the derived deep signals stay null rather than faking data.
+     * Every field inside enters `source_hash`.
+     */
+    deep: radarDeepEnrichmentSchema.nullable().optional(),
     source_hash: z.string().min(1),
   })
   .strict();
 export type RadarProgramSnapshot = z.infer<typeof radarProgramSnapshotSchema>;
 
 // ---------------------------------------------------------------------------
-// Feature vector — 16 signals in fixed order. accessibility,
-// known_issue_density and authz_opportunity may legitimately be null in
-// Radar V1; submission_activity is null whenever the site omits
-// valid_submission_count (the researcher surface currently ships it null).
+// Feature vector — 17 signals in fixed order. accessibility and
+// authz_opportunity may legitimately be null in Radar V1.3;
+// known_issue_density and opportunity_change are null unless the run's deep
+// stage analyzed the program; submission_activity is null whenever the site
+// omits valid_submission_count (the researcher surface currently ships it
+// null).
 // ---------------------------------------------------------------------------
 
 export const programFeatureVectorSchema = z
@@ -112,6 +123,7 @@ export const programFeatureVectorSchema = z
     target_data_quality: radarSignalSchema,
     accessibility: radarSignalSchema,
     known_issue_density: radarSignalSchema,
+    opportunity_change: radarSignalSchema,
     authz_opportunity: radarSignalSchema,
   })
   .strict();
@@ -122,7 +134,7 @@ export type RadarFeatureKey = Exclude<
   "schema_version"
 >;
 
-/** The 16 signal keys, in interface order. */
+/** The 17 signal keys, in interface order. */
 export const RADAR_FEATURE_KEYS: readonly RadarFeatureKey[] = [
   "reward_potential",
   "reward_breadth",
@@ -139,6 +151,7 @@ export const RADAR_FEATURE_KEYS: readonly RadarFeatureKey[] = [
   "target_data_quality",
   "accessibility",
   "known_issue_density",
+  "opportunity_change",
   "authz_opportunity",
 ];
 

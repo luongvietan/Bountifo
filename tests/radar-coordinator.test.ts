@@ -628,7 +628,9 @@ describe("RadarCoordinator queries", () => {
     expect(Object.keys(highRow.signals).sort()).toEqual([
       "api_surface",
       "freshness",
+      "known_issue_density",
       "meaningful_surface",
+      "opportunity_change",
       "research_saturation",
       "reward_potential",
       "web_surface",

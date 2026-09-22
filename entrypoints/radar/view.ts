@@ -22,6 +22,8 @@ const ACTIVE_PHASES: ReadonlySet<RadarRunPhase> = new Set([
   "catalog",
   "enriching",
   "scoring",
+  "deep_enriching",
+  "deep_scoring",
 ]);
 
 const EMPTY = "—";
@@ -83,6 +85,10 @@ export function phaseLabel(phase: RadarRunPhase): string {
       return "Enriching";
     case "scoring":
       return "Scoring";
+    case "deep_enriching":
+      return "Deep analysis";
+    case "deep_scoring":
+      return "Deep scoring";
     case "done":
       return "Done";
     case "failed":

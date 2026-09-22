@@ -194,7 +194,8 @@ export function extractProgramFeatures(
       safe_harbor: unavailable("engagement_detail"),
       target_data_quality: unavailable("derived"),
       accessibility: notAvailableV1(),
-      known_issue_density: notAvailableV1(),
+      known_issue_density: unavailable("deep_enrichment"),
+      opportunity_change: unavailable("deep_enrichment"),
       authz_opportunity: notAvailableV1(),
     };
   }
@@ -243,7 +244,8 @@ export function extractProgramFeatures(
     safe_harbor: safeHarbor(detail),
     target_data_quality: targetDataQuality(inScopeTargets, inScopeGroups),
     accessibility: notAvailableV1(),
-    known_issue_density: notAvailableV1(),
+    known_issue_density: knownIssueDensity(snapshot),
+    opportunity_change: opportunityChange(snapshot),
     authz_opportunity: notAvailableV1(),
   };
 }
@@ -256,6 +258,40 @@ export function extractProgramFeatures(
  *  source exists, so the signal is honestly null. */
 function notAvailableV1(): RadarSignal {
   return sig(null, "derived", REASON_NOT_AVAILABLE_V1);
+}
+
+/**
+ * V1.3 wiring seam for Known Issues — the signal is honest about analysis
+ * state: programs outside the deep shortlist read "not_deep_analyzed", an
+ * analyzed-but-unavailable endpoint reads "ki_<status>", and a complete
+ * Known Issues summary feeds the density formula (wired by the scoring
+ * integration; until then it reports null rather than a fake value).
+ */
+function knownIssueDensity(snapshot: RadarProgramSnapshot): RadarSignal {
+  const ki = snapshot.deep?.known_issues;
+  if (ki === undefined || ki === null) {
+    return sig(null, "deep_enrichment", "not_deep_analyzed");
+  }
+  if (ki.status !== "complete") {
+    return sig(null, "deep_enrichment", `ki_${ki.status}`);
+  }
+  return sig(null, "deep_enrichment", "ki_density_unwired");
+}
+
+/**
+ * V1.3 wiring seam for semantic opportunity change — same honesty rules:
+ * no deep pass → "not_deep_analyzed"; a completed diff feeds the
+ * opportunity formula; unavailable/no_baseline diffs stay null.
+ */
+function opportunityChange(snapshot: RadarProgramSnapshot): RadarSignal {
+  const diff = snapshot.deep?.semantic_diff;
+  if (diff === undefined || diff === null) {
+    return sig(null, "deep_enrichment", "not_deep_analyzed");
+  }
+  if (diff.status !== "complete") {
+    return sig(null, "deep_enrichment", `diff_${diff.status}`);
+  }
+  return sig(null, "deep_enrichment", "opportunity_unwired");
 }
 
 function inScopeOnly<T extends { inScope: boolean }>(items: T[] | undefined): T[] {

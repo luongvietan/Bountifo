@@ -1,6 +1,7 @@
 import { canonicalJson } from "../canonical";
 import { sha256Hex } from "../hash";
 import type { ApiEngagementData, ApiTarget, ApiTargetGroup } from "../types";
+import type { RadarDeepEnrichment } from "./deepTypes";
 import type { RadarCatalogItem } from "./types";
 
 /**
@@ -27,6 +28,10 @@ import type { RadarCatalogItem } from "./types";
 export async function radarSourceHash(input: {
   catalog: RadarCatalogItem;
   detail: ApiEngagementData | null;
+  /** V1.3 deep-enrichment payload — a scoring input once present, so it
+   *  joins the hash (absent and null hash identically). Its fields are
+   *  clock-free by contract, so nothing volatile enters the preimage. */
+  deep?: RadarDeepEnrichment | null;
 }): Promise<string> {
   const { catalog, detail } = input;
   const projection = {
@@ -38,6 +43,12 @@ export async function radarSourceHash(input: {
       engagement_type: catalog.engagement_type,
     },
     detail: detail === null ? null : detailProjection(detail),
+    // Only present once a deep pass ran: absent/null deep payloads hash
+    // identically to the V1.2 preimage, so a metadata-only snapshot keeps
+    // its existing score rows.
+    ...(input.deep === undefined || input.deep === null
+      ? {}
+      : { deep: input.deep }),
   };
   return `sha256:${await sha256Hex(`radar-source-v1:${canonicalJson(projection)}`)}`;
 }

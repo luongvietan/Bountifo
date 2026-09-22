@@ -70,9 +70,12 @@ const REASON_RULES: Record<RadarFeatureKey, (s: number) => string | null> = {
           ? "SAFE_HARBOR_ABSENT"
           : null,
   target_data_quality: (s) => (s <= 0.4 ? "DATA_INCOMPLETE" : null),
-  // No V1 threshold codes — these signals only ever emit UNKNOWN_* today.
+  // No V1 threshold codes — accessibility/authz stay UNKNOWN_* today.
+  // known_issue_density / opportunity_change get real codes when their V1.3
+  // deep sources are wired into the weight tables.
   accessibility: () => null,
   known_issue_density: () => null,
+  opportunity_change: () => null,
   authz_opportunity: () => null,
 };
 

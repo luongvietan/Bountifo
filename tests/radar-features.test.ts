@@ -859,13 +859,24 @@ describe("always-null V1 signals", () => {
     );
     for (const key of [
       "accessibility",
-      "known_issue_density",
       "authz_opportunity",
     ] as const) {
       expect(v[key]).toEqual({
         value: null,
         source: "derived",
         reason_code: "not_available_v1",
+      });
+    }
+    // V1.3 deep signals: a snapshot that never received a deep pass reads
+    // not_deep_analyzed — never a fabricated 0.
+    for (const key of [
+      "known_issue_density",
+      "opportunity_change",
+    ] as const) {
+      expect(v[key]).toEqual({
+        value: null,
+        source: "deep_enrichment",
+        reason_code: "not_deep_analyzed",
       });
     }
   });
@@ -895,7 +906,8 @@ describe("detail:null snapshot", () => {
       expect(v[key].reason_code).toBe("detail_unavailable");
     }
     expect(v.accessibility.reason_code).toBe("not_available_v1");
-    expect(v.known_issue_density.reason_code).toBe("not_available_v1");
+    expect(v.known_issue_density.reason_code).toBe("detail_unavailable");
+    expect(v.opportunity_change.reason_code).toBe("detail_unavailable");
     expect(v.authz_opportunity.reason_code).toBe("not_available_v1");
     expect(programFeatureVectorSchema.safeParse(v).success).toBe(true);
   });
