@@ -59,11 +59,13 @@ const SINK_PATTERNS: Record<string, RegExp> = {
   "browser:download": /(?:browser|chrome)\.downloads\.download/,
   "browser:tabs-message": /(?:browser|chrome)\.tabs\.sendMessage/,
   "browser:runtime-message": /(?:browser|chrome)\.runtime\.sendMessage/,
+  "browser:offscreen": /(?:browser|chrome)\??\.offscreen\b/,
   "browser:storage": /(?:browser|chrome)\.storage\??\s*\.(?:local|session|sync|managed)/,
   idb: /\bopenDB\s*\(|\bindexedDB\.open\s*\(/,
   "dom:effect": /\.(?:click|requestSubmit|submit)\s*\(|\.dispatchEvent\s*\(/,
-  "delegated:network": /\bfetchPage\s*\(|(?<!function )\bapiRequest\s*(?:<[^>]*>)?\s*\(/,
+  "delegated:network": /\bfetchPage\s*\(|(?<!function )\bapiRequest\s*(?:<[^>]*>)?\s*\(|(?<!function )\bsiteRequest\s*(?:<[^>]*>)?\s*\(/,
   "delegated:tab-message": /\bsendToTab\s*\(/,
+  "delegated:dom-parse": /(?<!function )\bparseBriefHtml\s*\(/,
   "fs:write":
     /\bwriteFile(?:Sync)?\s*\(|\bappendFile(?:Sync)?\s*\(|\bunlink(?:Sync)?\s*\(|\brename(?:Sync)?\s*\(|\brm(?:Sync)?\s*\(/,
   "automation:playwright":
@@ -80,11 +82,17 @@ const SINK_PATTERNS: Record<string, RegExp> = {
 const SINK_REGISTRY: Record<string, string[]> = {
   // Authenticated Bugcrowd API GETs (allowlisted ops; collection plane).
   "lib/api/client.ts": ["network:fetch"],
+  // Session-cookie site reads for the researcher surface
+  // (engagements.json catalog + brief HTML; collection plane).
+  "lib/api/siteClient.ts": ["network:fetch"],
   "lib/api/engagements.ts": ["delegated:network"],
-  // Radar catalog enumerator paging LIST_ENGAGEMENTS (collection plane).
+  // Radar catalog enumerator paging engagements.json (collection plane).
   "lib/radar/catalog.ts": ["delegated:network"],
-  // Radar detail hydration via GET_ENGAGEMENT (collection plane).
-  "lib/radar/enrichment.ts": ["delegated:network"],
+  // Radar detail hydration: site fetch + offscreen DOM parse
+  // (collection plane).
+  "lib/radar/enrichment.ts": ["delegated:network", "delegated:dom-parse"],
+  // Offscreen-document lifecycle + parse round-trip messaging.
+  "lib/radar/offscreen.ts": ["browser:offscreen", "browser:runtime-message"],
   // Radar IndexedDB persistence (bce-radar database).
   "lib/radar/store.ts": ["idb"],
   // Same-origin dossier page fetch + extension messaging + job bookkeeping.
@@ -178,7 +186,8 @@ describe("architecture: radar collection-plane closure", () => {
   /** Exact radar registry expectation — mirrors SINK_REGISTRY entries. */
   const RADAR_REGISTRY: Record<string, string[]> = {
     "lib/radar/catalog.ts": ["delegated:network"],
-    "lib/radar/enrichment.ts": ["delegated:network"],
+    "lib/radar/enrichment.ts": ["delegated:network", "delegated:dom-parse"],
+    "lib/radar/offscreen.ts": ["browser:offscreen", "browser:runtime-message"],
     "lib/radar/store.ts": ["idb"],
   };
 
@@ -232,7 +241,7 @@ describe("architecture: radar collection-plane closure", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("the radar registry stays exactly: catalog/enrichment network, store idb", () => {
+  it("the radar registry stays exactly: catalog/enrichment network, offscreen parse bridge, store idb", () => {
     for (const [file, sinks] of Object.entries(RADAR_REGISTRY)) {
       expect(
         SINK_REGISTRY[file],

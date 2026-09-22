@@ -1,25 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeBrowser } from "wxt/testing/fake-browser";
-import { API_BASE } from "../lib/constants";
+import { BUGCROWD_SITE } from "../lib/constants";
 
-// Same fresh-module pattern as api-engagements.test.ts: lib/api/client.ts
-// keeps a module-level rate bucket, so each test re-imports the catalog
-// module (and its client dependency) after vi.resetModules().
+// Same fresh-module pattern as before: lib/api/siteClient.ts keeps a
+// module-level rate bucket, so each test re-imports the catalog module (and
+// its client dependency) after vi.resetModules(). No credential setup — the
+// site catalog is session-cookie based.
 
-const CREDENTIAL = "test-credential-4f8c2b91";
 const TS = "2026-09-21T00:00:00.000Z";
+const PAGE_LIMIT = 24;
 
 type CatalogModule = typeof import("../lib/radar/catalog");
-
-type SetAccessLevelFn = (details: { accessLevel: string }) => Promise<void>;
-
-function stubSetAccessLevel(fn: SetAccessLevelFn | undefined) {
-  Object.defineProperty(fakeBrowser.storage.local, "setAccessLevel", {
-    value: fn,
-    configurable: true,
-    writable: true,
-  });
-}
 
 function jsonResponse(
   body: unknown,
@@ -28,31 +19,47 @@ function jsonResponse(
   return new Response(JSON.stringify(body), {
     status: init.status ?? 200,
     headers: {
-      "content-type": "application/vnd.bugcrowd+json",
+      "content-type": "application/json",
       ...(init.headers ?? {}),
     },
   });
 }
 
-function uuidOf(n: number): string {
-  return `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
-}
-
-function engagement(uuid: string, attributes: Record<string, unknown> = {}) {
-  return { type: "engagement", id: uuid, attributes };
-}
-
-/** A LIST_ENGAGEMENTS page containing `count` unique engagement rows. */
-function fullPage(offset: number, count = 25): object {
+/** One engagements.json index row. briefUrl carries the slug — the item's
+ *  canonical identity on the researcher surface. */
+function indexEntry(
+  slug: string,
+  over: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
-    data: Array.from({ length: count }, (_, i) =>
-      engagement(uuidOf(offset + i + 1), { code: `prog-${offset + i + 1}` }),
-    ),
+    name: `Program ${slug}`,
+    tagline: "tagline",
+    briefUrl: `/engagements/${slug}`,
+    accessStatus: "open",
+    productEngagementType: { label: "Bug Bounty", iconVariant: "bug-bounty" },
+    isPrivate: false,
+    ...over,
   };
 }
 
-function pageFor(rows: unknown[]): object {
-  return { data: rows };
+/** An engagements.json page: `totalCount` defaults to the row count. */
+function indexPage(
+  rows: unknown[],
+  total?: number,
+  limit: number = PAGE_LIMIT,
+): object {
+  return {
+    engagements: rows,
+    paginationMeta: { limit, totalCount: total ?? rows.length },
+  };
+}
+
+/** A page of `count` unique entries starting at `offset`. */
+function fullPage(offset: number, count = PAGE_LIMIT, total = 10_000): object {
+  return indexPage(
+    Array.from({ length: count }, (_, i) => indexEntry(`prog-${offset + i}`)),
+    total,
+  );
 }
 
 let catalog: CatalogModule;
@@ -63,8 +70,6 @@ beforeEach(async () => {
   vi.resetModules();
   fakeBrowser.reset();
   vi.useFakeTimers();
-  stubSetAccessLevel(vi.fn().mockResolvedValue(undefined));
-  await fakeBrowser.storage.local.set({ apiCredential: CREDENTIAL });
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
   catalog = await import("../lib/radar/catalog");
@@ -78,73 +83,56 @@ afterEach(() => {
 describe("parseCatalogPage", () => {
   it("extracts identity fields and stamps discovered_at", () => {
     const { items, rawCount } = catalog.parseCatalogPage(
-      {
-        data: [
-          engagement("uuid-1", {
-            code: "acme-bb",
-            name: "Acme Bug Bounty",
-            state: "running",
-            engagement_type: "bug_bounty",
-          }),
-        ],
-      },
+      indexPage([
+        indexEntry("acme-bb", {
+          name: "Acme Bug Bounty",
+          accessStatus: "open",
+          productEngagementType: {
+            label: "Bug Bounty",
+            iconVariant: "bug-bounty",
+          },
+        }),
+      ]),
       TS,
     );
     expect(rawCount).toBe(1);
     expect(items).toEqual([
       {
-        uuid: "uuid-1",
+        uuid: "acme-bb",
         code: "acme-bb",
         name: "Acme Bug Bounty",
-        lifecycle_status: "running",
-        engagement_type: "bug_bounty",
+        lifecycle_status: "open",
+        engagement_type: "Bug Bounty",
         discovered_at: TS,
       },
     ]);
   });
 
-  it("falls back to the engagement URL slug when code is absent", () => {
-    const { items } = catalog.parseCatalogPage(
-      {
-        data: [
-          engagement("uuid-2", {
-            url: "https://bugcrowd.com/engagements/sluggy-prog",
-          }),
-        ],
-      },
-      TS,
-    );
-    expect(items[0]?.code).toBe("sluggy-prog");
-  });
-
-  it("keeps code null when neither attributes.code nor a slug exists", () => {
-    const { items } = catalog.parseCatalogPage(
-      { data: [engagement("uuid-3", { name: "No code" })] },
-      TS,
-    );
-    expect(items[0]?.code).toBeNull();
-  });
-
-  it("ignores non-engagement and malformed rows but counts them in rawCount", () => {
+  it("skips rows without a parseable engagement slug but counts them raw", () => {
     const { items, rawCount } = catalog.parseCatalogPage(
-      {
-        data: [
-          engagement("uuid-1", { code: "ok" }),
-          { type: "program", id: "uuid-x", attributes: { code: "nope" } },
-          { type: "engagement", attributes: { code: "no-id" } },
-          "garbage",
-          42,
-          null,
-        ],
-      },
+      indexPage([
+        indexEntry("good-one"),
+        indexEntry("broken-url", { briefUrl: "javascript:void(0)" }),
+        { name: "no briefUrl at all" },
+        "garbage",
+        42,
+        null,
+      ]),
       TS,
     );
     expect(rawCount).toBe(6);
-    expect(items.map((i) => i.uuid)).toEqual(["uuid-1"]);
+    expect(items.map((i) => i.uuid)).toEqual(["good-one"]);
   });
 
-  it("flags missing/non-array data and non-object bodies as malformed", () => {
-    for (const bad of [null, {}, { data: {} }, 42, "x", { meta: {} }]) {
+  it("flags missing/non-array engagements and non-object bodies as malformed", () => {
+    for (const bad of [
+      null,
+      {},
+      { engagements: {} },
+      42,
+      "x",
+      { paginationMeta: { limit: 24, totalCount: 5 } },
+    ]) {
       expect(catalog.parseCatalogPage(bad, TS)).toEqual({
         items: [],
         rawCount: 0,
@@ -153,170 +141,147 @@ describe("parseCatalogPage", () => {
     }
   });
 
-  it("treats data: [] as a valid empty page, not malformed", () => {
-    expect(catalog.parseCatalogPage({ data: [] }, TS)).toEqual({
-      items: [],
-      rawCount: 0,
-      malformed: false,
-    });
+  it("treats engagements: [] as a valid empty page, not malformed", () => {
+    expect(
+      catalog.parseCatalogPage(indexPage([]), TS),
+    ).toEqual({ items: [], rawCount: 0, malformed: false });
+  });
+
+  it("survives a missing paginationMeta", () => {
+    const { items, rawCount, malformed } = catalog.parseCatalogPage(
+      { engagements: [indexEntry("solo")] },
+      TS,
+    );
+    expect(malformed).toBe(false);
+    expect(rawCount).toBe(1);
+    expect(items[0]?.uuid).toBe("solo");
   });
 });
 
 describe("enumerateEngagementCatalog", () => {
-  it("completes after a single short page", async () => {
+  it("completes after a single page when totalCount is reached", async () => {
     fetchMock.mockResolvedValueOnce(
-      jsonResponse(
-        pageFor([
-          engagement("uuid-1", { code: "a", name: "A" }),
-          engagement("uuid-2", { code: "b" }),
-        ]),
-      ),
+      jsonResponse(indexPage([indexEntry("a"), indexEntry("b")], 2)),
     );
     const res = await catalog.enumerateEngagementCatalog(TS);
     expect(res.status).toBe("complete");
     expect(res.pages_fetched).toBe(1);
     expect(res.warnings).toEqual([]);
-    expect(res.items.map((i) => i.uuid)).toEqual(["uuid-1", "uuid-2"]);
+    expect(res.items.map((i) => i.uuid)).toEqual(["a", "b"]);
     expect(res.items[0]).toMatchObject({
       code: "a",
-      name: "A",
+      name: "Program a",
       discovered_at: TS,
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0]![0])).toBe(
-      `${API_BASE}/engagements?page[number]=1&page[size]=25`,
-    );
+    const [url, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
+    expect(url).toBe(`${BUGCROWD_SITE}/engagements.json?page=1`);
+    expect(init.credentials).toBe("include");
   });
 
-  it("pages through full pages until a short final page", async () => {
+  it("pages through full pages until totalCount is exhausted", async () => {
     fetchMock.mockImplementation(async (url: string) => {
       const u = String(url);
-      if (u.includes("page[number]=1")) return jsonResponse(fullPage(0));
-      if (u.includes("page[number]=2")) return jsonResponse(fullPage(25));
-      return jsonResponse(pageFor([engagement("uuid-last")]));
+      if (u.endsWith("page=1")) return jsonResponse(fullPage(0, 24, 50));
+      if (u.endsWith("page=2")) return jsonResponse(fullPage(24, 24, 50));
+      return jsonResponse(indexPage([indexEntry("last")], 50));
     });
     const res = await catalog.enumerateEngagementCatalog(TS);
     expect(res.status).toBe("complete");
     expect(res.pages_fetched).toBe(3);
-    expect(res.items).toHaveLength(51);
+    expect(res.items).toHaveLength(49);
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    for (const call of fetchMock.mock.calls) {
-      expect(String(call[0])).toContain(
-        `${API_BASE}/engagements?page[number]=`,
-      );
-    }
   });
 
-  it("treats a page with exactly 25 rows as full and keeps paging", async () => {
-    fetchMock.mockImplementation(async (url: string) => {
-      const u = String(url);
-      if (u.includes("page[number]=1")) return jsonResponse(fullPage(0));
-      return jsonResponse({ data: [] });
-    });
+  it("stops without another request when a full page reaches totalCount", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(fullPage(0, 24, 24)));
     const res = await catalog.enumerateEngagementCatalog(TS);
     expect(res.status).toBe("complete");
-    expect(res.pages_fetched).toBe(2);
-    expect(res.items).toHaveLength(25);
+    expect(res.pages_fetched).toBe(1);
+    expect(res.items).toHaveLength(24);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops on a short page even when totalCount claims more", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(indexPage([indexEntry("a"), indexEntry("b")], 500)),
+    );
+    const res = await catalog.enumerateEngagementCatalog(TS);
+    expect(res.status).toBe("complete");
+    expect(res.pages_fetched).toBe(1);
+    expect(res.items).toHaveLength(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("counts malformed rows toward page fullness", async () => {
     const junkRows = [
-      engagement("uuid-1"),
-      { type: "program", id: "p1" },
+      indexEntry("ok-1"),
+      { name: "no slug" },
       "garbage",
-      ...Array.from({ length: 22 }, (_, i) => engagement(uuidOf(10 + i))),
+      ...Array.from({ length: 21 }, (_, i) => indexEntry(`ok-${i + 2}`)),
     ];
     fetchMock.mockImplementation(async (url: string) => {
       const u = String(url);
-      if (u.includes("page[number]=1")) {
-        return jsonResponse(pageFor(junkRows));
-      }
-      return jsonResponse({ data: [] });
+      if (u.endsWith("page=1")) return jsonResponse(indexPage(junkRows, 25));
+      return jsonResponse(indexPage([indexEntry("tail")], 25));
     });
     const res = await catalog.enumerateEngagementCatalog(TS);
-    // 25 raw rows → not a short page → page 2 fetched even though only 23
-    // valid engagements came out of page 1.
+    // 24 raw rows → full page → page 2 fetched even though only 22 valid
+    // items came out of page 1.
     expect(res.pages_fetched).toBe(2);
     expect(res.status).toBe("complete");
     expect(res.items).toHaveLength(23);
   });
 
-  it("dedupes by uuid keeping the first occurrence", async () => {
+  it("dedupes by slug keeping the first occurrence", async () => {
     fetchMock.mockImplementation(async (url: string) => {
       const u = String(url);
-      if (u.includes("page[number]=1")) {
+      if (u.endsWith("page=1")) {
         return jsonResponse(
-          pageFor([
-            engagement("uuid-1", { code: "first" }),
-            ...Array.from({ length: 24 }, (_, i) =>
-              engagement(uuidOf(100 + i)),
-            ),
-          ]),
+          indexPage(
+            [
+              indexEntry("dup", { name: "first" }),
+              ...Array.from({ length: 23 }, (_, i) => indexEntry(`p${i}`)),
+            ],
+            26,
+          ),
         );
       }
       return jsonResponse(
-        pageFor([
-          engagement("uuid-1", { code: "dup-should-lose" }),
-          engagement("uuid-new"),
-        ]),
+        indexPage(
+          [
+            indexEntry("dup", { name: "dup-should-lose" }),
+            indexEntry("new-one"),
+          ],
+          26,
+        ),
       );
     });
     const res = await catalog.enumerateEngagementCatalog(TS);
     expect(res.status).toBe("complete");
-    const uuids = res.items.map((i) => i.uuid);
-    expect(uuids.filter((u) => u === "uuid-1")).toHaveLength(1);
-    expect(uuids[0]).toBe("uuid-1");
-    expect(res.items[0]?.code).toBe("first");
-    expect(uuids.at(-1)).toBe("uuid-new");
-    expect(res.items).toHaveLength(26);
+    const slugs = res.items.map((i) => i.uuid);
+    expect(slugs.filter((s) => s === "dup")).toHaveLength(1);
+    expect(res.items[0]?.name).toBe("first");
+    expect(slugs.at(-1)).toBe("new-one");
+    expect(res.items).toHaveLength(25);
   });
 
-  it("keeps deterministic first-seen ordering across pages", async () => {
-    fetchMock.mockImplementation(async (url: string) => {
-      const u = String(url);
-      if (u.includes("page[number]=1")) {
-        return jsonResponse(
-          pageFor([
-            engagement("b-first", { code: "b" }),
-            ...Array.from({ length: 23 }, (_, i) => engagement(`m${i}`)),
-            engagement("a-second-page-dup"),
-          ]),
-        );
-      }
-      return jsonResponse(
-        pageFor([
-          engagement("a-second-page-dup"),
-          engagement("z-last"),
-        ]),
-      );
-    });
-    const res = await catalog.enumerateEngagementCatalog(TS);
-    expect(res.items.map((i) => i.uuid)).toEqual([
-      "b-first",
-      ...Array.from({ length: 23 }, (_, i) => `m${i}`),
-      "a-second-page-dup",
-      "z-last",
-    ]);
-  });
-
-  it("reports failed with malformed_page when a 200 page lacks data", async () => {
+  it("reports failed with malformed_page when a 200 page lacks engagements", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ meta: { page: 1 } }));
     const res = await catalog.enumerateEngagementCatalog(TS);
     expect(res.status).toBe("failed");
     expect(res.warnings).toContain("malformed_page");
     expect(res.pages_fetched).toBe(0);
     expect(res.items).toEqual([]);
-    expect(JSON.stringify(res)).not.toContain(CREDENTIAL);
   });
 
-  it("reports failed with malformed_page when data is not an array", async () => {
+  it("reports failed with malformed_page when engagements is not an array", async () => {
     fetchMock.mockResolvedValueOnce(
-      jsonResponse({ data: { not: "an-array" } }),
+      jsonResponse({ engagements: { not: "an-array" } }),
     );
     const res = await catalog.enumerateEngagementCatalog(TS);
     expect(res.status).toBe("failed");
     expect(res.warnings).toContain("malformed_page");
-    expect(res.items).toEqual([]);
   });
 
   it("reports failed with malformed_page for a non-object body", async () => {
@@ -326,43 +291,52 @@ describe("enumerateEngagementCatalog", () => {
     expect(res.warnings).toContain("malformed_page");
   });
 
+  it("reports failed for a non-JSON answer (SPA shell / login markup)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response("<html>not json</html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+    );
+    const res = await catalog.enumerateEngagementCatalog(TS);
+    expect(res.status).toBe("failed");
+    expect(res.warnings).toContain("invalid_response");
+  });
+
   it("reports partial — never complete — when a later page is malformed", async () => {
     fetchMock.mockImplementation(async (url: string) => {
       const u = String(url);
-      if (u.includes("page[number]=1")) return jsonResponse(fullPage(0));
-      if (u.includes("page[number]=2")) return jsonResponse(fullPage(25));
+      if (u.endsWith("page=1")) return jsonResponse(fullPage(0, 24, 60));
+      if (u.endsWith("page=2")) return jsonResponse(fullPage(24, 24, 60));
       return jsonResponse({ unexpected: "shape" });
     });
     const res = await catalog.enumerateEngagementCatalog(TS);
     expect(res.status).toBe("partial");
     expect(res.warnings).toContain("malformed_page");
-    // Pages 1–2 were fetched and parsed cleanly; their 50 items survive.
     expect(res.pages_fetched).toBe(2);
-    expect(res.items).toHaveLength(50);
+    expect(res.items).toHaveLength(48);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  it("treats a first-page data: [] as a legitimately complete empty catalog", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
+  it("treats an empty first page as a legitimately complete empty catalog", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(indexPage([], 0)));
     const res = await catalog.enumerateEngagementCatalog(TS);
     expect(res.status).toBe("complete");
     expect(res.pages_fetched).toBe(1);
-    expect(res.warnings).toEqual([]);
     expect(res.items).toEqual([]);
   });
 
-  it("reports failed with items collected so far when the API errors", async () => {
+  it("reports failed with items collected so far when the site errors", async () => {
     fetchMock.mockImplementation(async (url: string) => {
       const u = String(url);
-      if (u.includes("page[number]=1")) return jsonResponse(fullPage(0));
+      if (u.endsWith("page=1")) return jsonResponse(fullPage(0, 24, 60));
       return jsonResponse({}, { status: 403 });
     });
     const res = await catalog.enumerateEngagementCatalog(TS);
     expect(res.status).toBe("failed");
     expect(res.pages_fetched).toBe(1);
-    expect(res.items).toHaveLength(25);
+    expect(res.items).toHaveLength(24);
     expect(res.warnings.some((w) => w.includes("forbidden"))).toBe(true);
-    expect(JSON.stringify(res)).not.toContain(CREDENTIAL);
   });
 
   it("reports failed with the rate_limited kind after persistent 429s", async () => {
@@ -376,20 +350,10 @@ describe("enumerateEngagementCatalog", () => {
     expect(res.warnings.some((w) => w.includes("rate_limited"))).toBe(true);
   });
 
-  it("reports failed when the credential is missing", async () => {
-    await fakeBrowser.storage.local.remove("apiCredential");
-    const res = await catalog.enumerateEngagementCatalog(TS);
-    expect(res.status).toBe("failed");
-    expect(res.warnings.some((w) => w.includes("no_token"))).toBe(true);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("reports partial — never complete — when page 100 is still full", async () => {
+  it("reports partial — never complete — when page 100 is still short of totalCount", async () => {
     fetchMock.mockImplementation(async (url: string) => {
-      const u = String(url);
-      const m = /page\[number\]=(\d+)/.exec(u);
-      const page = Number(m?.[1] ?? 0);
-      return jsonResponse(fullPage((page - 1) * 25));
+      const page = Number(/[?&]page=(\d+)/.exec(String(url))?.[1] ?? 0);
+      return jsonResponse(fullPage((page - 1) * PAGE_LIMIT, PAGE_LIMIT, 100_000));
     });
     const promise = catalog.enumerateEngagementCatalog(TS);
     // The shared rate bucket admits 60 req/min; advance past the window so
@@ -399,7 +363,7 @@ describe("enumerateEngagementCatalog", () => {
     expect(fetchMock).toHaveBeenCalledTimes(100);
     expect(res.status).toBe("partial");
     expect(res.pages_fetched).toBe(100);
-    expect(res.items).toHaveLength(2500);
+    expect(res.items).toHaveLength(2400);
     expect(res.warnings).toContain("page_limit_reached");
   });
 });

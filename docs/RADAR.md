@@ -1,14 +1,15 @@
 # Engagement Radar
 
 Deterministic program triage over the Bugcrowd engagement catalog. Radar
-enumerates every engagement visible to the stored credential, hydrates
-cheap API metadata per program, reduces each to a fixed 13-signal feature
-vector, and ranks programs under six versioned weight profiles. No LLM
-participates in collection, extraction, scoring, ranking, or explanation.
+enumerates every engagement visible to the browser session, hydrates each
+program's brief page, reduces it to a fixed 13-signal feature vector, and
+ranks programs under six versioned weight profiles. No LLM participates in
+collection, extraction, scoring, ranking, or explanation.
 
 ```text
-LIST_ENGAGEMENTS                GET_ENGAGEMENT
-page[size]=25, ≤100 pages       ?include=target_groups,targets
+GET /engagements.json?page=N    GET /engagements/<slug>
+{paginationMeta.limit,          brief HTML → offscreen
+ totalCount}, ≤100 pages        document → DOM collectors
       │                               │
       ▼                               ▼
  Catalog (lib/radar/catalog.ts)   Hydrate (lib/radar/enrichment.ts)
@@ -38,46 +39,60 @@ page[size]=25, ≤100 pages       ?include=target_groups,targets
 
 ## Data sources
 
-All network access goes through `apiRequest` (`lib/api/client.ts`) — the
-shared allowlisted-GET client with the rolling-window rate bucket, 429
-`Retry-After` handling, bounded exponential backoff (max 4 attempts), and
-credential isolation. Radar introduces no raw `fetch`.
+Radar reads the **researcher site surface**, not `api.bugcrowd.com` (the
+organization/program-owner API — a researcher's catalog does not exist
+there). All network access goes through `siteRequest`
+(`lib/api/siteClient.ts`) — an allowlisted-GET client with the same
+transport contract as the API client (rolling-window rate bucket, 429
+`Retry-After`, bounded backoff, error payloads without request detail) but
+**no stored credential**: requests carry `credentials: "include"` so the
+browser's bugcrowd.com session cookies authenticate. A logged-out scan
+still sees the public catalog; session-gated content degrades per item
+instead of aborting the run.
 
 | Input | Endpoint | Produces |
 |---|---|---|
-| Catalog | `GET /engagements?page[number]=N&page[size]=25` | `RadarCatalogItem` — uuid, code, name, lifecycle_status, engagement_type, discovered_at |
-| Detail | `GET /engagements/{uuid}?include=target_groups,targets` | `ApiEngagementData` via `parseEngagement` — identity, lifecycle timestamps, safeHarborLevel, statistics, target groups (incl. rewards), targets (incl. tags, inScope) |
+| Catalog | `GET /engagements.json?page=N` → `{engagements, paginationMeta{limit, totalCount}}` | `RadarCatalogItem` — uuid (the brief-URL slug), code (same slug), name, lifecycle_status (`accessStatus`), engagement_type (`productEngagementType.label`), discovered_at |
+| Detail | `GET /engagements/{slug}` → brief HTML | `ApiEngagementData` — parsed inside an MV3 offscreen document (`entrypoints/offscreen`) by the same DOM collectors the exporter runs on live pages (`collectDetails`, `collectTargets`), then mapped by `lib/radar/detailMap.ts`: identity, lifecycle timestamps, safeHarborLevel, header statistics, target groups (incl. rewards), targets (incl. tags, inScope) |
 
-The DOM exporter is never run for radar scans. `statistics.*` values
-arrive as display strings and are consumed only through a strict parser.
-Token/Authorization material never reaches the radar store, score rows, or
-message responses.
+Service workers have no DOM/`DOMParser`, which is why brief HTML crosses
+into the offscreen document (`lib/radar/offscreen.ts` bridge) rather than
+being parsed in the coordinator. `statistics.*` values arrive as display
+strings (DOM labels slug to `vulnerabilities-rewarded` and are normalized
+to the snake_case keys the extractor consumes) and are consumed only
+through a strict parser. No credential material exists on this path;
+nothing session-shaped reaches the radar store, score rows, or message
+responses.
 
 ## Catalog completeness
 
-`enumerateEngagementCatalog` pages `LIST_ENGAGEMENTS` from page 1:
+`enumerateEngagementCatalog` pages `/engagements.json` from page 1:
 
 | Condition | Status | Notes |
 |---|---|---|
-| Raw page < 25 rows | `complete` | First short page is the last page. Fullness is measured on the raw row count — skipped malformed/non-`engagement` rows still count toward it. `data: []` is a valid empty final page. |
+| Raw page < `paginationMeta.limit` rows (24 live), or cumulative rows reach `paginationMeta.totalCount` | `complete` | First short page is the last page. Fullness is measured on the raw row count — entries without a parseable `briefUrl` slug still count toward it. An empty first page is a legitimately empty catalog. |
 | Page 100 returns full (`MAX_CATALOG_PAGES`) | `partial` | `page_limit_reached` warning. The cap is a safety bound, not an assumption — never reported `complete`. |
-| `data` absent/non-array, or a non-object body, on a 200 page | `failed` (first page) / `partial` (after ≥1 clean page) | `malformed_page` warning — a malformed envelope is never a short page, so it can never report `complete`. Items from earlier clean pages are kept. |
-| `ApiError` from the client | `failed` | Items collected so far are kept; a warning names the error kind verbatim (`rate_limited`, `forbidden`, …) or `unknown` for a non-ApiError throw. |
+| `engagements` absent/non-array, or a non-object body, on a 200 page | `failed` (first page) / `partial` (after ≥1 clean page) | `malformed_page` warning — a malformed envelope (e.g. an HTML shell or login page answered where JSON was expected) is never a short page, so it can never report `complete`. Items from earlier clean pages are kept. |
+| `ApiError` from the client | `failed` | Items collected so far are kept; a warning names the error kind verbatim (`rate_limited`, `unauthorized`, …) or `unknown` for a non-ApiError throw. A fetch redirected onto the login surface, a 401, or a non-JSON answer maps to `unauthorized`/`invalid_response` — truthful session failures, never a misleading `forbidden`. |
 
-Dedupe is by `uuid`, first occurrence wins; item order is first-seen page
-order, so enumeration is deterministic for identical responses.
+Dedupe is by slug (stored in the `uuid` field), first occurrence wins;
+item order is first-seen page order, so enumeration is deterministic for
+identical responses.
 
 ## Enrichment error classification
 
-`hydrateRadarProgram` uses the catalog `uuid` verbatim (never re-resolved)
-and always returns a snapshot for program-scoped failures:
+`hydrateRadarProgram` uses the catalog slug verbatim (never re-resolved)
+and always returns a snapshot for program-scoped failures. The session
+surface has **no credential-wide fatal class**: session cookies either ride
+along or they don't, and a missing/expired session degrades only the items
+that need it (private briefs redirect to login; the public catalog keeps
+answering). Every `ApiError` is therefore program-scoped:
 
-| Error | Class | Resulting snapshot |
-|---|---|---|
-| `unauthorized`, `no_token`, `storage_locked` | Fatal — credential-wide | Original `ApiError` rethrown; aborts the run. |
-| `forbidden`, `not_found` | Non-fatal | `detail: null`, `enrichment.status: "unavailable"`, `error_kind` set |
-| `invalid_response`, `http`, `network`, `rate_limited` | Non-fatal | `detail: null`, `enrichment.status: "failed"`, `error_kind` set |
-| Non-`ApiError` throw | Non-fatal | `detail: null`, `enrichment.status: "failed"`, `error_kind: "unknown"` |
+| Error | Resulting snapshot |
+|---|---|
+| `unauthorized` (login redirect / 401 — session absent for this brief), `forbidden`, `not_found` | `detail: null`, `enrichment.status: "unavailable"`, `error_kind` set |
+| `invalid_response` (incl. offscreen parse failure), `http`, `network`, `rate_limited` | `detail: null`, `enrichment.status: "failed"`, `error_kind` set |
+| Non-`ApiError` throw | `detail: null`, `enrichment.status: "failed"`, `error_kind: "unknown"` |
 
 One failed engagement never destroys the run; the coordinator counts it in
 `enrichment_failed` and continues the queue.
@@ -310,8 +325,9 @@ transition and every per-program step checkpoints the run record into the
   plus one re-enumeration rather than silently dropping work.
 - Enrichment runs as a worker pool over a shared queue, concurrency 2
   (default; clamped to ≥1) — never `Promise.all` over the catalog. HTTP
-  retries stay inside `apiRequest`; the coordinator adds none. A fatal
-  hydration error stops the pool → `failed`; a cancel request → `cancelled`.
+  retries stay inside `siteRequest`; the coordinator adds none. There is no
+  fatal hydration class on the session surface — a cancel request →
+  `cancelled`.
 - Scoring recomputes all completed uuids × all six profiles on entry;
   `putScore` upserts by key, so re-scoring is idempotent.
 - `RadarScanSummary` verdict on termination: `failed` when the run failed;
@@ -351,7 +367,7 @@ as the named API ops.
 | `RADAR_CANCEL_SCAN` | — | `{run}` — cancels whichever run is active |
 | `RADAR_GET_STATE` | — | `{run}` — current run state or `null` |
 | `RADAR_GET_RESULTS` | `profile` (enum), `limit` int 1–200 (default 50), `minConfidence` 0–1 optional | `{rows}` ranked result rows |
-| `RADAR_GET_PROGRAM` | `uuid` (36-char hex-dash regex), `profile` optional (router defaults to `best_ev`) | `{program}` — snapshot, score, rendered explanation, catalog row |
+| `RADAR_GET_PROGRAM` | `uuid` (the engagement's slug — `[A-Za-z0-9_-]{1,100}`), `profile` optional (router defaults to `best_ev`) | `{program}` — snapshot, score, rendered explanation, catalog row |
 
 ## Limitations
 

@@ -1,48 +1,43 @@
-import { apiRequest } from "../api/client";
+import { siteRequest } from "../api/siteClient";
 import { ApiError, type ApiErrorKind } from "../api/errors";
-import { parseEngagement } from "../api/engagements";
+import { BUGCROWD_SITE } from "../constants";
 import type { ApiEngagementData } from "../types";
 import { radarSourceHash } from "./hash";
+import { parseBriefHtml } from "./offscreen";
 import type { RadarCatalogItem, RadarProgramSnapshot } from "./types";
 
 // ---------------------------------------------------------------------------
 // Error classification for a single program's hydration.
 //
-// FATAL (credential-wide; rethrown — aborts the radar run):
-//   unauthorized   token rejected wholesale; every program would fail alike
-//   no_token       no credential stored at all
-//   storage_locked credential area not locked down — reads must not proceed
+// The researcher site surface has no credential-wide failure equivalent to
+// the old API's "token rejected": session cookies either ride along or they
+// don't, and a missing/expired session degrades ONLY the items that need it
+// (private briefs redirect to login; the public catalog keeps answering).
+// Every ApiError is therefore program-scoped:
 //
-// NON-FATAL (program-scoped; a snapshot is still produced with detail:null):
-//   forbidden, not_found            → enrichment "unavailable"
+//   unauthorized, forbidden, not_found → enrichment "unavailable"
 //   invalid_response, http,
-//   network, rate_limited           → enrichment "failed"
-//   any non-ApiError (incl. the     → enrichment "failed", error_kind "unknown"
-//   TypeError for a missing uuid)
+//   network, rate_limited             → enrichment "failed"
+//   non-ApiError (incl. offscreen     → enrichment "failed", error_kind
+//   plumbing bugs)                       "unknown"
 // ---------------------------------------------------------------------------
 
-const FATAL_KINDS: ReadonlySet<ApiErrorKind> = new Set([
-  "unauthorized",
-  "no_token",
-  "storage_locked",
-]);
-
 const UNAVAILABLE_KINDS: ReadonlySet<ApiErrorKind> = new Set([
+  "unauthorized",
   "forbidden",
   "not_found",
 ]);
 
 /**
- * Hydrates one catalog row into a RadarProgramSnapshot via GET_ENGAGEMENT
- * (include=target_groups,targets) + parseEngagement — API detail only, never
- * the DOM exporter. The uuid is used verbatim from the catalog item; it is
- * never re-resolved through the catalog.
+ * Hydrates one catalog row into a RadarProgramSnapshot: GET the brief page
+ * HTML via the site client, then parse it into ApiEngagementData through the
+ * offscreen document (the exporter's DOM collectors — service workers have
+ * no DOM). The slug is the item's canonical identity (`code`, falling back
+ * to `uuid`, which carries the same value in V1.2).
  *
  * A program-scoped failure never aborts the run: the returned snapshot keeps
- * `detail: null` and an `enrichment` of "unavailable" (forbidden/not_found)
- * or "failed" (invalid_response/http/network/rate_limited, or "unknown" for
- * non-ApiError throws). Credential-wide failures (unauthorized, no_token,
- * storage_locked) are fatal and rethrown as the original ApiError.
+ * `detail: null` and an `enrichment` of "unavailable" or "failed" per the
+ * classification above.
  *
  * `source_hash` always hashes `{catalog, detail}` — a failed snapshot's hash
  * legitimately differs from the hash once hydration succeeds.
@@ -50,17 +45,18 @@ const UNAVAILABLE_KINDS: ReadonlySet<ApiErrorKind> = new Set([
 export async function hydrateRadarProgram(
   catalogItem: RadarCatalogItem,
 ): Promise<RadarProgramSnapshot> {
+  const slug = catalogItem.code ?? catalogItem.uuid;
   let detail: ApiEngagementData | null = null;
   let enrichment: RadarProgramSnapshot["enrichment"] = { status: "complete" };
   try {
-    const res = await apiRequest({
-      operation: "GET_ENGAGEMENT",
-      uuid: catalogItem.uuid,
-    });
-    detail = parseEngagement(res.data, res.observedVersion);
+    const res = await siteRequest({ operation: "GET_BRIEF", slug });
+    detail = await parseBriefHtml(
+      slug,
+      res.data,
+      `${BUGCROWD_SITE}/engagements/${slug}`,
+    );
   } catch (err) {
     if (err instanceof ApiError) {
-      if (FATAL_KINDS.has(err.kind)) throw err;
       enrichment = {
         status: UNAVAILABLE_KINDS.has(err.kind) ? "unavailable" : "failed",
         error_kind: err.kind,

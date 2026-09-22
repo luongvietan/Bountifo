@@ -9,7 +9,8 @@ import {
   type Mock,
 } from "vitest";
 import { fakeBrowser } from "wxt/testing/fake-browser";
-import { API_BASE } from "../lib/constants";
+import { BUGCROWD_SITE } from "../lib/constants";
+import type { ApiEngagementData } from "../lib/types";
 import type { CatalogScanResult } from "../lib/radar/catalog";
 import type { RadarCoordinatorDeps } from "../lib/radar/coordinator";
 import type {
@@ -18,133 +19,130 @@ import type {
 } from "../lib/radar/types";
 
 // ---------------------------------------------------------------------------
-// Task 18 — end-to-end radar scan against a mocked Bugcrowd API.
+// Radar scan integration — end to end against a mocked researcher site.
 //
 // A REAL RadarCoordinator is wired to the real enumerate/hydrate functions
-// (→ real apiRequest → vi.stubGlobal fetch) and the real IndexedDB store
-// (fake-indexeddb). The only fakes are the network itself, the credential in
-// fakeBrowser storage, and the injected now/newRunId determinism hooks.
+// (→ real siteRequest → vi.stubGlobal fetch) and the real IndexedDB store
+// (fake-indexeddb). The only fakes are the network itself, the offscreen
+// parser bridge (no DOM/offscreen document exists in the service-worker-like
+// test env — the DOM collectors are covered end-to-end by
+// radar-detail-map.test.ts), and the injected now/newRunId determinism hooks.
 //
 // Real timers are used: the 500-exhaustion retry backoff (~4s) runs for real
-// inside apiRequest — tests exercising it get an extended timeout.
+// inside siteRequest — tests exercising it get an extended timeout.
 // ---------------------------------------------------------------------------
 
-const CREDENTIAL = "test-credential-4f8c2b91";
 const T0 = "2026-09-21T00:00:00.000Z";
+
+vi.mock("../lib/radar/offscreen", () => ({
+  parseBriefHtml: vi.fn(),
+}));
 
 type CatalogModule = typeof import("../lib/radar/catalog");
 type EnrichmentModule = typeof import("../lib/radar/enrichment");
 type CoordinatorModule = typeof import("../lib/radar/coordinator");
 type StoreModule = typeof import("../lib/radar/store");
+type OffscreenModule = typeof import("../lib/radar/offscreen");
+type ErrorsModule = typeof import("../lib/api/errors");
 
 let catalog: CatalogModule;
 let enrichment: EnrichmentModule;
 let coordinator: CoordinatorModule;
 let store: StoreModule;
+let offscreen: OffscreenModule;
+// ApiError must come from the SAME module graph enrichment got after
+// resetModules() — a top-level import's class would fail its instanceof.
+let ApiError: ErrorsModule["ApiError"];
+let parseBrief: Mock<OffscreenModule["parseBriefHtml"]>;
 let fetchMock: ReturnType<typeof vi.fn>;
 let runSeq = 0;
 
-type SetAccessLevelFn = (details: { accessLevel: string }) => Promise<void>;
-
-function stubSetAccessLevel(fn: SetAccessLevelFn | undefined) {
-  Object.defineProperty(fakeBrowser.storage.local, "setAccessLevel", {
-    value: fn,
-    configurable: true,
-    writable: true,
-  });
-}
-
 function jsonResponse(
   body: unknown,
-  init: { status?: number; headers?: Record<string, string> } = {},
+  init: { status?: number } = {},
 ): Response {
   return new Response(JSON.stringify(body), {
     status: init.status ?? 200,
-    headers: {
-      "content-type": "application/vnd.bugcrowd+json",
-      ...(init.headers ?? {}),
-    },
+    headers: { "content-type": "application/json" },
   });
 }
 
-/** Valid v4-shaped uuid: `…8000-` + zero-padded number. */
-function uid(n: number): string {
-  return `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+function htmlResponse(
+  init: { status?: number } = {},
+): Response {
+  return new Response("<html><body>brief</body></html>", {
+    status: init.status ?? 200,
+    headers: { "content-type": "text/html" },
+  });
 }
 
-function listRow(uuid: string, code: string): object {
+/** Brief-URL slug for the nth synthetic program. */
+function slug(n: number): string {
+  return `prog-${n}`;
+}
+
+/** One engagements.json row — the site envelope item shape. */
+function listRow(s: string, code: string): object {
   return {
-    type: "engagement",
-    id: uuid,
-    attributes: {
-      code,
-      name: `Program ${code}`,
-      state: "running",
-      engagement_type: "bug_bounty",
-    },
+    name: `Program ${code}`,
+    tagline: "",
+    briefUrl: `/engagements/${s}`,
+    accessStatus: "open",
+    isPrivate: false,
+    industryName: "Technology",
+    productEngagementType: { label: "Bug Bounty", iconVariant: "bug-bounty" },
   };
 }
 
-/** GET_ENGAGEMENT document (JSON:API data + included) for one uuid. */
-function engagementDoc(uuid: string, seed: number): object {
-  const gid = `g-${uuid.slice(-4)}`;
-  const tid = `t-${uuid.slice(-4)}`;
+/** The ApiEngagementData the offscreen parser would produce for one slug. */
+function detailData(s: string, seed: number): ApiEngagementData {
+  const gid = `g-${s}`;
   return {
-    data: {
-      type: "engagement",
-      id: uuid,
-      attributes: {
-        name: `Program ${seed}`,
-        code: `prog-${seed}`,
-        engagement_type: "bug_bounty",
-        managed: true,
-        state: "running",
-        updated_at: "2026-09-01T00:00:00.000Z",
-        last_transition_at: "2026-08-01T00:00:00.000Z",
-        safe_harbor_status: "full_safe_harbor",
-        statistics: {
-          researchers_participating: {
-            value: String(10 + seed * 7),
-            window: null,
-          },
-          vulnerabilities_rewarded: {
-            value: String(seed * 3),
-            window: "last_90_days",
-          },
-        },
+    uuid: s,
+    code: s,
+    name: `Program ${seed}`,
+    engagementType: "bug_bounty",
+    managedBounty: true,
+    lifecycleStatus: "running",
+    testingStart: null,
+    testingEnd: null,
+    testingPeriodLabel: null,
+    lastBriefUpdate: "2026-09-01T00:00:00.000Z",
+    lastStatusTransition: "2026-08-01T00:00:00.000Z",
+    safeHarborLevel: "full_safe_harbor",
+    statistics: {
+      researchers_participating: {
+        value: String(10 + seed * 7),
+        window: null,
       },
-      relationships: {
-        target_groups: { data: [{ type: "target_group", id: gid }] },
-        targets: { data: [{ type: "target", id: tid }] },
+      vulnerabilities_rewarded: {
+        value: String(seed * 3),
+        window: "last_90_days",
       },
     },
-    included: [
+    targetGroups: [
       {
-        type: "target_group",
         id: gid,
-        attributes: {
-          name: "Web scope",
-          in_scope: true,
-          // seed 28 → p1 29000 clamps the reward curve to 1.0; the tier
-          // blend lands at 0.6121 → REWARD_MEDIUM.
-          rewards: { p1: 1000 + seed * 1000, p2: 500, p3: 100 },
-        },
-      },
-      {
-        type: "target",
-        id: tid,
-        attributes: {
-          uri: `https://t${seed}.example.com`,
-          name: `site-${seed}`,
-          category: "website",
-          tags: [],
-          in_scope: true,
-        },
-        relationships: {
-          target_group: { data: { type: "target_group", id: gid } },
-        },
+        name: "Web scope",
+        inScope: true,
+        description: null,
+        // seed 28 → p1 29000 clamps the reward curve to 1.0; the tier blend
+        // lands at 0.6121 → REWARD_MEDIUM.
+        rewards: { p1: 1000 + seed * 1000, p2: 500, p3: 100, p4: null, p5: null },
       },
     ],
+    targets: [
+      {
+        id: `t-${s}`,
+        groupId: gid,
+        location: `https://t${seed}.example.com`,
+        name: `site-${seed}`,
+        category: "website",
+        tags: [],
+        inScope: true,
+      },
+    ],
+    observedApiVersion: null,
   };
 }
 
@@ -210,29 +208,30 @@ function realDeps(): RealDeps {
 
 function listCalls(): unknown[][] {
   return fetchMock.mock.calls.filter((c) =>
-    String(c[0]).includes("/engagements?"),
+    String(c[0]).includes("/engagements.json?"),
   );
 }
 
-function getCallsFor(uuid: string): unknown[][] {
+function briefCallsFor(s: string): unknown[][] {
   return fetchMock.mock.calls.filter((c) =>
-    String(c[0]).includes(`/engagements/${uuid}?`),
+    String(c[0]).endsWith(`/engagements/${s}`),
   );
 }
 
 // ---------------------------------------------------------------------------
-// The Task-18 scenario: page 1 = 25 rows, page 2 = 3 rows → 28 unique.
-// 25 hydrate OK; uid(10) → 403, uid(11) → malformed doc, uid(12) → 500 always.
+// The scenario: page 1 = 25 rows, page 2 = 3 rows → 28 unique.
+// 25 hydrate OK; slug(10) → 403, slug(11) → offscreen parse failure,
+// slug(12) → 500 always.
 // ---------------------------------------------------------------------------
 
-const MAIN_UUIDS = Array.from({ length: 28 }, (_, i) => uid(i + 1));
-const FORBIDDEN_UUID = uid(10);
-const MALFORMED_UUID = uid(11);
-const FLAKY_UUID = uid(12);
-const FAILED_UUIDS = [FORBIDDEN_UUID, MALFORMED_UUID, FLAKY_UUID];
+const MAIN_SLUGS = Array.from({ length: 28 }, (_, i) => slug(i + 1));
+const FORBIDDEN_SLUG = slug(10);
+const MALFORMED_SLUG = slug(11);
+const FLAKY_SLUG = slug(12);
+const FAILED_SLUGS = [FORBIDDEN_SLUG, MALFORMED_SLUG, FLAKY_SLUG];
 
 /**
- * Router for the 28-program scenario. `flaky500` toggles the uid(12) 500
+ * Router for the 28-program scenario. `flaky500` toggles the slug(12) 500
  * exhaustion — disabled for the determinism test, whose two full runs would
  * otherwise spend the shared 60 req/min rate bucket on retry attempts.
  */
@@ -241,46 +240,58 @@ function mainScenarioFetch(
   opts: { flaky500?: boolean } = {},
 ): Promise<Response> {
   const flaky500 = opts.flaky500 ?? true;
-  if (url.startsWith(`${API_BASE}/engagements?`)) {
-    const page = Number(/page\[number\]=(\d+)/.exec(url)?.[1] ?? "0");
+  if (url.startsWith(`${BUGCROWD_SITE}/engagements.json?`)) {
+    const page = Number(/page=(\d+)/.exec(url)?.[1] ?? "0");
     if (page === 1) {
       return Promise.resolve(
         jsonResponse({
-          data: MAIN_UUIDS.slice(0, 25).map((u, i) =>
-            listRow(u, `prog-${i + 1}`),
+          engagements: MAIN_SLUGS.slice(0, 25).map((s, i) =>
+            listRow(s, `prog-${i + 1}`),
           ),
+          paginationMeta: { limit: 25, totalCount: 28 },
         }),
       );
     }
     if (page === 2) {
       return Promise.resolve(
         jsonResponse({
-          data: MAIN_UUIDS.slice(25).map((u, i) =>
-            listRow(u, `prog-${i + 26}`),
+          engagements: MAIN_SLUGS.slice(25).map((s, i) =>
+            listRow(s, `prog-${i + 26}`),
           ),
+          paginationMeta: { limit: 25, totalCount: 28 },
         }),
       );
     }
-    return Promise.resolve(jsonResponse({ data: [] }));
-  }
-  const uuid = /\/engagements\/([0-9a-f-]{36})\?include=/.exec(url)?.[1] ?? "";
-  if (uuid === FORBIDDEN_UUID) {
-    return Promise.resolve(jsonResponse({}, { status: 403 }));
-  }
-  if (uuid === MALFORMED_UUID) {
-    // Valid JSON, wrong document shape → parseEngagement rejects it.
     return Promise.resolve(
-      jsonResponse({ data: { type: "program", id: uuid } }),
+      jsonResponse({ engagements: [], paginationMeta: { limit: 25 } }),
     );
   }
-  if (uuid === FLAKY_UUID && flaky500) {
-    return Promise.resolve(jsonResponse({}, { status: 500 }));
+  const s = /\/engagements\/([A-Za-z0-9_-]+)$/.exec(url)?.[1] ?? "";
+  if (s === FORBIDDEN_SLUG) {
+    return Promise.resolve(htmlResponse({ status: 403 }));
   }
-  const seed = MAIN_UUIDS.indexOf(uuid) + 1;
-  return Promise.resolve(jsonResponse(engagementDoc(uuid, seed)));
+  if (s === FLAKY_SLUG && flaky500) {
+    return Promise.resolve(htmlResponse({ status: 500 }));
+  }
+  return Promise.resolve(htmlResponse());
 }
 
-/** Serialized contents of every persisted store — for the credential scan. */
+/**
+ * parseBriefHtml behavior for the scenario: slug(11)'s document parses as a
+ * malformed brief (the offscreen bridge reports invalid_response), every
+ * other slug maps to its seeded detail.
+ */
+function mainScenarioParse(s: string): Promise<ApiEngagementData> {
+  if (s === MALFORMED_SLUG) {
+    return Promise.reject(
+      new ApiError("invalid_response", "offscreen parse failed"),
+    );
+  }
+  const seed = MAIN_SLUGS.indexOf(s) + 1;
+  return Promise.resolve(detailData(s, seed));
+}
+
+/** Serialized contents of every persisted store — for the secret scan. */
 async function persistedBlob(): Promise<string> {
   const db = await store.openRadarStore();
   const rows: unknown[] = [];
@@ -295,14 +306,17 @@ beforeEach(async () => {
   vi.restoreAllMocks();
   vi.resetModules();
   fakeBrowser.reset();
-  stubSetAccessLevel(vi.fn().mockResolvedValue(undefined));
-  await fakeBrowser.storage.local.set({ apiCredential: CREDENTIAL });
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
   catalog = await import("../lib/radar/catalog");
   enrichment = await import("../lib/radar/enrichment");
   store = await import("../lib/radar/store");
   coordinator = await import("../lib/radar/coordinator");
+  offscreen = await import("../lib/radar/offscreen");
+  ApiError = (await import("../lib/api/errors")).ApiError;
+  parseBrief = offscreen.parseBriefHtml as Mock<
+    OffscreenModule["parseBriefHtml"]
+  >;
   await wipeRadarDb();
 });
 
@@ -317,6 +331,7 @@ describe("radar scan integration — 28 discovered, 3 program-scoped failures", 
       fetchMock.mockImplementation((input: unknown) =>
         mainScenarioFetch(String(input)),
       );
+      parseBrief.mockImplementation((s) => mainScenarioParse(s));
       const { deps } = realDeps();
       const coord = new coordinator.RadarCoordinator(deps);
 
@@ -335,41 +350,49 @@ describe("radar scan integration — 28 discovered, 3 program-scoped failures", 
         // null-score rows; 25 of them are real scores.
         scored: 28,
       });
-      for (const [uuid, kind] of [
-        [FORBIDDEN_UUID, "forbidden"],
-        [MALFORMED_UUID, "invalid_response"],
-        [FLAKY_UUID, "http"],
+      for (const [s, kind] of [
+        [FORBIDDEN_SLUG, "forbidden"],
+        [MALFORMED_SLUG, "invalid_response"],
+        [FLAKY_SLUG, "http"],
       ] as const) {
-        expect(run.summary?.warnings).toContain(`${uuid}: ${kind}`);
+        expect(run.summary?.warnings).toContain(`${s}: ${kind}`);
       }
 
       // ---- catalog ordering + wire calls --------------------------------
-      // Exactly two LIST_ENGAGEMENTS calls; 25+? GET calls — the 500 case
-      // is retried to MAX_ATTEMPTS (4), the other failures are one-shot.
+      // Exactly two LIST_INDEX calls; 25+? brief fetches — the 500 case is
+      // retried to MAX_ATTEMPTS (4), the other failures are one-shot.
       expect(listCalls()).toHaveLength(2);
-      expect(getCallsFor(FORBIDDEN_UUID)).toHaveLength(1);
-      expect(getCallsFor(MALFORMED_UUID)).toHaveLength(1);
-      expect(getCallsFor(FLAKY_UUID)).toHaveLength(4);
-      // The pipeline really was authenticated…
+      expect(briefCallsFor(FORBIDDEN_SLUG)).toHaveLength(1);
+      expect(briefCallsFor(MALFORMED_SLUG)).toHaveLength(1);
+      expect(briefCallsFor(FLAKY_SLUG)).toHaveLength(4);
+      // The pipeline really was session-authenticated: every request carries
+      // cookies and there is no credential header at all.
       for (const call of fetchMock.mock.calls) {
-        const init = call[1] as { headers?: Record<string, string> };
-        expect(init.headers?.Authorization).toBe(`Token ${CREDENTIAL}`);
+        const init = call[1] as {
+          credentials?: string;
+          headers?: Record<string, string>;
+        };
+        expect(init.credentials).toBe("include");
+        expect(Object.keys(init.headers ?? {})).not.toContain(
+          "Authorization",
+        );
       }
 
       const db = await store.openRadarStore();
       const catalogRows = await store.getCatalog(db);
-      // First-seen page order, one row per unique uuid.
-      expect(catalogRows.map((i) => i.uuid)).toEqual(MAIN_UUIDS);
-      expect(
-        new Set(catalogRows.map((i) => i.uuid)).size,
-      ).toBe(28);
+      // One row per unique slug (getAll returns key order — first-seen
+      // page order isn't a read-back contract).
+      expect(catalogRows.map((i) => i.uuid).sort()).toEqual(
+        [...MAIN_SLUGS].sort(),
+      );
+      expect(new Set(catalogRows.map((i) => i.uuid)).size).toBe(28);
 
       // ---- snapshots -----------------------------------------------------
-      for (const uuid of MAIN_UUIDS) {
-        const snap = await store.getLatestSnapshot(db, uuid);
+      for (const s of MAIN_SLUGS) {
+        const snap = await store.getLatestSnapshot(db, s);
         expect(snap).not.toBeNull();
         expect(snap!.source_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
-        if (FAILED_UUIDS.includes(uuid)) {
+        if (FAILED_SLUGS.includes(s)) {
           expect(snap!.detail).toBeNull();
           expect(snap!.enrichment.status).not.toBe("complete");
         } else {
@@ -378,13 +401,13 @@ describe("radar scan integration — 28 discovered, 3 program-scoped failures", 
         }
       }
       expect(
-        (await store.getLatestSnapshot(db, FORBIDDEN_UUID))!.enrichment,
+        (await store.getLatestSnapshot(db, FORBIDDEN_SLUG))!.enrichment,
       ).toEqual({ status: "unavailable", error_kind: "forbidden" });
       expect(
-        (await store.getLatestSnapshot(db, MALFORMED_UUID))!.enrichment,
+        (await store.getLatestSnapshot(db, MALFORMED_SLUG))!.enrichment,
       ).toEqual({ status: "failed", error_kind: "invalid_response" });
       expect(
-        (await store.getLatestSnapshot(db, FLAKY_UUID))!.enrichment,
+        (await store.getLatestSnapshot(db, FLAKY_SLUG))!.enrichment,
       ).toEqual({ status: "failed", error_kind: "http" });
 
       // ---- scores --------------------------------------------------------
@@ -396,8 +419,8 @@ describe("radar scan integration — 28 discovered, 3 program-scoped failures", 
       expect(scoreRows).toHaveLength(28);
       const nonNull = scoreRows.filter((r) => r.score.score !== null);
       expect(nonNull).toHaveLength(25); // the brief's "25 scoreable"
-      for (const uuid of FAILED_UUIDS) {
-        const row = scoreRows.find((r) => r.uuid === uuid);
+      for (const s of FAILED_SLUGS) {
+        const row = scoreRows.find((r) => r.uuid === s);
         expect(row?.score.score).toBeNull();
         expect(row?.score.confidence).toBe(0);
         // Stable reason vocabulary: every gap is an UNKNOWN_<signal> code.
@@ -408,7 +431,7 @@ describe("radar scan integration — 28 discovered, 3 program-scoped failures", 
       }
       // Stable reason codes on a known-successful program (seed 28 →
       // REWARD_MEDIUM band, recently updated, web surface, full safe harbor).
-      const seed28 = scoreRows.find((r) => r.uuid === uid(28));
+      const seed28 = scoreRows.find((r) => r.uuid === slug(28));
       expect(seed28?.score.reasons).toEqual([
         "REWARD_MEDIUM",
         "RECENTLY_UPDATED",
@@ -430,27 +453,26 @@ describe("radar scan integration — 28 discovered, 3 program-scoped failures", 
         eligibleScores,
       );
       expect(results.slice(25).map((r) => r.uuid)).toEqual(
-        [...FAILED_UUIDS].sort(),
+        [...FAILED_SLUGS].sort(),
       );
       expect(results.slice(25).every((r) => r.score === null)).toBe(true);
 
       // ---- per-program drill-down ------------------------------------------
-      const detail = await coord.getProgram(FORBIDDEN_UUID, "best_ev");
+      const detail = await coord.getProgram(FORBIDDEN_SLUG, "best_ev");
       expect(detail?.snapshot?.enrichment.status).toBe("unavailable");
       expect(detail?.score?.score).toBeNull();
       expect(detail?.explanation.every((l) => l.startsWith("? "))).toBe(true);
 
       // ---- no credentials in persisted state --------------------------------
+      // The session surface stores no credential; the scan asserts no
+      // header-shaped secret leaks into snapshots/results either way.
       const blob = await persistedBlob();
-      expect(blob).not.toContain(CREDENTIAL);
       expect(blob).not.toContain("Token ");
       expect(blob.toLowerCase()).not.toContain("authorization");
-      // …and nothing credential-shaped leaks into results/drill-down either.
       for (const payload of [
         JSON.stringify(results),
         JSON.stringify(detail),
       ]) {
-        expect(payload).not.toContain(CREDENTIAL);
         expect(payload).not.toContain("Token ");
         expect(payload.toLowerCase()).not.toContain("authorization");
       }
@@ -459,27 +481,30 @@ describe("radar scan integration — 28 discovered, 3 program-scoped failures", 
     30_000, // the 500-exhaustion retry backoff runs on real timers (~4s)
   );
 
-  it("dedupes a repeated uuid, keeping the first-seen catalog row", async () => {
+  it("dedupes a repeated slug, keeping the first-seen catalog row", async () => {
     const page1 = Array.from({ length: 25 }, (_, i) =>
-      listRow(uid(101 + i), `dup-${101 + i}`),
+      listRow(slug(101 + i), `dup-${101 + i}`),
     );
-    const dupUuid = uid(101);
+    const dupSlug = slug(101);
     const page2 = [
-      listRow(dupUuid, "dup-should-lose"),
-      listRow(uid(126), "dup-126"),
-      listRow(uid(127), "dup-127"),
+      listRow(dupSlug, "dup-should-lose"),
+      listRow(slug(126), "dup-126"),
+      listRow(slug(127), "dup-127"),
     ];
     fetchMock.mockImplementation((input: unknown) => {
       const url = String(input);
-      if (url.startsWith(`${API_BASE}/engagements?`)) {
-        const page = /page\[number\]=(\d+)/.exec(url)?.[1];
+      if (url.startsWith(`${BUGCROWD_SITE}/engagements.json?`)) {
+        const page = /page=(\d+)/.exec(url)?.[1];
         return Promise.resolve(
-          jsonResponse({ data: page === "1" ? page1 : page2 }),
+          jsonResponse({
+            engagements: page === "1" ? page1 : page2,
+            paginationMeta: { limit: 25 },
+          }),
         );
       }
-      const uuid = /\/engagements\/([0-9a-f-]{36})\?include=/.exec(url)?.[1];
-      return Promise.resolve(jsonResponse(engagementDoc(uuid ?? "", 1)));
+      return Promise.resolve(htmlResponse());
     });
+    parseBrief.mockImplementation((s) => Promise.resolve(detailData(s, 1)));
     const { deps } = realDeps();
     const coord = new coordinator.RadarCoordinator(deps);
     const run = await coord.start();
@@ -492,41 +517,48 @@ describe("radar scan integration — 28 discovered, 3 program-scoped failures", 
     const db = await store.openRadarStore();
     const rows = await store.getCatalog(db);
     expect(rows).toHaveLength(27);
-    // First occurrence wins: position 0 keeps the page-1 code.
-    expect(rows[0]?.uuid).toBe(dupUuid);
-    expect(rows[0]?.code).toBe("dup-101");
-    expect(rows.filter((r) => r.uuid === dupUuid)).toHaveLength(1);
-    // First-seen order preserved, the new page-2 uuids appended last.
-    expect(rows.map((r) => r.uuid).slice(-2)).toEqual([uid(126), uid(127)]);
+    // First occurrence wins: position 0 keeps the page-1 name (the code
+    // field carries the slug itself on the site surface, so `name` is the
+    // marker that distinguishes the two duplicate rows).
+    expect(rows[0]?.uuid).toBe(dupSlug);
+    expect(rows[0]?.name).toBe("Program dup-101");
+    expect(rows.filter((r) => r.uuid === dupSlug)).toHaveLength(1);
+    // Both new page-2 slugs are present alongside the kept first-seen row.
+    expect(rows.map((r) => r.uuid).sort().slice(-2)).toEqual([
+      slug(126),
+      slug(127),
+    ]);
     db.close();
   });
 });
 
 describe("radar scan integration — checkpoint/resume", () => {
-  it("a second coordinator resumes pending uuids without re-enumerating", async () => {
-    const resumeUuids = [uid(201), uid(202), uid(203), uid(204)];
-    const stuckUuid = uid(204);
+  it("a second coordinator resumes pending slugs without re-enumerating", async () => {
+    const resumeSlugs = [slug(201), slug(202), slug(203), slug(204)];
+    const stuckSlug = slug(204);
     let hangFirstGet = true;
     fetchMock.mockImplementation((input: unknown) => {
       const url = String(input);
-      if (url.startsWith(`${API_BASE}/engagements?`)) {
+      if (url.startsWith(`${BUGCROWD_SITE}/engagements.json?`)) {
         return Promise.resolve(
           jsonResponse({
-            data: resumeUuids.map((u, i) => listRow(u, `res-${i}`)),
+            engagements: resumeSlugs.map((s, i) => listRow(s, `res-${i}`)),
+            paginationMeta: { limit: 25 },
           }),
         );
       }
-      const uuid = /\/engagements\/([0-9a-f-]{36})\?include=/.exec(url)?.[1];
-      if (uuid === stuckUuid && hangFirstGet) {
+      const s = /\/engagements\/([A-Za-z0-9_-]+)$/.exec(url)?.[1];
+      if (s === stuckSlug && hangFirstGet) {
         // Simulates the service worker dying mid-enrich: the request never
-        // returns, the run record stays "enriching" with uid(204) pending.
+        // returns, the run record stays "enriching" with prog-204 pending.
         hangFirstGet = false;
         return new Promise<Response>(() => {});
       }
-      return Promise.resolve(
-        jsonResponse(engagementDoc(uuid ?? "", resumeUuids.indexOf(uuid ?? "") + 1)),
-      );
+      return Promise.resolve(htmlResponse());
     });
+    parseBrief.mockImplementation((s) =>
+      Promise.resolve(detailData(s, resumeSlugs.indexOf(s) + 1)),
+    );
 
     const a = realDeps();
     const coordA = new coordinator.RadarCoordinator(a.deps);
@@ -541,7 +573,7 @@ describe("radar scan integration — checkpoint/resume", () => {
     });
     const mid = await store.getRun(db, run.run_id);
     expect(mid?.phase).toBe("enriching");
-    expect(mid?.pending_uuids).toEqual([stuckUuid]);
+    expect(mid?.pending_uuids).toEqual([stuckSlug]);
     expect(listCalls()).toHaveLength(1);
 
     // Simulated restart: a second coordinator over the same persisted DB.
@@ -549,18 +581,18 @@ describe("radar scan integration — checkpoint/resume", () => {
     const coordB = new coordinator.RadarCoordinator(b.deps);
     await coordB.resume();
 
-    // No re-enumeration: the persisted catalog covered the pending uuid.
+    // No re-enumeration: the persisted catalog covered the pending slug.
     expect(b.enumerate).not.toHaveBeenCalled();
     expect(listCalls()).toHaveLength(1);
     expect(b.hydrate).toHaveBeenCalledTimes(1);
-    expect(b.hydrate.mock.calls[0]![0].uuid).toBe(stuckUuid);
-    // The stuck uuid was fetched twice across the "two workers' lifetimes".
-    expect(getCallsFor(stuckUuid)).toHaveLength(2);
+    expect(b.hydrate.mock.calls[0]![0].uuid).toBe(stuckSlug);
+    // The stuck slug was fetched twice across the "two workers' lifetimes".
+    expect(briefCallsFor(stuckSlug)).toHaveLength(2);
 
     const rec = await store.getRun(db, run.run_id);
     expect(rec?.phase).toBe("done");
     expect(rec?.completed_uuids).toEqual(
-      expect.arrayContaining(resumeUuids),
+      expect.arrayContaining(resumeSlugs),
     );
     expect((rec?.summary as { status?: string } | undefined)?.status).toBe(
       "complete",
@@ -579,6 +611,7 @@ describe("radar scan integration — determinism", () => {
       fetchMock.mockImplementation((input: unknown) =>
         mainScenarioFetch(String(input), { flaky500: false }),
       );
+      parseBrief.mockImplementation((s) => mainScenarioParse(s));
 
       const runScan = async () => {
         const { deps } = realDeps();
@@ -597,8 +630,9 @@ describe("radar scan integration — determinism", () => {
         );
         const hashes = (
           await Promise.all(
-            MAIN_UUIDS.map(
-              async (u) => (await store.getLatestSnapshot(db, u))!.source_hash,
+            MAIN_SLUGS.map(
+              async (s) =>
+                (await store.getLatestSnapshot(db, s))!.source_hash,
             ),
           )
         ).sort();
@@ -616,10 +650,10 @@ describe("radar scan integration — determinism", () => {
         first.results.map((r) => r.uuid),
       );
       // Identical full score objects (score, confidence, components, reasons,
-      // source_hash) for every discovered uuid.
-      for (const uuid of MAIN_UUIDS) {
-        expect(second.scoreByUuid.get(uuid)).toEqual(
-          first.scoreByUuid.get(uuid),
+      // source_hash) for every discovered slug.
+      for (const s of MAIN_SLUGS) {
+        expect(second.scoreByUuid.get(s)).toEqual(
+          first.scoreByUuid.get(s),
         );
       }
       // Identical source hashes — same semantic input, same hash.

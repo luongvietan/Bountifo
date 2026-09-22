@@ -5,7 +5,9 @@ import { parseRadarMessage } from "../lib/messages";
 // Same conventions as messages.test.ts: every op is a .strict() object so
 // request-injection keys (url/headers/method/body/token) are rejected.
 
-const VALID_UUID = "01234567-89ab-cdef-0123-456789abcdef";
+// Engagement identity on the researcher site surface is the brief-URL slug
+// (e.g. "webdotcom"), not an org-API uuid.
+const VALID_UUID = "webdotcom";
 
 describe("parseRadarMessage accepts", () => {
   it.each([
@@ -149,10 +151,12 @@ describe("parseRadarMessage rejects", () => {
   it("missing or malformed uuid on RADAR_GET_PROGRAM", () => {
     expect(parseRadarMessage({ op: "RADAR_GET_PROGRAM" })).toBeNull();
     for (const uuid of [
-      "not-a-uuid",
-      "01234567-89ab-cdef-0123-456789abcde", // 35 chars
-      "01234567-89ab-cdef-0123-456789abcdef0", // 37 chars
-      "zzzzzzzz-89ab-cdef-0123-456789abcdef",
+      "/engagements/webdotcom", // path separator
+      "../escape",
+      "with space",
+      "dot.slug",
+      "",
+      "x".repeat(101), // over the 100-char bound
       123,
     ]) {
       expect(

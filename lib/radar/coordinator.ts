@@ -38,7 +38,7 @@ import {
 //
 // Enrichment is bounded: a worker pool of `concurrency` (default 2) pulls
 // uuids off a shared queue — never Promise.all over the whole catalog. HTTP
-// retries stay inside apiRequest; this layer adds none.
+// retries stay inside siteRequest; this layer adds none.
 //
 // The coordinator holds no direct sink: the IndexedDB handle arrives via the
 // injected `openStore`, and network access lives inside the injected
