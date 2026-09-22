@@ -18,6 +18,17 @@
         <button id="cancel" class="danger" hidden>Cancel scan</button>
         <label for="profile" class="muted">Profile</label>
         <select id="profile"></select>
+        <span id="mode-control" hidden>
+          <label for="mode" class="muted">View</label>
+          <select
+            id="mode"
+            title="Evidence level of the ranking — Deep ranking lists only programs with deep-stage scores; All candidates ranks every program by its metadata score."
+          >
+            <option value="deep">Deep ranking</option>
+            <option value="metadata">All candidates (metadata)</option>
+          </select>
+        </span>
+        <span id="mode-note" class="muted"></span>
       </div>
       <p id="status" class="muted" aria-live="polite">Loading…</p>
       <p id="feedback" class="feedback" aria-live="polite"></p>
@@ -25,8 +36,15 @@
         <legend class="muted">Filter results</legend>
         <label for="f-saturation">Saturation ≤</label>
         <input id="f-saturation" type="number" min="0" max="1" step="0.05" />
-        <label for="f-dup">Dup ≤</label>
-        <input id="f-dup" type="number" min="0" max="1" step="0.05" />
+        <label for="f-ki">KI Pressure ≤</label>
+        <input
+          id="f-ki"
+          type="number"
+          min="0"
+          max="1"
+          step="0.05"
+          title="Known-Issue pressure proxy from unique known issues and meaningful target surface — not duplicate probability."
+        />
         <label for="f-opportunity">Opportunity ≥</label>
         <input id="f-opportunity" type="number" min="0" max="1" step="0.05" />
         <label for="f-reward">Reward ≥</label>
@@ -44,8 +62,16 @@
             <th>Reward</th>
             <th>Surface</th>
             <th>Saturation</th>
-            <th>Dup</th>
-            <th>Opportunity</th>
+            <th
+              title="Known-Issue pressure proxy from unique known issues and meaningful target surface — not duplicate probability."
+            >
+              KI Pressure
+            </th>
+            <th
+              title="Semantic changelog expansion score — latest vs previous brief; not a bug-finding probability."
+            >
+              Opportunity
+            </th>
           </tr>
         </thead>
         <tbody id="results-body"></tbody>

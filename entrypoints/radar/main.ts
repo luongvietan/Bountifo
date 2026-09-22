@@ -2,6 +2,7 @@ import { browser } from "wxt/browser";
 import type { RadarMessage } from "../../lib/messages";
 import type {
   RadarProgramDetail,
+  RadarResultMode,
   RadarResultRow,
   RadarRunState,
 } from "../../lib/radar/coordinator";
@@ -9,6 +10,7 @@ import type { RadarProfileId } from "../../lib/radar/types";
 import {
   buildRows,
   componentRows,
+  deepFallback,
   detailMetaText,
   detailRows,
   detailSlugSource,
@@ -18,6 +20,7 @@ import {
   filterRows,
   isActive,
   profileOptions,
+  resolveResultsMode,
   saturationRows,
   statusText,
   type FilterCriteria,
@@ -43,6 +46,9 @@ const scanButton = document.querySelector<HTMLButtonElement>("#scan")!;
 const refreshButton = document.querySelector<HTMLButtonElement>("#refresh")!;
 const cancelButton = document.querySelector<HTMLButtonElement>("#cancel")!;
 const profileSelect = document.querySelector<HTMLSelectElement>("#profile")!;
+const modeControl = document.querySelector<HTMLElement>("#mode-control")!;
+const modeSelect = document.querySelector<HTMLSelectElement>("#mode")!;
+const modeNote = document.querySelector<HTMLElement>("#mode-note")!;
 const statusLine = document.querySelector<HTMLElement>("#status")!;
 const feedback = document.querySelector<HTMLElement>("#feedback")!;
 const resultsBody =
@@ -59,7 +65,7 @@ const explanationList =
   document.querySelector<HTMLUListElement>("#explanation")!;
 const fSaturation =
   document.querySelector<HTMLInputElement>("#f-saturation")!;
-const fDup = document.querySelector<HTMLInputElement>("#f-dup")!;
+const fKi = document.querySelector<HTMLInputElement>("#f-ki")!;
 const fOpportunity =
   document.querySelector<HTMLInputElement>("#f-opportunity")!;
 const fReward = document.querySelector<HTMLInputElement>("#f-reward")!;
@@ -72,14 +78,34 @@ let currentProfile: RadarProfileId = "best_ev";
 let pollTimer: number | null = null;
 /** Last fetched (unfiltered) rows — filters re-render without re-fetching. */
 let lastRows: RadarResultRow[] = [];
+/** Latest run state — feeds the mode default and the stabilization line. */
+let lastState: RadarRunState | null = null;
+/** The user's explicit mode pick; null = follow the honest default. */
+let modeChoice: RadarResultMode | null = null;
+/** Note from the last deep→metadata fallback (null when none applied). */
+let fallbackNote: string | null = null;
 
 async function send(msg: RadarMessage): Promise<RouterResponse> {
   return (await browser.runtime.sendMessage(msg)) as RouterResponse;
 }
 
+/**
+ * Syncs the mode control with the current resolution: hidden for
+ * metadata-only profiles (their deep view is empty by design), else showing
+ * the requested mode with any honesty note alongside.
+ */
+function renderModeControl(): void {
+  const res = resolveResultsMode(currentProfile, lastState, modeChoice);
+  modeControl.hidden = !res.offered;
+  if (res.offered) modeSelect.value = res.requested;
+  modeNote.textContent = res.note ?? fallbackNote ?? "";
+}
+
 function renderState(state: RadarRunState | null): void {
+  lastState = state;
   statusLine.textContent = statusText(state);
   cancelButton.hidden = !isActive(state);
+  renderModeControl();
 }
 
 function cell(tr: HTMLTableRowElement, text: string): void {
@@ -106,6 +132,29 @@ function programCell(tr: HTMLTableRowElement, view: RowView): void {
   tr.append(td);
 }
 
+/**
+ * Score cell: evidence badge (DEEP/META) + score text. The badge names the
+ * stage that produced the score — a META badge can only appear in the
+ * metadata view, since the deep ranking never returns metadata-only rows
+ * (and when it does, the fallback note says why). Δ gets a tooltip pinning
+ * its direction so "−11.4" can't be misread as the display order's sign.
+ */
+function scoreCell(tr: HTMLTableRowElement, view: RowView): void {
+  const td = document.createElement("td");
+  const badge = document.createElement("span");
+  badge.className = `ev ${view.evidence}`;
+  badge.textContent = view.evidence === "deep" ? "DEEP" : "META";
+  badge.title =
+    view.evidence === "deep"
+      ? "Deep-stage score — re-scored after deep enrichment (known issues + changelog diff)."
+      : "Metadata-stage score — catalog/brief signals only; not deep-analyzed.";
+  td.append(badge, document.createTextNode(` ${view.score}`));
+  if (view.scoreDelta !== null) {
+    td.title = "Δ = deep score − metadata score";
+  }
+  tr.append(td);
+}
+
 /** Deep-signal cell: null renders "—" plus a subtle `unanalyzed` marker. */
 function signalCell(
   tr: HTMLTableRowElement,
@@ -127,7 +176,7 @@ function numOrNull(el: HTMLInputElement): number | null {
 function readCriteria(): FilterCriteria {
   return {
     maxSaturation: numOrNull(fSaturation),
-    maxDup: numOrNull(fDup),
+    maxKiPressure: numOrNull(fKi),
     minOpportunity: numOrNull(fOpportunity),
     minReward: numOrNull(fReward),
     apiHeavy: fApiHeavy.checked,
@@ -156,11 +205,11 @@ function renderRows(rows: RadarResultRow[]): void {
     if (view.provisional) tr.classList.add("provisional");
     cell(tr, view.rank);
     programCell(tr, view);
-    cell(tr, view.score);
+    scoreCell(tr, view);
     cell(tr, view.reward);
     cell(tr, view.surface);
     cell(tr, view.saturation);
-    signalCell(tr, view.dup, view.dupAnalyzed);
+    signalCell(tr, view.kiPressure, view.kiAnalyzed);
     signalCell(tr, view.opportunity, view.opportunityAnalyzed);
     tr.addEventListener("click", () => void selectProgram(view.uuid));
     resultsBody.append(tr);
@@ -254,18 +303,49 @@ async function selectProgram(uuid: string): Promise<void> {
   }
 }
 
+/**
+ * Fetches the ranked rows under the resolved evidence mode. A "deep"
+ * request that comes back empty falls back to the metadata ranking when it
+ * has rows — deepFallback carries the note that says the swap happened.
+ */
 async function refreshResults(): Promise<void> {
+  const { requested } = resolveResultsMode(
+    currentProfile,
+    lastState,
+    modeChoice,
+  );
+  fallbackNote = null;
   const resp = await send({
     op: "RADAR_GET_RESULTS",
     profile: currentProfile,
     limit: RESULT_LIMIT,
+    mode: requested,
   });
-  if (resp.ok === true) {
-    lastRows = resp.rows ?? [];
-    renderRows(lastRows);
-  } else {
+  if (resp.ok !== true) {
     feedback.textContent = `Could not load results: ${errorText(resp.error)}`;
+    renderModeControl();
+    return;
   }
+  let rows = resp.rows ?? [];
+  if (requested === "deep" && rows.length === 0) {
+    const metaResp = await send({
+      op: "RADAR_GET_RESULTS",
+      profile: currentProfile,
+      limit: RESULT_LIMIT,
+      mode: "metadata",
+    });
+    if (metaResp.ok === true) {
+      const fb = deepFallback(rows, metaResp.rows ?? []);
+      rows = fb.rows;
+      fallbackNote = fb.note;
+    } else {
+      feedback.textContent =
+        `Could not load results: ${errorText(metaResp.error)}`;
+    }
+  }
+  lastRows = rows;
+  renderRows(lastRows);
+  renderModeControl();
 }
 
 async function refreshState(): Promise<RadarRunState | null> {
@@ -336,13 +416,21 @@ cancelButton.addEventListener("click", async () => {
 refreshButton.addEventListener("click", () => void refresh());
 
 // Filter controls re-render the last fetched rows — no new messages.
-for (const el of [fSaturation, fDup, fOpportunity, fReward]) {
+for (const el of [fSaturation, fKi, fOpportunity, fReward]) {
   el.addEventListener("input", () => renderRows(lastRows));
 }
 fApiHeavy.addEventListener("change", () => renderRows(lastRows));
 
+// The mode toggle is an explicit choice — re-fetches under that evidence
+// level (deep requests may still fall back to metadata honestly).
+modeSelect.addEventListener("change", () => {
+  modeChoice = modeSelect.value === "deep" ? "deep" : "metadata";
+  void refreshResults();
+});
+
 profileSelect.addEventListener("change", () => {
   currentProfile = profileSelect.value as RadarProfileId;
+  modeChoice = null; // new profile → fresh honest default
   detailSection.hidden = true;
   void refreshResults();
 });
