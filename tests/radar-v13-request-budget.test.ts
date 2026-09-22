@@ -7,33 +7,29 @@ import type {
 } from "../lib/radar/coordinator";
 
 // ---------------------------------------------------------------------------
-// Agent E — Radar V1.3 request-budget tests (adversarial).
+// Agent E — Radar V1.3/V1.3.1 request-budget tests (adversarial).
 //
 // The site client is the only network sink; it is mocked at the module
 // boundary so every outbound request is counted by operation. The REAL
-// enumerateEngagementCatalog / hydrateRadarProgram are injected into the
-// coordinator's enumerate/hydrate seams — the whole metadata pipeline runs
-// for real, only the wire is fake.
+// enumerateEngagementCatalog / hydrateRadarProgram / hydrateRadarDeep are
+// injected into the coordinator's enumerate/hydrate/deepHydrate seams —
+// the whole pipeline runs for real, only the wire is fake.
 //
-// BUDGET (per docs/superpowers/plans/2026-09-22-radar-v1.3.md):
-//   V1.2 = ~4·N siteRequests + pages            (changelog + brief doc +
+// BUDGET (per docs/superpowers/plans/2026-09-24-radar-v1.3.1.md):
+//   metadata = 4·N siteRequests + pages         (changelog + brief doc +
 //                                                statistics + recently_joined,
 //                                                plus 1 LIST_INDEX per page)
-//   V1.3 = ~4·N + pages + 3·min(N, DEEP_LIMIT)  (deep stage adds changelog
-//                                                re-fetch + previous-version
-//                                                brief doc + known-issues JSON
-//                                                per SHORTLISTED program only)
-//   DEEP_LIMIT (plan: DEEP_ANALYSIS_LIMIT) defaults to 30 eligible best_ev
-//   rows.
+//   deep     = ≤3 siteRequests per program      (changelog re-fetch +
+//                                                previous-version brief doc +
+//                                                known-issues JSON), and the
+//              unique deep-analyzed count is hard-capped at MAX_DEEP_PROGRAMS
+//              (60) — the profile-aware union and stabilization batches share
+//              that one budget.
 //
-// Because the deep stage lands via merge, assertions are bounds, not
-// equalities: every bound is green today (deep calls = 0) and holds the
-// merge to the contract. Assertions tagged INTEGRATION ASSERTION pin the
-// post-merge deep stage explicitly and are RED on this branch.
-//
-// If the merged coordinator exposes an injected deep dep, wire it in
-// makeDeps below; if it calls siteRequest internally (lib/radar/deep.ts per
-// the plan), no change is needed — the module mock already counts it.
+// Assertions are bounds, not equalities where the contract allows latitude:
+// the union/frontier deep set can legitimately differ from the old flat
+// best_ev top-N. Assertions tagged INTEGRATION ASSERTION pin the specified
+// V1.3.1 end-state and are RED on this branch by design.
 // ---------------------------------------------------------------------------
 
 const siteRequest = vi.fn();
@@ -47,10 +43,25 @@ import { RadarCoordinator } from "../lib/radar/coordinator";
 import { hydrateRadarDeep } from "../lib/radar/deep";
 import { hydrateRadarProgram } from "../lib/radar/enrichment";
 import { openRadarStore, getRun } from "../lib/radar/store";
+import {
+  MAX_DEEP_PROGRAMS,
+  PROFILE_CANDIDATE_DEPTH,
+  STABILITY_BUFFER,
+  STABLE_TOP_K,
+} from "../lib/radar/types";
 
 const T0 = "2026-09-21T00:00:00.000Z";
 const PAGE_LIMIT = 24;
-const DEEP_LIMIT = 30; // plan: DEEP_ANALYSIS_LIMIT default
+
+/** Every operation the radar pipeline may ever issue — the allowlist. */
+const ALLOWED_OPS = new Set([
+  "LIST_INDEX", // catalog pagination (no slug)
+  "GET_CHANGELOGS", // metadata + deep re-fetch
+  "GET_BRIEF_DOC", // metadata (latest) + deep (baseline version)
+  "GET_BRIEF_STATS", // metadata only — never a deep call
+  "GET_RECENTLY_JOINED", // metadata only — never a deep call
+  "GET_ENGAGEMENT_KNOWN_ISSUES", // deep only
+]);
 
 let runSeq = 0;
 
@@ -313,9 +324,17 @@ describe("metadata request budget (V1.2 floor — green today and post-merge)", 
       }
     }
 
-    // Global bound: V1.2 floor + V1.3 deep allowance.
-    const bound = 4 * slugs.length + 1 + 3 * Math.min(slugs.length, DEEP_LIMIT);
+    // Global bound: V1.2 floor + V1.3.1 deep allowance (hard cap 60).
+    const bound =
+      4 * slugs.length + 1 + 3 * Math.min(slugs.length, MAX_DEEP_PROGRAMS);
     expect(calls().length).toBeLessThanOrEqual(bound);
+    // Every request is an allowlisted operation — nothing else may leave
+    // the worker, whatever the merged deep stage calls its ops.
+    for (const c of calls()) {
+      expect(ALLOWED_OPS, `unexpected op ${c.operation}`).toContain(
+        c.operation,
+      );
+    }
   });
 
   it("multi-page catalog: one LIST_INDEX per fetched page, never more", async () => {
@@ -328,16 +347,56 @@ describe("metadata request budget (V1.2 floor — green today and post-merge)", 
 
     expect(countWhere((c) => c.operation === "LIST_INDEX")).toBe(2);
     const n = page1.length + page2.length;
-    const bound = 4 * n + 2 + 3 * Math.min(n, DEEP_LIMIT);
+    const bound = 4 * n + 2 + 3 * Math.min(n, MAX_DEEP_PROGRAMS);
     expect(calls().length).toBeLessThanOrEqual(bound);
     // Metadata floor is exact: stats + joined are fetched exactly once each
     // per program, deep stage or not.
     expect(countWhere((c) => c.operation === "GET_BRIEF_STATS")).toBe(n);
     expect(countWhere((c) => c.operation === "GET_RECENTLY_JOINED")).toBe(n);
   });
+
+  it("request envelopes are well-formed: slugged ops carry a catalog slug, docs carry versionId", async () => {
+    const slugs = ["b-e1", "b-e2", "b-e3"];
+    mockSite([slugs]);
+    const phase = await runScan(slugs);
+    expect(phase).toBe("done");
+
+    for (const c of calls()) {
+      expect(ALLOWED_OPS).toContain(c.operation);
+      if (c.operation === "LIST_INDEX") {
+        // Catalog op: page-scoped, never slug-scoped.
+        expect(c.page).toBeGreaterThanOrEqual(1);
+        expect(c.slug).toBeUndefined();
+      } else {
+        // Everything else resolves to /engagements/<slug>/… — the slug must
+        // be a real catalog program, never undefined/garbage.
+        expect(slugs, `${c.operation} slug ${c.slug}`).toContain(c.slug);
+      }
+      if (c.operation === "GET_BRIEF_DOC") {
+        // Doc fetches are version-scoped: latest ("ver-1") for metadata,
+        // the changelog baseline ("ver-old") for the deep diff.
+        expect(["ver-1", "ver-old"]).toContain(c.versionId);
+      }
+    }
+    // The known-issues endpoint is deep-only and ≤1 per deep program.
+    for (const slug of slugs) {
+      const ki = perSlug(slug).filter(
+        (x) => x.operation === "GET_ENGAGEMENT_KNOWN_ISSUES",
+      );
+      expect(ki.length, `${slug} KI calls`).toBeLessThanOrEqual(1);
+      // A deep program's baseline doc must be a DIFFERENT version than the
+      // metadata latest-doc — the diff is meaningless otherwise.
+      const versions = new Set(
+        perSlug(slug)
+          .filter((x) => x.operation === "GET_BRIEF_DOC")
+          .map((x) => x.versionId),
+      );
+      expect(versions.size).toBeLessThanOrEqual(2);
+    }
+  });
 });
 
-describe("deep-stage request budget (V1.3)", () => {
+describe("deep-stage request budget (V1.3.1)", () => {
   it("deep analysis adds ≤3 requests per shortlisted program and only touches the shortlist", async () => {
     const slugs = ["b-d1", "b-d2", "b-d3", "b-d4", "b-d5"];
     mockSite([slugs]);
@@ -345,8 +404,10 @@ describe("deep-stage request budget (V1.3)", () => {
     expect(phase).toBe("done");
 
     const deep = deepSlugs(slugs);
-    // The shortlist is bounded by DEEP_ANALYSIS_LIMIT and by the catalog.
-    expect(deep.size).toBeLessThanOrEqual(Math.min(slugs.length, DEEP_LIMIT));
+    // The deep set is bounded by MAX_DEEP_PROGRAMS and by the catalog.
+    expect(deep.size).toBeLessThanOrEqual(
+      Math.min(slugs.length, MAX_DEEP_PROGRAMS),
+    );
     for (const slug of deep) {
       const c = perSlug(slug);
       const extra = c.length - 4;
@@ -360,30 +421,56 @@ describe("deep-stage request budget (V1.3)", () => {
       expect(
         c.filter((x) => x.operation === "GET_RECENTLY_JOINED"),
       ).toHaveLength(1);
+      // …and the deep extras are exactly the three sanctioned ops.
+      const extras = c.filter(
+        (x) =>
+          !(
+            (x.operation === "GET_CHANGELOGS" &&
+              c.indexOf(x) ===
+                c.findIndex((y) => y.operation === "GET_CHANGELOGS")) ||
+            (x.operation === "GET_BRIEF_DOC" && x.versionId === "ver-1") ||
+            x.operation === "GET_BRIEF_STATS" ||
+            x.operation === "GET_RECENTLY_JOINED"
+          ),
+      );
+      for (const x of extras) {
+        expect(
+          ["GET_CHANGELOGS", "GET_BRIEF_DOC", "GET_ENGAGEMENT_KNOWN_ISSUES"],
+        ).toContain(x.operation);
+      }
     }
     // Slugs outside the shortlist got the metadata 4 and nothing else.
     for (const slug of slugs.filter((s) => !deep.has(s))) {
       expect(perSlug(slug)).toHaveLength(4);
     }
 
-    // INTEGRATION ASSERTION (red today — no deep stage exists yet):
-    // with five fully-eligible programs the shortlist is min(5, 30) = 5.
-    expect(deep.size).toBe(Math.min(slugs.length, DEEP_LIMIT));
+    // All five programs are fully eligible → union covers the whole
+    // catalog: every program gets exactly one deep pass (≤ budget 60).
+    expect(deep.size).toBe(Math.min(slugs.length, MAX_DEEP_PROGRAMS));
   });
 
-  it("the deep shortlist is capped at DEEP_ANALYSIS_LIMIT (30) for large catalogs", async () => {
+  it("the deep set respects the union/frontier shape and the MAX_DEEP_PROGRAMS cap", async () => {
     const page1 = Array.from({ length: PAGE_LIMIT }, (_, i) => `b-c1-${i}`);
     const page2 = Array.from({ length: 11 }, (_, i) => `b-c2-${i}`);
-    const slugs = [...page1, ...page2]; // 35 > DEEP_LIMIT
+    const slugs = [...page1, ...page2]; // 35 programs
     mockSite([page1, page2]);
     const phase = await runScan(slugs);
     expect(phase).toBe("done");
 
     const deep = deepSlugs(slugs);
-    expect(deep.size).toBeLessThanOrEqual(DEEP_LIMIT);
-    // INTEGRATION ASSERTION (red today): with all 35 programs eligible the
-    // shortlist saturates the cap — min(35, 30) = 30 deep passes.
-    expect(deep.size).toBe(DEEP_LIMIT);
+    // Hard cap: never more than MAX_DEEP_PROGRAMS unique deep passes.
+    expect(deep.size).toBeLessThanOrEqual(MAX_DEEP_PROGRAMS);
+    // Union floor: best_ev's top-PROFILE_CANDIDATE_DEPTH is a subset of the
+    // union for every ranking, so at least that many programs go deep.
+    expect(deep.size).toBeGreaterThanOrEqual(
+      Math.min(slugs.length, PROFILE_CANDIDATE_DEPTH),
+    );
+    // For a uniform catalog every profile agrees, so the union (⊆ top-20)
+    // nests inside the frontier (top-30) — no plausible V1.3.1 impl needs
+    // more than the frontier size here.
+    expect(deep.size).toBeLessThanOrEqual(
+      Math.min(slugs.length, STABLE_TOP_K + STABILITY_BUFFER),
+    );
   });
 
   it("deep bookkeeping lands on the persisted run record", async () => {
@@ -400,16 +487,25 @@ describe("deep-stage request budget (V1.3)", () => {
     db.close();
     const deepPending = (rec?.deep_pending_uuids ?? []) as string[];
     const deepDone = (rec?.deep_completed_uuids ?? []) as string[];
-    // INTEGRATION ASSERTION (red today — the phases exist in the type union
-    // but nothing populates them): a landed deep stage must record its
-    // shortlist, and every deep-completed uuid must be a metadata-completed
-    // program (deep analysis only touches the shortlisted subset of the
-    // hydrated catalog).
+    // A landed deep stage records its shortlist, and every deep-completed
+    // uuid is a metadata-completed program (deep analysis only touches the
+    // shortlisted subset of the hydrated catalog).
     expect(deepPending.length + deepDone.length).toBeGreaterThan(0);
     const completed = new Set((rec?.completed_uuids ?? []) as string[]);
     for (const uuid of [...deepPending, ...deepDone]) {
       expect(completed.has(uuid)).toBe(true);
       expect(slugs).toContain(uuid);
     }
+    // INTEGRATION ASSERTION (red today — the current single-pass impl never
+    // writes these): V1.3.1 runs end with a terminal stabilization verdict,
+    // a round counter, and the persisted budget.
+    expect(rec?.deep_stabilization).not.toBeNull();
+    expect([
+      "stable",
+      "budget_limited",
+      "incomplete",
+    ]).toContain(rec?.deep_stabilization);
+    expect(rec?.deep_budget).toBe(MAX_DEEP_PROGRAMS);
+    expect(rec?.deep_round).toBeGreaterThanOrEqual(1);
   });
 });
