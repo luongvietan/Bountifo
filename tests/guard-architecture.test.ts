@@ -93,6 +93,9 @@ const SINK_REGISTRY: Record<string, string[]> = {
   // previous changelog doc) via the same allowlisted siteRequest.
   "lib/radar/knownIssues.ts": ["delegated:network"],
   "lib/radar/deep.ts": ["delegated:network"],
+  // V1.5 scope arc: the multi-publish baseline doc read (changelog/<id>.json)
+  // via the same allowlisted siteRequest (collection plane).
+  "lib/radar/arc.ts": ["delegated:network"],
   // Radar IndexedDB persistence (bce-radar database).
   "lib/radar/store.ts": ["idb"],
   // Same-origin dossier page fetch + extension messaging + job bookkeeping.
@@ -189,6 +192,7 @@ describe("architecture: radar collection-plane closure", () => {
     "lib/radar/enrichment.ts": ["delegated:network"],
     "lib/radar/knownIssues.ts": ["delegated:network"],
     "lib/radar/deep.ts": ["delegated:network"],
+    "lib/radar/arc.ts": ["delegated:network"],
     "lib/radar/store.ts": ["idb"],
   };
 
@@ -242,7 +246,7 @@ describe("architecture: radar collection-plane closure", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("the radar registry stays exactly: catalog/enrichment/deep network, store idb", () => {
+  it("the radar registry stays exactly: catalog/enrichment/deep/arc network, store idb", () => {
     for (const [file, sinks] of Object.entries(RADAR_REGISTRY)) {
       expect(
         SINK_REGISTRY[file],
