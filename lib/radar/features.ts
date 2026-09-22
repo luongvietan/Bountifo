@@ -52,6 +52,33 @@ const API_SURFACE_SIZE_K = 10;
 const RESEARCHER_COMPETITION_K = 500;
 // rewarded_activity saturation: n/(n+REWARDED_ACTIVITY_K).
 const REWARDED_ACTIVITY_K = 200;
+// submission_activity saturation: n/(n+SUBMISSION_ACTIVITY_K) over
+// statistics.valid_submission_count — a count of valid submissions, NOT a
+// count of researchers.
+const SUBMISSION_ACTIVITY_K = 500;
+
+/**
+ * Components of the research_saturation composite — the evidence a program
+ * has already drawn sustained research attention. `known_issue_density` is
+ * declared for V1.3 wiring: it has no cheap source yet, so it carries no
+ * V1.2 weight, but adding it later changes only the weight table.
+ */
+export type SaturationComponentKey =
+  | "recent_crowding"
+  | "submission_activity"
+  | "rewarded_activity"
+  | "known_issue_density";
+
+/** V1.2 pinned weights — initial deterministic calibration. */
+const SATURATION_WEIGHTS: Readonly<Record<string, number>> = {
+  recent_crowding: 0.3,
+  submission_activity: 0.4,
+  rewarded_activity: 0.3,
+} satisfies Partial<Record<SaturationComponentKey, number>>;
+
+// Fewer than two known components means one noisy metric masquerading as
+// saturation — the composite reports null instead.
+const MIN_SATURATION_COMPONENTS = 2;
 
 // Deterministic surface token sets — exact token membership only, so
 // substring traps ("capitol"⊅"api", "restaurant"⊅"rest") never match.
@@ -161,6 +188,8 @@ export function extractProgramFeatures(
       web_surface: unavailable("engagement_detail"),
       researcher_competition: unavailable("statistics"),
       rewarded_activity: unavailable("statistics"),
+      submission_activity: unavailable("statistics"),
+      research_saturation: unavailable("derived"),
       freshness: unavailable("engagement_detail"),
       safe_harbor: unavailable("engagement_detail"),
       target_data_quality: unavailable("derived"),
@@ -173,6 +202,26 @@ export function extractProgramFeatures(
   const inScopeGroups = inScopeOnly(detail.targetGroups);
   const inScopeTargets = inScopeOnly(detail.targets);
   const surfaces = classifySurfaces(inScopeTargets);
+  // Saturation inputs are computed once and shared: the standalone signals
+  // and the composite must read identical values.
+  const crowding = statSaturation(
+    detail,
+    "researchers_participating",
+    RESEARCHER_COMPETITION_K,
+    "researchers_participating_saturation",
+  );
+  const rewarded = statSaturation(
+    detail,
+    "vulnerabilities_rewarded",
+    REWARDED_ACTIVITY_K,
+    "vulnerabilities_rewarded_saturation",
+  );
+  const submissions = statSaturation(
+    detail,
+    "valid_submission_count",
+    SUBMISSION_ACTIVITY_K,
+    "submission_count_saturation",
+  );
 
   return {
     schema_version: 1,
@@ -182,18 +231,14 @@ export function extractProgramFeatures(
     api_surface: surfaces.api,
     api_surface_size: surfaces.apiSize,
     web_surface: surfaces.web,
-    researcher_competition: statSaturation(
-      detail,
-      "researchers_participating",
-      RESEARCHER_COMPETITION_K,
-      "researchers_participating_saturation",
-    ),
-    rewarded_activity: statSaturation(
-      detail,
-      "vulnerabilities_rewarded",
-      REWARDED_ACTIVITY_K,
-      "vulnerabilities_rewarded_saturation",
-    ),
+    researcher_competition: crowding,
+    rewarded_activity: rewarded,
+    submission_activity: submissions,
+    research_saturation: researchSaturation({
+      recent_crowding: crowding.value,
+      submission_activity: submissions.value,
+      rewarded_activity: rewarded.value,
+    }),
     freshness: freshness(detail, Date.parse(now)),
     safe_harbor: safeHarbor(detail),
     target_data_quality: targetDataQuality(inScopeTargets, inScopeGroups),
@@ -363,6 +408,31 @@ function classifySurfaces(inScopeTargets: ApiTarget[]): {
       "web_token_share",
     ),
   };
+}
+
+/**
+ * Research saturation composite — weighted mean over KNOWN components only
+ * (a missing component drops out of numerator AND denominator, never reads
+ * as 0). Returns null when fewer than MIN_SATURATION_COMPONENTS are known:
+ * a single noisy metric must not pose as saturation truth.
+ */
+function researchSaturation(
+  components: Partial<Record<SaturationComponentKey, number | null>>,
+): RadarSignal {
+  let weightSum = 0;
+  let weighted = 0;
+  let known = 0;
+  for (const [key, weight] of Object.entries(SATURATION_WEIGHTS)) {
+    const value = components[key as SaturationComponentKey];
+    if (value === null || value === undefined) continue;
+    known++;
+    weightSum += weight;
+    weighted += weight * value;
+  }
+  if (known < MIN_SATURATION_COMPONENTS) {
+    return sig(null, "derived", "insufficient_saturation_components");
+  }
+  return sig(weighted / weightSum, "derived", "research_saturation_composite");
 }
 
 /** n/(n+k) over a strict-parsed statistic; missing/unparseable → null. */

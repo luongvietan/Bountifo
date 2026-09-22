@@ -51,6 +51,14 @@ const REASON_RULES: Record<RadarFeatureKey, (s: number) => string | null> = {
   researcher_competition: (s) =>
     s <= 0.3 ? "COMPETITION_LOW" : s >= 0.7 ? "COMPETITION_HIGH" : null,
   rewarded_activity: (s) => (s >= 0.5 ? "ACTIVITY_PROVEN" : null),
+  submission_activity: (s) =>
+    s <= 0.25
+      ? "SUBMISSION_ACTIVITY_LOW"
+      : s >= 0.7
+        ? "SUBMISSION_ACTIVITY_HIGH"
+        : null,
+  research_saturation: (s) =>
+    s <= 0.25 ? "SATURATION_LOW" : s >= 0.7 ? "SATURATION_HIGH" : null,
   freshness: (s) =>
     s >= 0.85 ? "RECENTLY_UPDATED" : s <= 0.15 ? "STALE_PROGRAM" : null,
   safe_harbor: (s) =>
@@ -82,9 +90,13 @@ export const REASON_TEXT: Record<string, string> = {
   API_SURFACE_LARGE: "large API target count",
   WEB_SURFACE_HIGH: "substantial web surface",
   SURFACE_LARGE: "large in-scope surface",
-  COMPETITION_LOW: "low researcher competition",
-  COMPETITION_HIGH: "high researcher competition",
+  COMPETITION_LOW: "low recent crowding",
+  COMPETITION_HIGH: "high recent crowding",
   ACTIVITY_PROVEN: "proven reward activity",
+  SUBMISSION_ACTIVITY_LOW: "low submission volume",
+  SUBMISSION_ACTIVITY_HIGH: "high submission volume",
+  SATURATION_LOW: "low observed research saturation",
+  SATURATION_HIGH: "high observed research saturation",
   RECENTLY_UPDATED: "recently updated",
   STALE_PROGRAM: "stale program",
   SAFE_HARBOR_PRESENT: "safe harbor present",
@@ -106,6 +118,8 @@ const CAUTION_CODES: ReadonlySet<string> = new Set([
   "STALE_PROGRAM",
   "SAFE_HARBOR_ABSENT",
   "DATA_INCOMPLETE",
+  "SUBMISSION_ACTIVITY_HIGH",
+  "SATURATION_HIGH",
 ]);
 
 /** V1.1 weight normalization: bare number → benefit; object → declared

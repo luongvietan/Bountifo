@@ -120,6 +120,26 @@ describe("mapBriefDocument — degenerate inputs", () => {
     expect(detail.statistics.vulnerabilities_rewarded).toBeUndefined();
     expect(detail.statistics.average_payout).toBeUndefined();
   });
+
+  it("maps validSubmissionCount when populated; null/absent → no key", () => {
+    const populated = mapBriefDocument("webdotcom", briefDoc, {
+      validSubmissionCount: 1234,
+    });
+    expect(populated.statistics.valid_submission_count).toEqual({
+      value: "1234",
+      window: null,
+    });
+    // The researcher surface currently ships null — key stays absent.
+    const nulled = mapBriefDocument("webdotcom", briefDoc, {
+      validSubmissionCount: null,
+    });
+    expect(nulled.statistics.valid_submission_count).toBeUndefined();
+    // Count-typed fields never accept display text.
+    const junk = mapBriefDocument("webdotcom", briefDoc, {
+      validSubmissionCount: "many",
+    });
+    expect(junk.statistics.valid_submission_count).toBeUndefined();
+  });
 });
 
 describe("changelog version selection", () => {

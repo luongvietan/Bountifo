@@ -88,9 +88,10 @@ export const radarProgramSnapshotSchema = z
 export type RadarProgramSnapshot = z.infer<typeof radarProgramSnapshotSchema>;
 
 // ---------------------------------------------------------------------------
-// Feature vector — 13 signals in fixed order. accessibility,
+// Feature vector — 16 signals in fixed order. accessibility,
 // known_issue_density and authz_opportunity may legitimately be null in
-// Radar V1.
+// Radar V1; submission_activity is null whenever the site omits
+// valid_submission_count (the researcher surface currently ships it null).
 // ---------------------------------------------------------------------------
 
 export const programFeatureVectorSchema = z
@@ -104,6 +105,8 @@ export const programFeatureVectorSchema = z
     web_surface: radarSignalSchema,
     researcher_competition: radarSignalSchema,
     rewarded_activity: radarSignalSchema,
+    submission_activity: radarSignalSchema,
+    research_saturation: radarSignalSchema,
     freshness: radarSignalSchema,
     safe_harbor: radarSignalSchema,
     target_data_quality: radarSignalSchema,
@@ -119,7 +122,7 @@ export type RadarFeatureKey = Exclude<
   "schema_version"
 >;
 
-/** The 14 signal keys, in interface order. */
+/** The 16 signal keys, in interface order. */
 export const RADAR_FEATURE_KEYS: readonly RadarFeatureKey[] = [
   "reward_potential",
   "reward_breadth",
@@ -129,6 +132,8 @@ export const RADAR_FEATURE_KEYS: readonly RadarFeatureKey[] = [
   "web_surface",
   "researcher_competition",
   "rewarded_activity",
+  "submission_activity",
+  "research_saturation",
   "freshness",
   "safe_harbor",
   "target_data_quality",

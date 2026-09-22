@@ -553,6 +553,144 @@ describe("researcher_competition / rewarded_activity", () => {
   });
 });
 
+describe("submission_activity", () => {
+  it("saturates valid_submission_count as n/(n+500)", () => {
+    const v = vector(
+      detail({
+        statistics: {
+          valid_submission_count: { value: "500", window: null },
+        },
+      }),
+    );
+    expect(v.submission_activity).toEqual({
+      value: 0.5,
+      source: "statistics",
+      reason_code: "submission_count_saturation",
+    });
+  });
+
+  it("is 0 on a zero count, ~1 on thousands — never null-coerced", () => {
+    const zero = vector(
+      detail({
+        statistics: {
+          valid_submission_count: { value: "0", window: null },
+        },
+      }),
+    );
+    expect(zero.submission_activity.value).toBe(0);
+    const big = vector(
+      detail({
+        statistics: {
+          valid_submission_count: { value: "19,500", window: null },
+        },
+      }),
+    );
+    expect(big.submission_activity.value).toBe(0.975); // 19500/20000
+  });
+
+  it("is null on missing or unparseable values — never zero", () => {
+    const missing = vector(detail({ statistics: {} }));
+    expect(missing.submission_activity.value).toBeNull();
+    expect(missing.submission_activity.reason_code).toBe(
+      "submission_count_saturation",
+    );
+    const garbage = vector(
+      detail({
+        statistics: {
+          valid_submission_count: { value: "many", window: null },
+        },
+      }),
+    );
+    expect(garbage.submission_activity.value).toBeNull();
+  });
+
+  it("is monotone non-decreasing in the raw count", () => {
+    const counts = ["0", "10", "100", "500", "2,000", "10,000"];
+    let prev = -1;
+    for (const c of counts) {
+      const v = vector(
+        detail({
+          statistics: {
+            valid_submission_count: { value: c, window: null },
+          },
+        }),
+      );
+      expect(v.submission_activity.value).not.toBeNull();
+      expect(v.submission_activity.value!).toBeGreaterThanOrEqual(prev);
+      prev = v.submission_activity.value!;
+    }
+  });
+});
+
+describe("research_saturation composite", () => {
+  const stats = (over: Record<string, string>) =>
+    detail({
+      statistics: Object.fromEntries(
+        Object.entries(over).map(([k, val]) => [
+          k,
+          { value: val, window: null },
+        ]),
+      ),
+    });
+
+  it("weights recent_crowding 0.3 / submission_activity 0.4 / rewarded 0.3 over known", () => {
+    // crowding 1000→0.6667, submissions 500→0.5, rewarded 200→0.5
+    const v = vector(
+      stats({
+        researchers_participating: "1,000",
+        valid_submission_count: "500",
+        vulnerabilities_rewarded: "200",
+      }),
+    );
+    // (0.3*0.6667 + 0.4*0.5 + 0.3*0.5) / 1.0 = 0.55001… → 0.55
+    expect(v.research_saturation).toEqual({
+      value: 0.55,
+      source: "derived",
+      reason_code: "research_saturation_composite",
+    });
+  });
+
+  it("normalizes over known components only — a missing one is NOT zero", () => {
+    // crowding unknown; submissions 2000→0.8, rewarded 400→0.6667
+    const v = vector(
+      stats({
+        valid_submission_count: "2,000",
+        vulnerabilities_rewarded: "400",
+      }),
+    );
+    // (0.4*0.8 + 0.3*0.6667) / 0.7 = 0.32+0.20001… = 0.74287… → 0.7429
+    expect(v.research_saturation.value).toBe(0.7429);
+  });
+
+  it("is null when fewer than two components are known", () => {
+    const one = vector(stats({ vulnerabilities_rewarded: "400" }));
+    expect(one.research_saturation.value).toBeNull();
+    expect(one.research_saturation.reason_code).toBe(
+      "insufficient_saturation_components",
+    );
+    const none = vector(detail({ statistics: {} }));
+    expect(none.research_saturation.value).toBeNull();
+  });
+
+  it("never decreases when recent crowding rises, all else equal", () => {
+    const low = vector(
+      stats({
+        researchers_participating: "50",
+        vulnerabilities_rewarded: "400",
+      }),
+    );
+    const high = vector(
+      stats({
+        researchers_participating: "2,000",
+        vulnerabilities_rewarded: "400",
+      }),
+    );
+    expect(high.research_saturation.value!).toBeGreaterThan(
+      low.research_saturation.value!,
+    );
+  });
+});
+
 describe("freshness age bands (fixed now)", () => {
   it.each([
     [0, 1],
@@ -748,6 +886,8 @@ describe("detail:null snapshot", () => {
       "web_surface",
       "researcher_competition",
       "rewarded_activity",
+      "submission_activity",
+      "research_saturation",
       "freshness",
       "safe_harbor",
       "target_data_quality",

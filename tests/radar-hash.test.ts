@@ -173,6 +173,29 @@ describe("radarSourceHash", () => {
     expect(a).not.toBe(b);
   });
 
+  it("changes when each research-saturation input changes", async () => {
+    // Every raw input feeding submission_activity / rewarded_activity /
+    // recent crowding must move the hash — a silent stats change would let a
+    // stale saturation score survive a re-scan.
+    const a = await radarSourceHash({ catalog: catalog(), detail: detail() });
+    for (const key of [
+      "valid_submission_count",
+      "researchers_participating",
+      "vulnerabilities_rewarded",
+    ] as const) {
+      const b = await radarSourceHash({
+        catalog: catalog(),
+        detail: detail({
+          statistics: {
+            ...detail().statistics,
+            [key]: { value: "777", window: null },
+          },
+        }),
+      });
+      expect(b, `statistics.${key}`).not.toBe(a);
+    }
+  });
+
   it("changes when catalog identity fields change", async () => {
     const a = await radarSourceHash({ catalog: catalog(), detail: detail() });
     for (const overrides of [

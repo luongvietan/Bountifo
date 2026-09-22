@@ -548,7 +548,7 @@ describe("reason codes", () => {
     }
     // Pinned human templates from the plan.
     expect(REASON_TEXT.REWARD_HIGH).toBe("strong P1/P2 reward");
-    expect(REASON_TEXT.COMPETITION_LOW).toBe("low researcher competition");
+    expect(REASON_TEXT.COMPETITION_LOW).toBe("low recent crowding");
     expect(REASON_TEXT.UNKNOWN_ACCESSIBILITY).toBe(
       "accessibility unavailable",
     );
@@ -579,7 +579,7 @@ describe("explainScore", () => {
     );
     expect(explainScore(s)).toEqual([
       "+ strong P1/P2 reward",
-      "- high researcher competition",
+      "- high recent crowding",
       "- stale program",
       "- no safe harbor",
       "? accessibility unavailable",

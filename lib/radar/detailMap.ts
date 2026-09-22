@@ -96,6 +96,9 @@ const STAT_KEY_ALIASES: Record<string, { name: string; numeric: boolean }> = {
     name: "researchers_participating_saturation",
     numeric: true,
   },
+  // Observed in the live schema but shipped null on the researcher surface —
+  // mapped anyway so a populated value flows through without a code change.
+  validSubmissionCount: { name: "valid_submission_count", numeric: true },
 };
 
 function mapStatistics(

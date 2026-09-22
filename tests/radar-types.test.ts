@@ -18,6 +18,8 @@ const SIGNAL_KEYS = [
   "web_surface",
   "researcher_competition",
   "rewarded_activity",
+  "submission_activity",
+  "research_saturation",
   "freshness",
   "safe_harbor",
   "target_data_quality",
@@ -81,7 +83,7 @@ describe("radar profile ids", () => {
 });
 
 describe("radar feature keys", () => {
-  it("cover exactly the 14 signals, excluding schema_version", () => {
+  it("cover exactly the 16 signals, excluding schema_version", () => {
     expect([...RADAR_FEATURE_KEYS].sort()).toEqual([...SIGNAL_KEYS].sort());
     expect(RADAR_FEATURE_KEYS).not.toContain("schema_version");
   });
