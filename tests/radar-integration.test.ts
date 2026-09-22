@@ -149,9 +149,10 @@ function statsBody(seed: number): object {
 }
 
 /**
- * Recently-joined endpoint body — `total` is the researcher-competition
- * proxy. Slug(1) gets total 100 → saturation 100/600 ≈ 0.1667 →
- * COMPETITION_LOW and a non-provisional best_ev score.
+ * Recently-joined endpoint body — `total` is the recent-crowding proxy.
+ * Slug(1) gets total 100 → crowding 100/600 ≈ 0.1667; with rewarded_activity
+ * (3/203) the composite lands ≈ 0.0908 → SATURATION_LOW and a
+ * non-provisional best_ev score.
  */
 const JOINED_SLUG = slug(1);
 function joinedBody(s: string): object | null {
@@ -448,7 +449,7 @@ describe("radar scan integration — 12 discovered, 3 program-scoped failures", 
       const scoreRows = await store.getLatestScoreRowsForProfile(
         db,
         "best_ev",
-        "1.1.0",
+        "1.2.0",
       );
       expect(scoreRows).toHaveLength(12);
       const nonNull = scoreRows.filter((r) => r.score.score !== null);
@@ -465,8 +466,9 @@ describe("radar scan integration — 12 discovered, 3 program-scoped failures", 
       }
       // Stable reason codes on the pinned program (seed 28 → REWARD_MEDIUM
       // band, recently updated, web surface, full safe harbor). Its joined
-      // endpoint 404s, so researcher_competition is honestly UNKNOWN and the
-      // required_any group is empty → provisional.
+      // endpoint 404s, so only rewarded_activity is known — one component is
+      // below the composite floor → research_saturation is honestly UNKNOWN
+      // and the required_any group is empty → provisional.
       const pinned = scoreRows.find((r) => r.uuid === PINNED_SLUG);
       expect(pinned?.score.reasons).toEqual([
         "REWARD_MEDIUM",
@@ -474,16 +476,17 @@ describe("radar scan integration — 12 discovered, 3 program-scoped failures", 
         "WEB_SURFACE_HIGH",
         "REWARD_BROAD",
         "SAFE_HARBOR_PRESENT",
-        "UNKNOWN_RESEARCHER_COMPETITION",
+        "UNKNOWN_RESEARCH_SATURATION",
       ]);
       expect(pinned?.score.provisional).toBe(true);
-      // The joined-users slug carries a real competition proxy → known,
-      // non-provisional, and flagged COMPETITION_LOW (total 100 → 0.1667).
+      // The joined-users slug carries real crowding (total 100 → 0.1667) and
+      // a rewarded count → 2 known components → composite ≈ 0.0908, flagged
+      // SATURATION_LOW, non-provisional, recorded as a cost contribution.
       const joined = scoreRows.find((r) => r.uuid === JOINED_SLUG);
       expect(joined?.score.provisional).toBe(false);
-      expect(joined?.score.reasons).toContain("COMPETITION_LOW");
+      expect(joined?.score.reasons).toContain("SATURATION_LOW");
       expect(
-        joined?.score.components.researcher_competition?.direction,
+        joined?.score.components.research_saturation?.direction,
       ).toBe("cost");
 
       // ---- results table ---------------------------------------------------
@@ -703,7 +706,7 @@ describe("radar scan integration — determinism", () => {
         const rows = await store.getLatestScoreRowsForProfile(
           db,
           "best_ev",
-          "1.1.0",
+          "1.2.0",
         );
         const scoreByUuid = new Map(
           rows.map((r) => [r.uuid, r.score] as const),

@@ -197,8 +197,11 @@ describe("fixture signal semantics", () => {
       "reward_breadth",
       "meaningful_surface",
       "api_surface",
+      "api_surface_size",
       "web_surface",
       "researcher_competition",
+      "submission_activity",
+      "research_saturation",
       "rewarded_activity",
       "freshness",
       "safe_harbor",
@@ -225,7 +228,7 @@ describe("profile relationships over fixtures", () => {
     const hi = score("high-reward-api", "low_competition");
     const lo = score("low-reward-low-competition", "low_competition");
     expect(lo.score!).toBeGreaterThan(hi.score!);
-    expect(lo.reasons).toContain("COMPETITION_LOW");
+    expect(lo.reasons).toContain("SATURATION_LOW");
   });
 
   it("fresh_programs: fresh-program outranks stale-program", () => {
@@ -295,7 +298,7 @@ describe("reason-code hygiene over fixtures", () => {
       "UNKNOWN_REWARD_POTENTIAL",
       "UNKNOWN_MEANINGFUL_SURFACE",
       "UNKNOWN_FRESHNESS",
-      "UNKNOWN_RESEARCHER_COMPETITION",
+      "UNKNOWN_RESEARCH_SATURATION",
       "UNKNOWN_API_SURFACE",
       "UNKNOWN_WEB_SURFACE",
       "UNKNOWN_REWARD_BREADTH",

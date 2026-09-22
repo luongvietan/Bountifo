@@ -88,18 +88,28 @@ function programScoreFor(overrides: Partial<ProgramScore>): ProgramScore {
 // Task 10 — pinned profiles.
 // ---------------------------------------------------------------------------
 
-describe("RADAR_PROFILES pinned V1.1 calibration", () => {
-  it("contains exactly the six profiles of RADAR_PROFILE_IDS, all v1.1.0", () => {
+describe("RADAR_PROFILES pinned V1.2 calibration", () => {
+  it("contains exactly the six profiles of RADAR_PROFILE_IDS with per-profile versions", () => {
     expect(Object.keys(RADAR_PROFILES).sort()).toEqual(
       [...RADAR_PROFILE_IDS].sort(),
     );
+    // Saturation-touched profiles bumped to 1.2.0; untouched keep 1.1.0 —
+    // a version asserts the semantics, not a release train.
+    const versions: Record<string, string> = {
+      best_ev: "1.2.0",
+      low_competition: "1.2.0",
+      high_reward: "1.1.0",
+      authz_api: "1.2.0",
+      fresh_programs: "1.2.0",
+      easy_entry: "1.1.0",
+    };
     for (const id of RADAR_PROFILE_IDS) {
-      expect(getRadarProfile(id).version).toBe("1.1.0");
+      expect(getRadarProfile(id).version).toBe(versions[id]);
       expect(getRadarProfile(id).id).toBe(id);
     }
   });
 
-  it("best_ev — Best EV, minConfidence 0.6, freshness halved, competition is cost", () => {
+  it("best_ev — Best EV, minConfidence 0.6, saturation composite is the cost signal", () => {
     const p = getRadarProfile("best_ev");
     expect(p.label).toBe("Best EV");
     expect(p.minConfidence).toBe(0.6);
@@ -107,7 +117,7 @@ describe("RADAR_PROFILES pinned V1.1 calibration", () => {
       reward_potential: 3,
       meaningful_surface: 2,
       freshness: 0.75,
-      researcher_competition: { weight: 1.5, direction: "cost" },
+      research_saturation: { weight: 1.5, direction: "cost" },
       api_surface: 1,
       web_surface: 1,
       reward_breadth: 1,
@@ -115,28 +125,34 @@ describe("RADAR_PROFILES pinned V1.1 calibration", () => {
       safe_harbor: 0.5,
       target_data_quality: 0.5,
     });
+    // required_any falls back to the raw crowding signal and (future)
+    // known-issue density when the composite has < 2 components.
     expect(p.required_any).toEqual([
-      ["researcher_competition", "known_issue_density"],
+      ["research_saturation", "researcher_competition", "known_issue_density"],
     ]);
+    // No double counting: the composite's constituent is NOT also weighted.
+    expect(p.weights.researcher_competition).toBeUndefined();
   });
 
-  it("low_competition — Low Competition, minConfidence 0.5", () => {
+  it("low_competition — relabeled Low Saturation, minConfidence 0.5", () => {
     const p = getRadarProfile("low_competition");
-    expect(p.label).toBe("Low Competition");
+    expect(p.id).toBe("low_competition"); // persisted id unchanged
+    expect(p.label).toBe("Low Saturation");
     expect(p.minConfidence).toBe(0.5);
     expect(p.weights).toEqual({
-      researcher_competition: { weight: 3, direction: "cost" },
+      research_saturation: { weight: 3, direction: "cost" },
       freshness: 2,
       meaningful_surface: 1.5,
       reward_potential: 1,
       target_data_quality: 0.5,
     });
     expect(p.required_any).toEqual([
-      ["researcher_competition", "known_issue_density"],
+      ["research_saturation", "researcher_competition", "known_issue_density"],
     ]);
+    expect(p.weights.researcher_competition).toBeUndefined();
   });
 
-  it("high_reward — High Reward, minConfidence 0.5", () => {
+  it("high_reward — High Reward, minConfidence 0.5, untouched at 1.1.0", () => {
     const p = getRadarProfile("high_reward");
     expect(p.label).toBe("High Reward");
     expect(p.minConfidence).toBe(0.5);
@@ -149,7 +165,7 @@ describe("RADAR_PROFILES pinned V1.1 calibration", () => {
     expect(p.required_any).toEqual([["reward_potential"]]);
   });
 
-  it("authz_api — AuthZ/API, minConfidence 0.5, share+size split, authz_opportunity unweighted", () => {
+  it("authz_api — AuthZ/API, minConfidence 0.5, share+size split, saturation cost", () => {
     const p = getRadarProfile("authz_api");
     expect(p.label).toBe("AuthZ/API");
     expect(p.minConfidence).toBe(0.5);
@@ -160,7 +176,7 @@ describe("RADAR_PROFILES pinned V1.1 calibration", () => {
       reward_potential: 1.5,
       freshness: 1,
       safe_harbor: 0.5,
-      researcher_competition: { weight: 0.5, direction: "cost" },
+      research_saturation: { weight: 0.5, direction: "cost" },
     });
     expect(p.required_any).toEqual([
       ["api_surface", "api_surface_size"],
@@ -169,20 +185,20 @@ describe("RADAR_PROFILES pinned V1.1 calibration", () => {
     expect(p.weights.authz_opportunity).toBeUndefined();
   });
 
-  it("fresh_programs — Fresh Programs, minConfidence 0.4", () => {
+  it("fresh_programs — Fresh Programs, minConfidence 0.4, saturation cost", () => {
     const p = getRadarProfile("fresh_programs");
     expect(p.label).toBe("Fresh Programs");
     expect(p.minConfidence).toBe(0.4);
     expect(p.weights).toEqual({
       freshness: 5,
       meaningful_surface: 1,
-      researcher_competition: { weight: 1, direction: "cost" },
+      research_saturation: { weight: 1, direction: "cost" },
       reward_potential: 0.5,
     });
     expect(p.required_any).toEqual([["freshness"]]);
   });
 
-  it("easy_entry — Easy Entry, minConfidence 0.3", () => {
+  it("easy_entry — Easy Entry, minConfidence 0.3, untouched at 1.1.0", () => {
     const p = getRadarProfile("easy_entry");
     expect(p.label).toBe("Easy Entry");
     expect(p.minConfidence).toBe(0.3);
@@ -402,7 +418,7 @@ describe("scoreProgram math", () => {
     expect(s.schema_version).toBe(1);
     expect(s.engagement_uuid).toBe("uuid-abc");
     expect(s.profile).toBe("best_ev");
-    expect(s.scoring_version).toBe("1.1.0");
+    expect(s.scoring_version).toBe("1.2.0");
     expect(s.source_hash).toBe(snap.source_hash);
     expect(Object.keys(s.components)).toEqual(Object.keys(p.weights));
   });
@@ -429,6 +445,119 @@ describe("scoreProgram math", () => {
 });
 
 // ---------------------------------------------------------------------------
+// V1.2 — research saturation scoring semantics.
+// ---------------------------------------------------------------------------
+
+describe("research saturation scoring (V1.2)", () => {
+  // All weighted signals pinned equal except research_saturation.
+  const base: Partial<Record<RadarFeatureKey, number>> = {
+    reward_potential: 0.6,
+    meaningful_surface: 0.5,
+    freshness: 0.5,
+    api_surface: 0.4,
+    web_surface: 0.4,
+    reward_breadth: 0.5,
+    rewarded_activity: 0.5,
+    safe_harbor: 1,
+    target_data_quality: 1,
+  };
+
+  it("higher saturation never scores higher (best_ev)", () => {
+    const p = getRadarProfile("best_ev");
+    const snap = snapshot("u1");
+    let prev = Infinity;
+    for (const sat of [0, 0.25, 0.5, 0.75, 1]) {
+      const s = scoreProgram(
+        snap,
+        vector({ ...base, research_saturation: sat }),
+        p,
+      );
+      expect(s.score!).toBeLessThanOrEqual(prev);
+      prev = s.score!;
+    }
+    const low = scoreProgram(
+      snap,
+      vector({ ...base, research_saturation: 0 }),
+      p,
+    );
+    const high = scoreProgram(
+      snap,
+      vector({ ...base, research_saturation: 1 }),
+      p,
+    );
+    expect(low.score!).toBeGreaterThan(high.score!);
+  });
+
+  it("higher saturation never scores higher (low_competition)", () => {
+    const p = getRadarProfile("low_competition");
+    const snap = snapshot("u1");
+    const low = scoreProgram(
+      snap,
+      vector({ ...base, research_saturation: 0.1 }),
+      p,
+    );
+    const high = scoreProgram(
+      snap,
+      vector({ ...base, research_saturation: 0.9 }),
+      p,
+    );
+    expect(low.score!).toBeGreaterThan(high.score!);
+    // Saturation is the dominant weight here — the gap must be material.
+    expect(low.score! - high.score!).toBeGreaterThan(10);
+  });
+
+  it("unknown saturation never outperforms known-perfect low saturation", () => {
+    const p = getRadarProfile("low_competition");
+    const snap = snapshot("u1");
+    const perfect = scoreProgram(
+      snap,
+      vector({ ...base, research_saturation: 0 }),
+      p,
+    );
+    const unknown = scoreProgram(snap, vector({ ...base }), p);
+    // Removing a maximally-contributing cost component can only tie the
+    // score (at the 100 bound); coverage then breaks the tie honestly.
+    expect(perfect.score!).toBeGreaterThanOrEqual(unknown.score!);
+    expect(unknown.confidence).toBeLessThan(perfect.confidence);
+    expect(unknown.reasons).toContain("UNKNOWN_RESEARCH_SATURATION");
+  });
+
+  it("required_any falls back to researcher_competition when composite is null", () => {
+    const p = getRadarProfile("best_ev");
+    const snap = snapshot("u1");
+    // All three alternatives null → provisional.
+    expect(scoreProgram(snap, vector({ ...base }), p).provisional).toBe(true);
+    // Composite null but raw crowding known → group satisfied.
+    expect(
+      scoreProgram(
+        snap,
+        vector({ ...base, researcher_competition: 0.4 }),
+        p,
+      ).provisional,
+    ).toBe(false);
+    // Composite known → group satisfied regardless of constituents.
+    expect(
+      scoreProgram(snap, vector({ ...base, research_saturation: 0.4 }), p)
+        .provisional,
+    ).toBe(false);
+  });
+
+  it("saturation component is recorded as a cost contribution", () => {
+    const p = getRadarProfile("best_ev");
+    const s = scoreProgram(
+      snapshot("u1"),
+      vector({ ...base, research_saturation: 0.4 }),
+      p,
+    );
+    const comp = s.components["research_saturation"]!;
+    expect(comp.direction).toBe("cost");
+    expect(comp.weight).toBe(1.5);
+    expect(comp.signal).toBe(0.4);
+    expect(comp.contribution).toBeCloseTo(1.5 * 0.6, 4); // w × (1 − s)
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Task 12 — reason codes, text templates, explanation lines.
 // ---------------------------------------------------------------------------
 
@@ -441,7 +570,9 @@ describe("reason codes", () => {
         reward_potential: 0.9,
         meaningful_surface: 0.6,
         freshness: 0.9,
-        researcher_competition: 0.2,
+        research_saturation: 0.2,
+        // researcher_competition: set but UNWEIGHTED in best_ev v1.2 — no code.
+        researcher_competition: 0.9,
         api_surface: 0.5,
         web_surface: 0.4,
         reward_breadth: 0.7,
@@ -455,7 +586,7 @@ describe("reason codes", () => {
       "REWARD_HIGH",
       "SURFACE_LARGE",
       "RECENTLY_UPDATED",
-      "COMPETITION_LOW",
+      "SATURATION_LOW",
       "API_SURFACE_HIGH",
       "WEB_SURFACE_HIGH",
       "REWARD_BROAD",
@@ -480,6 +611,12 @@ describe("reason codes", () => {
     [{ researcher_competition: 0.7 }, "COMPETITION_HIGH"],
     [{ researcher_competition: 0.5 }, null],
     [{ rewarded_activity: 0.5 }, "ACTIVITY_PROVEN"],
+    [{ submission_activity: 0.7 }, "SUBMISSION_ACTIVITY_HIGH"],
+    [{ submission_activity: 0.25 }, "SUBMISSION_ACTIVITY_LOW"],
+    [{ submission_activity: 0.5 }, null],
+    [{ research_saturation: 0.25 }, "SATURATION_LOW"],
+    [{ research_saturation: 0.7 }, "SATURATION_HIGH"],
+    [{ research_saturation: 0.5 }, null],
     [{ freshness: 0.85 }, "RECENTLY_UPDATED"],
     [{ freshness: 0.15 }, "STALE_PROGRAM"],
     [{ freshness: 0.5 }, null],

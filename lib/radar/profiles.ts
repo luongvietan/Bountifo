@@ -37,26 +37,29 @@ export interface RadarProfile {
 }
 
 /**
- * V1.1 calibration — every profile is version "1.1.0" (direction-normalized
- * weights; best_ev freshness reduced; authz_api splits share vs size).
- * These weights are the controller's pinned calibration; do not retune
- * without a version bump.
+ * V1.2 calibration — profiles touched by Research Saturation are version
+ * "1.2.0" (cost weight moves from raw recent crowding to the composite
+ * `research_saturation`; low_competition relabels to Low Saturation).
+ * Untouched profiles keep "1.1.0" — a version asserts the semantics, not a
+ * release train. Do not retune without a version bump.
  */
 export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
   /**
    * Balanced expected-value hunter: reward first, then surface, a moderate
-   * cost weight on crowded programs, and a light recency factor (brief
-   * recency ≠ new opportunity — semantic diffing is not in V1).
+   * cost weight on observed research saturation, and a light recency factor
+   * (brief recency ≠ new opportunity — semantic diffing is not in V1). The
+   * composite replaces raw researcher_competition so crowding evidence is
+   * not double-counted.
    */
   best_ev: {
     id: "best_ev",
-    version: "1.1.0",
+    version: "1.2.0",
     label: "Best EV",
     weights: {
       reward_potential: 3,
       meaningful_surface: 2,
       freshness: 0.75,
-      researcher_competition: { weight: 1.5, direction: "cost" },
+      research_saturation: { weight: 1.5, direction: "cost" },
       api_surface: 1,
       web_surface: 1,
       reward_breadth: 1,
@@ -64,26 +67,31 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
       safe_harbor: 0.5,
       target_data_quality: 0.5,
     },
-    required_any: [["researcher_competition", "known_issue_density"]],
+    required_any: [
+      ["research_saturation", "researcher_competition", "known_issue_density"],
+    ],
     minConfidence: 0.6,
   },
   /**
-   * Uncrowded-program hunter: dominant cost weight on competition plus
-   * freshness and surface. This is NOT a duplicate-probability estimate —
-   * researcher_competition is only a recent-joiner proxy.
+   * Unsaturated-program hunter: dominant cost weight on the saturation
+   * composite plus freshness and surface. This is NOT a
+   * duplicate-probability estimate — saturation is observed attention, not
+   * proof that bugs are gone.
    */
   low_competition: {
     id: "low_competition",
-    version: "1.1.0",
-    label: "Low Competition",
+    version: "1.2.0",
+    label: "Low Saturation",
     weights: {
-      researcher_competition: { weight: 3, direction: "cost" },
+      research_saturation: { weight: 3, direction: "cost" },
       freshness: 2,
       meaningful_surface: 1.5,
       reward_potential: 1,
       target_data_quality: 0.5,
     },
-    required_any: [["researcher_competition", "known_issue_density"]],
+    required_any: [
+      ["research_saturation", "researcher_competition", "known_issue_density"],
+    ],
     minConfidence: 0.5,
   },
   /**
@@ -109,11 +117,12 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
    * because it is always null in V1 (no deterministic source exists until
    * deep program analysis lands). API surface is measured two ways so a
    * lone API target cannot fake breadth: share (`api_surface`) and size
-   * (`api_surface_size`, saturation over target count).
+   * (`api_surface_size`, saturation over target count). The small cost
+   * weight uses the saturation composite rather than raw crowding.
    */
   authz_api: {
     id: "authz_api",
-    version: "1.1.0",
+    version: "1.2.0",
     label: "AuthZ/API",
     weights: {
       api_surface: 1.5,
@@ -122,22 +131,23 @@ export const RADAR_PROFILES: Record<RadarProfileId, RadarProfile> = {
       reward_potential: 1.5,
       freshness: 1,
       safe_harbor: 0.5,
-      researcher_competition: { weight: 0.5, direction: "cost" },
+      research_saturation: { weight: 0.5, direction: "cost" },
     },
     required_any: [["api_surface", "api_surface_size"]],
     minConfidence: 0.5,
   },
   /**
-   * Recency hunter: freshness dominates; the rest is a light sanity floor.
+   * Recency hunter: freshness dominates; a light saturation cost replaces
+   * raw crowding so a recently-updated-but-saturated program still loses.
    */
   fresh_programs: {
     id: "fresh_programs",
-    version: "1.1.0",
+    version: "1.2.0",
     label: "Fresh Programs",
     weights: {
       freshness: 5,
       meaningful_surface: 1,
-      researcher_competition: { weight: 1, direction: "cost" },
+      research_saturation: { weight: 1, direction: "cost" },
       reward_potential: 0.5,
     },
     required_any: [["freshness"]],

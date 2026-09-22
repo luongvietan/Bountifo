@@ -222,7 +222,7 @@ describe("RadarCoordinator happy path", () => {
     const scoreRows = await store.getLatestScoreRowsForProfile(
       db,
       "best_ev",
-      "1.1.0",
+      "1.2.0",
     );
     const rowA1 = scoreRows.find((r) => r.uuid === "u-a1");
     expect(rowA1?.vector?.reward_potential.value).not.toBeNull();
@@ -467,7 +467,7 @@ describe("RadarCoordinator resume", () => {
     );
     // The resumed uuid was scored, not merely hydrated.
     expect(
-      await store.getLatestScoreRow(db, "u-g2", "best_ev", "1.1.0"),
+      await store.getLatestScoreRow(db, "u-g2", "best_ev", "1.2.0"),
     ).not.toBeNull();
     db.close();
     // coordA is intentionally left hung on `stuck` — it models the dead worker.
@@ -629,7 +629,7 @@ describe("RadarCoordinator queries", () => {
       "api_surface",
       "freshness",
       "meaningful_surface",
-      "researcher_competition",
+      "research_saturation",
       "reward_potential",
       "web_surface",
     ]);
@@ -713,7 +713,7 @@ describe("RadarCoordinator latest-run scoping", () => {
     // Non-destructive: the dropped program's cache rows are still stored…
     expect(await store.getCatalogItem(db, "u-s-old")).not.toBeNull();
     expect(
-      await store.getLatestScoreRow(db, "u-s-old", "best_ev", "1.1.0"),
+      await store.getLatestScoreRow(db, "u-s-old", "best_ev", "1.2.0"),
     ).not.toBeNull();
     db.close();
     // …but neither results nor drill-down surface it anymore.
@@ -729,7 +729,7 @@ describe("RadarCoordinator latest-run scoping", () => {
     const db = await store.openRadarStore();
     // Score rows really are in the DB…
     expect(
-      (await store.getLatestScoreRowsForProfile(db, "best_ev", "1.1.0"))
+      (await store.getLatestScoreRowsForProfile(db, "best_ev", "1.2.0"))
         .length,
     ).toBeGreaterThan(0);
     // …but with no run to scope them to, nothing ranks.
@@ -749,7 +749,7 @@ describe("RadarCoordinator latest-run scoping", () => {
     await seedCoord.waitForIdle();
     const db = await store.openRadarStore();
     expect(
-      await store.getLatestScoreRow(db, "u-empty-seed", "best_ev", "1.1.0"),
+      await store.getLatestScoreRow(db, "u-empty-seed", "best_ev", "1.2.0"),
     ).not.toBeNull();
 
     // The new latest run fails catalog discovery with zero uuids.

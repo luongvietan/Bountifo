@@ -70,11 +70,11 @@ export type SaturationComponentKey =
   | "known_issue_density";
 
 /** V1.2 pinned weights — initial deterministic calibration. */
-const SATURATION_WEIGHTS: Readonly<Record<string, number>> = {
+const SATURATION_WEIGHTS = {
   recent_crowding: 0.3,
   submission_activity: 0.4,
   rewarded_activity: 0.3,
-} satisfies Partial<Record<SaturationComponentKey, number>>;
+} as const satisfies Partial<Record<SaturationComponentKey, number>>;
 
 // Fewer than two known components means one noisy metric masquerading as
 // saturation — the composite reports null instead.

@@ -113,7 +113,9 @@ export interface RadarResultSignals {
   meaningful_surface: number | null;
   api_surface: number | null;
   web_surface: number | null;
-  researcher_competition: number | null;
+  /** The research-saturation composite — observed attention, not a
+   *  researcher count and not duplicate probability. */
+  research_saturation: number | null;
   freshness: number | null;
 }
 
@@ -121,6 +123,9 @@ export interface RadarResultSignals {
 export interface RadarProgramDetail {
   snapshot: RadarProgramSnapshot | null;
   score: ProgramScore | null;
+  /** The feature vector embedded on the score row — lets the detail pane
+   *  show unweighted signals (e.g. saturation inputs) without a re-read. */
+  vector: ProgramFeatureVector | null;
   explanation: string[];
   catalog: RadarCatalogItem | null;
 }
@@ -430,8 +435,8 @@ export class RadarCoordinator {
           meaningful_surface: vector?.meaningful_surface.value ?? null,
           api_surface: vector?.api_surface.value ?? null,
           web_surface: vector?.web_surface.value ?? null,
-          researcher_competition:
-            vector?.researcher_competition.value ?? null,
+          research_saturation:
+            vector?.research_saturation.value ?? null,
           freshness: vector?.freshness.value ?? null,
         },
       });
@@ -464,6 +469,7 @@ export class RadarCoordinator {
     return {
       snapshot,
       score,
+      vector: scoreRow?.vector ?? null,
       explanation: score === null ? [] : explainScore(score),
       catalog,
     };
