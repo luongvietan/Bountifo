@@ -285,8 +285,35 @@ function asIsoString(value: unknown, fallback: string): string {
 
 function isSummary(value: unknown): value is RadarScanSummary {
   if (value === null || typeof value !== "object") return false;
-  const status = (value as { status?: unknown }).status;
-  return status === "complete" || status === "partial" || status === "failed";
+  const v = value as Record<string, unknown>;
+  const status = v.status;
+  if (
+    status !== "complete" &&
+    status !== "partial" &&
+    status !== "failed"
+  ) {
+    return false;
+  }
+  // A valid status with garbage counts is not a summary — it's corrupt
+  // persisted data; drop it rather than render lies in the UI.
+  for (const key of [
+    "catalog_complete",
+    "discovered",
+    "enriched",
+    "enrichment_failed",
+    "scored",
+    "warnings",
+  ]) {
+    if (!(key in v)) return false;
+  }
+  return (
+    typeof v.catalog_complete === "boolean" &&
+    typeof v.discovered === "number" &&
+    typeof v.enriched === "number" &&
+    typeof v.enrichment_failed === "number" &&
+    typeof v.scored === "number" &&
+    Array.isArray(v.warnings)
+  );
 }
 
 const STABILIZATION_VALUES: ReadonlySet<string> = new Set([
@@ -321,16 +348,19 @@ function asDeepCandidates(value: unknown): DeepCandidate[] {
           typeof profile === "string" &&
           (RADAR_PROFILE_IDS as readonly string[]).includes(profile) &&
           typeof rank === "number" &&
-          Number.isFinite(rank)
+          Number.isInteger(rank) &&
+          rank >= 0
         ) {
           reasons.push({
             profile: profile as RadarProfileId,
-            metadata_rank: Math.floor(rank),
+            metadata_rank: rank,
           });
         }
       }
     }
-    out.push({ uuid, reasons });
+    // A candidate exists only because some profile window demanded it —
+    // an entry with no valid reason is corrupt persisted data; drop it.
+    if (reasons.length > 0) out.push({ uuid, reasons });
   }
   return out;
 }
@@ -1128,6 +1158,9 @@ export class RadarCoordinator {
   ): Promise<void> {
     if (run.phase !== "deep_enriching") return;
     await this.ensureCatalogItems(db, run, run.deep_pending_uuids);
+    // ensureCatalogItems may have re-enumerated after a store wipe, which
+    // rewinds the phase — bail out exactly like enrichPhase does.
+    if (run.phase !== "deep_enriching") return;
     if (run.cancel_requested) {
       this.markDeepIncomplete(run);
       run.phase = "cancelled";
@@ -1210,8 +1243,36 @@ export class RadarCoordinator {
         await this.checkpoint(db, run);
         return;
       }
+      // Contract validation: a mislabeled snapshot must never be persisted
+      // under the requested uuid's bookkeeping, and a deep payload under the
+      // UNCHANGED source_hash would overwrite the metadata snapshot row in
+      // place — silently reclassifying the metadata score as "deep". Both
+      // are plumbing bugs → fatal, same as a throw.
+      if (
+        enriched.uuid !== item.uuid ||
+        (enriched.deep != null &&
+          enriched.source_hash === snapshot.source_hash)
+      ) {
+        control.stopped = true;
+        this.addWarnings(run, [`${uuid}: invalid_deep_snapshot`]);
+        await this.checkpoint(db, run);
+        return;
+      }
+      if (enriched.source_hash === snapshot.source_hash) {
+        // deep == null and identical input hash — nothing new to store.
+        await markCompleted();
+        continue;
+      }
       await putSnapshot(db, enriched, this.deps.now());
-      if (enriched.deep != null) run.deep_enriched += 1;
+      // "Enriched" counts envelopes that gained real deep evidence — a
+      // wholly-failed envelope (both sub-sources non-complete) is honest
+      // bookkeeping, not enrichment.
+      if (
+        enriched.deep?.known_issues?.status === "complete" ||
+        enriched.deep?.semantic_diff?.status === "complete"
+      ) {
+        run.deep_enriched += 1;
+      }
       await markCompleted();
     }
   }

@@ -242,21 +242,28 @@ export async function getLatestScoreRowsByStage(
     }
     return deepHashes.get(`${row.uuid}${row.source_hash}`) === true;
   };
-  const latest = new Map<string, ScoreRow>(); // key: `${stage}${uuid}`
+  const latest = new Map<
+    string,
+    { row: ScoreRow; stage: RadarEvidenceLevel }
+  >();
   for (const row of candidates) {
     const stage: RadarEvidenceLevel =
       row.stage ??
       ((await snapshotHasDeep(row)) ? "deep" : "metadata");
     const key = `${stage}${row.uuid}`;
     const current = latest.get(key);
-    if (current === undefined || compareBookkeeping(row, current) > 0) {
-      latest.set(key, row);
+    if (
+      current === undefined ||
+      compareBookkeeping(row, current.row) > 0
+    ) {
+      latest.set(key, { row, stage });
     }
   }
   const out: StagedScoreRows = { metadata: [], deep: [] };
-  for (const [key, row] of latest) {
-    if (key.startsWith("deep")) out.deep.push(row);
-    else out.metadata.push(row);
+  for (const { row, stage } of latest.values()) {
+    // Bucket by the resolved stage value, never by key prefix — a stage
+    // must classify through the type, not through string matching.
+    out[stage].push(row);
   }
   return out;
 }
