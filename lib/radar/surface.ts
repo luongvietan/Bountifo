@@ -66,20 +66,71 @@ export function isHttpUrl(location: string | null): boolean {
 }
 
 /**
- * URL-shape API detection — V1.4 contract STUB (`return false`). Agent C
- * implements the pinned host/path token rules (API_HOST_TOKENS /
- * API_PATH_TOKENS over parseable http(s) URLs). Until then classification is
- * identical to the pre-V1.4 semantics: only exact token membership counts.
+ * URL-shape token sets — V1.4. Exact membership only (same discipline as
+ * tokenSet): `api.example.com` matches on host token "api", while
+ * `apiserver.example.com` and `capitol.example.com` never can.
+ * API_PATH_TOKENS includes the plurals API_HOST_TOKENS lacks — "/services"
+ * is an api path even though a "services." host is ambiguous.
+ */
+const API_HOST_TOKENS: ReadonlySet<string> = new Set([
+  "api",
+  "apis",
+  "graphql",
+  "grpc",
+  "gateway",
+  "rest",
+  "rpc",
+  "ws",
+  "webservice",
+  "service",
+]);
+const API_PATH_TOKENS: ReadonlySet<string> = new Set([
+  "api",
+  "graphql",
+  "graphiql",
+  "rest",
+  "rpc",
+  "webservice",
+  "service",
+  "services",
+]);
+
+/**
+ * URL-shape API detection — V1.4. True iff `location` parses (`new URL` on
+ * the trimmed string) with an http/https protocol AND either:
+ *   - the lowercased hostname, split on /[^a-z0-9]+/, contains an
+ *     API_HOST_TOKENS token ("api.acme.com", "internal-api.acme.com"), or
+ *   - the FIRST pathname segment is an API_PATH_TOKENS token
+ *     ("example.com/api/v1").
+ * Pinned conservatism: a bare version segment ("/v2/users") does NOT count,
+ * and an api token deeper than path segment 1 ("/docs/api") does NOT count.
+ * Non-URL locations ("api.example.com" with no scheme), non-http(s) schemes
+ * (mailto:, ftp:) and null all read false — shape only ever ADDS api
+ * classifications on top of tokenSet.
  */
 export function locationLooksApi(location: string | null): boolean {
-  return false;
+  if (location === null) return false;
+  let url: URL;
+  try {
+    url = new URL(location.trim());
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  for (const token of url.hostname.toLowerCase().split(/[^a-z0-9]+/)) {
+    if (API_HOST_TOKENS.has(token)) return true;
+  }
+  const firstSegment = url.pathname
+    .split("/")
+    .find((segment) => segment !== "");
+  return firstSegment !== undefined && API_PATH_TOKENS.has(firstSegment);
 }
 
 /**
- * One target → {api, web} flags: api = API token match (the
- * `locationLooksApi` URL-shape term lands with Agent C — stubbed false, so
- * today api = token match only); web = WEB token match OR the http(s)
- * fallback, which fires only when NEITHER class matched.
+ * One target → {api, web} flags: api = API token match OR an api-shaped
+ * http(s) `location` (V1.4 `locationLooksApi`); web = WEB token match OR the
+ * http(s) fallback, which fires only when NEITHER class matched — so an
+ * api-shaped URL counts as api, never double-counted as fallback web.
  */
 export function classifyTarget(target: ApiTarget): {
   api: boolean;
@@ -91,6 +142,6 @@ export function classifyTarget(target: ApiTarget): {
   const isWeb = intersects(tokens, WEB_TOKENS);
   return {
     api: isApi,
-    web: isWeb || (!isApi && !isWeb && isHttpUrl(target.location)),
+    web: isWeb || (!isApi && isHttpUrl(target.location)),
   };
 }
