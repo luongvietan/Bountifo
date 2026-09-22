@@ -18,7 +18,6 @@ import {
 } from "../lib/messages";
 import { JobCoordinator } from "../lib/job/coordinator";
 import { enumerateEngagementCatalog } from "../lib/radar/catalog";
-import { isOffscreenMessage } from "../lib/radar/offscreenProtocol";
 import { RadarCoordinator } from "../lib/radar/coordinator";
 import { hydrateRadarProgram } from "../lib/radar/enrichment";
 import { openRadarStore } from "../lib/radar/store";
@@ -259,11 +258,7 @@ export default defineBackground(() => {
     void ensureTrustedContexts();
   });
 
-  browser.runtime.onMessage.addListener((msg: unknown, sender) => {
-    // Offscreen-parser traffic is answered by the offscreen document itself.
-    // Responding "unknown_message" here would win the sendMessage race and
-    // starve the real reply.
-    if (isOffscreenMessage(msg)) return undefined;
-    return Promise.resolve(routeMessage(msg, sender));
-  });
+  browser.runtime.onMessage.addListener((msg: unknown, sender) =>
+    Promise.resolve(routeMessage(msg, sender)),
+  );
 });

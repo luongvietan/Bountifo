@@ -8,8 +8,10 @@ import { ApiError } from "./errors";
  * (Token key:secret credentials). That surface never exposes the researcher's
  * engagement catalog. The researcher view lives on the site itself:
  *
- *   GET /engagements.json?page=N   catalog index ({engagements, paginationMeta})
- *   GET /engagements/<slug>        engagement brief HTML
+ *   GET /engagements.json?page=N                    catalog index ({engagements, paginationMeta})
+ *   GET /engagements/<slug>/changelog.json          brief version list
+ *   GET /engagements/<slug>/changelog/<ver>.json    structured brief document
+ *   GET /engagements/<slug>/statistics.json         brief stats (rewards given, avg payout)
  *
  * Authentication is the browser session — requests carry
  * `credentials: "include"` so the SW fetch sends the bugcrowd.com cookies
@@ -25,7 +27,9 @@ import { ApiError } from "./errors";
 
 export type SiteRequestOptions =
   | { operation: "LIST_INDEX"; page?: number }
-  | { operation: "GET_BRIEF"; slug: string };
+  | { operation: "GET_CHANGELOGS"; slug: string }
+  | { operation: "GET_BRIEF_DOC"; slug: string; versionId: string }
+  | { operation: "GET_BRIEF_STATS"; slug: string };
 
 export interface SiteResponse<T> {
   data: T;
@@ -71,24 +75,30 @@ async function acquireRateSlot(): Promise<void> {
   }
 }
 
+function requireSlug(slug: unknown, operation: string): string {
+  if (typeof slug !== "string" || !/^[A-Za-z0-9_-]+$/.test(slug)) {
+    throw new TypeError(`siteRequest: ${operation} requires a slug`);
+  }
+  return slug;
+}
+
 function buildUrl(opts: SiteRequestOptions): string {
   switch (opts.operation) {
     case "LIST_INDEX":
       return `${BUGCROWD_SITE}/engagements.json?page=${opts.page ?? 1}`;
-    case "GET_BRIEF": {
-      const slug = opts.slug;
-      if (typeof slug !== "string" || !/^[A-Za-z0-9_-]+$/.test(slug)) {
-        throw new TypeError("siteRequest: GET_BRIEF requires a slug");
+    case "GET_CHANGELOGS":
+      return `${BUGCROWD_SITE}/engagements/${requireSlug(opts.slug, opts.operation)}/changelog.json`;
+    case "GET_BRIEF_DOC": {
+      const slug = requireSlug(opts.slug, opts.operation);
+      const versionId = opts.versionId;
+      if (typeof versionId !== "string" || !/^[A-Za-z0-9_-]+$/.test(versionId)) {
+        throw new TypeError("siteRequest: GET_BRIEF_DOC requires a versionId");
       }
-      return `${BUGCROWD_SITE}/engagements/${slug}`;
+      return `${BUGCROWD_SITE}/engagements/${slug}/changelog/${versionId}.json`;
     }
+    case "GET_BRIEF_STATS":
+      return `${BUGCROWD_SITE}/engagements/${requireSlug(opts.slug, opts.operation)}/statistics.json`;
   }
-}
-
-function acceptFor(opts: SiteRequestOptions): string {
-  return opts.operation === "LIST_INDEX"
-    ? "application/json"
-    : "text/html,application/xhtml+xml";
 }
 
 /** Bounded exponential backoff: base 500ms ×2^(n-1) + jitter 0–250ms. */
@@ -122,17 +132,10 @@ function isLoginRedirect(res: Response): boolean {
 }
 
 /**
- * Executes one allowlisted site read. LIST_INDEX resolves `data` as parsed
- * JSON (non-JSON bodies → invalid_response — e.g. a markup answer where the
- * index endpoint should be); GET_BRIEF resolves `data` as raw HTML text for
- * the offscreen parser.
+ * Executes one allowlisted site read. Every operation resolves `data` as
+ * parsed JSON; a non-JSON body (e.g. a markup answer where an API endpoint
+ * should be) → invalid_response.
  */
-export async function siteRequest(
-  opts: SiteRequestOptions & { operation: "LIST_INDEX" },
-): Promise<SiteResponse<unknown>>;
-export async function siteRequest(
-  opts: SiteRequestOptions & { operation: "GET_BRIEF" },
-): Promise<SiteResponse<string>>;
 export async function siteRequest(
   opts: SiteRequestOptions,
 ): Promise<SiteResponse<unknown>> {
@@ -146,7 +149,7 @@ export async function siteRequest(
       res = await fetch(url, {
         method: "GET",
         credentials: "include",
-        headers: { Accept: acceptFor(opts) },
+        headers: { Accept: "application/json" },
       });
     } catch {
       // Network failure. Static message only — a rejection may carry request
@@ -197,29 +200,25 @@ export async function siteRequest(
       throw new ApiError("http", `HTTP ${res.status}`, res.status);
     }
 
-    if (opts.operation === "LIST_INDEX") {
-      const contentType = res.headers.get("content-type") ?? "";
-      if (!contentType.includes("json")) {
-        throw new ApiError(
-          "invalid_response",
-          "response was not JSON",
-          res.status,
-        );
-      }
-      let parsed: unknown;
-      try {
-        parsed = await res.json();
-      } catch {
-        throw new ApiError(
-          "invalid_response",
-          "response was not valid JSON",
-          res.status,
-        );
-      }
-      return { data: parsed, status: res.status };
+    const contentType = res.headers.get("content-type") ?? "";
+    if (!contentType.includes("json")) {
+      throw new ApiError(
+        "invalid_response",
+        "response was not JSON",
+        res.status,
+      );
     }
-
-    return { data: await res.text(), status: res.status };
+    let parsed: unknown;
+    try {
+      parsed = await res.json();
+    } catch {
+      throw new ApiError(
+        "invalid_response",
+        "response was not valid JSON",
+        res.status,
+      );
+    }
+    return { data: parsed, status: res.status };
   }
   // Unreachable: the loop either returns or throws by MAX_ATTEMPTS.
   throw new ApiError("network", "request failed");

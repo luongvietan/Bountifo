@@ -10,7 +10,6 @@ import {
 } from "vitest";
 import { fakeBrowser } from "wxt/testing/fake-browser";
 import { BUGCROWD_SITE } from "../lib/constants";
-import type { ApiEngagementData } from "../lib/types";
 import type { CatalogScanResult } from "../lib/radar/catalog";
 import type { RadarCoordinatorDeps } from "../lib/radar/coordinator";
 import type {
@@ -23,10 +22,9 @@ import type {
 //
 // A REAL RadarCoordinator is wired to the real enumerate/hydrate functions
 // (→ real siteRequest → vi.stubGlobal fetch) and the real IndexedDB store
-// (fake-indexeddb). The only fakes are the network itself, the offscreen
-// parser bridge (no DOM/offscreen document exists in the service-worker-like
-// test env — the DOM collectors are covered end-to-end by
-// radar-detail-map.test.ts), and the injected now/newRunId determinism hooks.
+// (fake-indexeddb). The only fakes are the network itself and the injected
+// now/newRunId determinism hooks — the brief-doc mapper runs for real on the
+// same JSON shapes the live endpoints serve.
 //
 // Real timers are used: the 500-exhaustion retry backoff (~4s) runs for real
 // inside siteRequest — tests exercising it get an extended timeout.
@@ -34,26 +32,15 @@ import type {
 
 const T0 = "2026-09-21T00:00:00.000Z";
 
-vi.mock("../lib/radar/offscreen", () => ({
-  parseBriefHtml: vi.fn(),
-}));
-
 type CatalogModule = typeof import("../lib/radar/catalog");
 type EnrichmentModule = typeof import("../lib/radar/enrichment");
 type CoordinatorModule = typeof import("../lib/radar/coordinator");
 type StoreModule = typeof import("../lib/radar/store");
-type OffscreenModule = typeof import("../lib/radar/offscreen");
-type ErrorsModule = typeof import("../lib/api/errors");
 
 let catalog: CatalogModule;
 let enrichment: EnrichmentModule;
 let coordinator: CoordinatorModule;
 let store: StoreModule;
-let offscreen: OffscreenModule;
-// ApiError must come from the SAME module graph enrichment got after
-// resetModules() — a top-level import's class would fail its instanceof.
-let ApiError: ErrorsModule["ApiError"];
-let parseBrief: Mock<OffscreenModule["parseBriefHtml"]>;
 let fetchMock: ReturnType<typeof vi.fn>;
 let runSeq = 0;
 
@@ -64,15 +51,6 @@ function jsonResponse(
   return new Response(JSON.stringify(body), {
     status: init.status ?? 200,
     headers: { "content-type": "application/json" },
-  });
-}
-
-function htmlResponse(
-  init: { status?: number } = {},
-): Response {
-  return new Response("<html><body>brief</body></html>", {
-    status: init.status ?? 200,
-    headers: { "content-type": "text/html" },
   });
 }
 
@@ -94,55 +72,76 @@ function listRow(s: string, code: string): object {
   };
 }
 
-/** The ApiEngagementData the offscreen parser would produce for one slug. */
-function detailData(s: string, seed: number): ApiEngagementData {
-  const gid = `g-${s}`;
+/** Changelog list for a slug — one "Latest" version. */
+function changelogList(s: string): object {
   return {
-    uuid: s,
-    code: s,
-    name: `Program ${seed}`,
-    engagementType: "bug_bounty",
-    managedBounty: true,
-    lifecycleStatus: "running",
-    testingStart: null,
-    testingEnd: null,
-    testingPeriodLabel: null,
-    lastBriefUpdate: "2026-09-01T00:00:00.000Z",
-    lastStatusTransition: "2026-08-01T00:00:00.000Z",
-    safeHarborLevel: "full_safe_harbor",
-    statistics: {
-      researchers_participating: {
-        value: String(10 + seed * 7),
-        window: null,
+    changelogs: [
+      {
+        id: `v-${s}`,
+        changelogState: "Latest",
+        publishedAt: "2026-09-01T00:00:00.000Z",
       },
-      vulnerabilities_rewarded: {
-        value: String(seed * 3),
-        window: "last_90_days",
+    ],
+  };
+}
+
+/**
+ * The structured changelog document for one slug, shaped like the real
+ * endpoint (fixtures/radar/site/webdotcom-brief-doc.json). `seed` parameterizes
+ * the reward tiers — seed 28 → p1 $29,000 clamps the reward curve to 1.0 and
+ * the tier blend lands at 0.6121 → REWARD_MEDIUM.
+ */
+function briefDoc(s: string, seed: number): object {
+  return {
+    id: `v-${s}`,
+    publishedAt: "2026-09-01T00:00:00.000Z",
+    lastTransitionAt: "2026-08-01T00:00:00.000Z",
+    statusLabel: "In progress",
+    participation: "open",
+    engagementTypeDetail: { productLabel: "Bug Bounty" },
+    data: {
+      brief: {
+        name: `Program ${seed}`,
+        safeHarborStatus: { status: "full_safe_harbor" },
       },
+      engagement: {
+        code: s,
+        state: "in_progress",
+        startsAt: "2020-01-01T00:00:00Z",
+        endsAt: null,
+      },
+      scope: [
+        {
+          id: `g-${s}`,
+          name: "Web scope",
+          inScope: true,
+          description: null,
+          rewardRange: {
+            p1MaxCents: (1000 + seed * 1000) * 100,
+            p2MaxCents: 500 * 100,
+            p3MaxCents: 100 * 100,
+          },
+          targets: [
+            {
+              id: `t-${s}`,
+              uri: `https://t${seed}.example.com`,
+              name: `site-${seed}`,
+              category: "website",
+              tags: [],
+            },
+          ],
+        },
+      ],
     },
-    targetGroups: [
-      {
-        id: gid,
-        name: "Web scope",
-        inScope: true,
-        description: null,
-        // seed 28 → p1 29000 clamps the reward curve to 1.0; the tier blend
-        // lands at 0.6121 → REWARD_MEDIUM.
-        rewards: { p1: 1000 + seed * 1000, p2: 500, p3: 100, p4: null, p5: null },
-      },
-    ],
-    targets: [
-      {
-        id: `t-${s}`,
-        groupId: gid,
-        location: `https://t${seed}.example.com`,
-        name: `site-${seed}`,
-        category: "website",
-        tags: [],
-        inScope: true,
-      },
-    ],
-    observedApiVersion: null,
+  };
+}
+
+/** Statistics endpoint body — the site surface has no participant count. */
+function statsBody(seed: number): object {
+  return {
+    rewardedVulnerabilities: seed * 3,
+    averagePayout: "$2,000",
+    validationWithin: "12 days",
   };
 }
 
@@ -212,26 +211,32 @@ function listCalls(): unknown[][] {
   );
 }
 
-function briefCallsFor(s: string): unknown[][] {
+/** Changelog-list calls for a slug — the first of the three detail fetches. */
+function changelogCallsFor(s: string): unknown[][] {
   return fetchMock.mock.calls.filter((c) =>
-    String(c[0]).endsWith(`/engagements/${s}`),
+    String(c[0]).endsWith(`/engagements/${s}/changelog.json`),
   );
 }
 
 // ---------------------------------------------------------------------------
-// The scenario: page 1 = 25 rows, page 2 = 3 rows → 28 unique.
-// 25 hydrate OK; slug(10) → 403, slug(11) → offscreen parse failure,
-// slug(12) → 500 always.
+// The scenario: page 1 = 10 rows, page 2 = 2 rows → 12 unique.
+// 9 hydrate OK; slug(10) → 403, slug(11) → malformed doc, slug(12) → 500
+// always. 12 programs × 3 fetches stays inside the 60 req/min rate bucket.
 // ---------------------------------------------------------------------------
 
-const MAIN_SLUGS = Array.from({ length: 28 }, (_, i) => slug(i + 1));
+const MAIN_SLUGS = Array.from({ length: 12 }, (_, i) => slug(i + 1));
 const FORBIDDEN_SLUG = slug(10);
 const MALFORMED_SLUG = slug(11);
 const FLAKY_SLUG = slug(12);
 const FAILED_SLUGS = [FORBIDDEN_SLUG, MALFORMED_SLUG, FLAKY_SLUG];
+// The reward-band pinning slug gets seed 28 (p1 $29k → curve clamp 1.0 →
+// blend 0.6121 → REWARD_MEDIUM) regardless of its catalog position.
+const PINNED_SLUG = slug(9);
+const seedFor = (s: string): number =>
+  s === PINNED_SLUG ? 28 : MAIN_SLUGS.indexOf(s) + 1;
 
 /**
- * Router for the 28-program scenario. `flaky500` toggles the slug(12) 500
+ * Router for the 12-program scenario. `flaky500` toggles the slug(12) 500
  * exhaustion — disabled for the determinism test, whose two full runs would
  * otherwise spend the shared 60 req/min rate bucket on retry attempts.
  */
@@ -245,50 +250,62 @@ function mainScenarioFetch(
     if (page === 1) {
       return Promise.resolve(
         jsonResponse({
-          engagements: MAIN_SLUGS.slice(0, 25).map((s, i) =>
+          engagements: MAIN_SLUGS.slice(0, 10).map((s, i) =>
             listRow(s, `prog-${i + 1}`),
           ),
-          paginationMeta: { limit: 25, totalCount: 28 },
+          paginationMeta: { limit: 10, totalCount: 12 },
         }),
       );
     }
     if (page === 2) {
       return Promise.resolve(
         jsonResponse({
-          engagements: MAIN_SLUGS.slice(25).map((s, i) =>
-            listRow(s, `prog-${i + 26}`),
+          engagements: MAIN_SLUGS.slice(10).map((s, i) =>
+            listRow(s, `prog-${i + 11}`),
           ),
-          paginationMeta: { limit: 25, totalCount: 28 },
+          paginationMeta: { limit: 10, totalCount: 12 },
         }),
       );
     }
     return Promise.resolve(
-      jsonResponse({ engagements: [], paginationMeta: { limit: 25 } }),
+      jsonResponse({ engagements: [], paginationMeta: { limit: 10 } }),
     );
   }
-  const s = /\/engagements\/([A-Za-z0-9_-]+)$/.exec(url)?.[1] ?? "";
-  if (s === FORBIDDEN_SLUG) {
-    return Promise.resolve(htmlResponse({ status: 403 }));
-  }
-  if (s === FLAKY_SLUG && flaky500) {
-    return Promise.resolve(htmlResponse({ status: 500 }));
-  }
-  return Promise.resolve(htmlResponse());
-}
 
-/**
- * parseBriefHtml behavior for the scenario: slug(11)'s document parses as a
- * malformed brief (the offscreen bridge reports invalid_response), every
- * other slug maps to its seeded detail.
- */
-function mainScenarioParse(s: string): Promise<ApiEngagementData> {
-  if (s === MALFORMED_SLUG) {
-    return Promise.reject(
-      new ApiError("invalid_response", "offscreen parse failed"),
-    );
+  const listSlug = /\/engagements\/([A-Za-z0-9_-]+)\/changelog\.json$/.exec(
+    url,
+  )?.[1];
+  if (listSlug !== undefined) {
+    if (listSlug === FORBIDDEN_SLUG) {
+      return Promise.resolve(jsonResponse({ error: "forbidden" }, { status: 403 }));
+    }
+    if (listSlug === FLAKY_SLUG && flaky500) {
+      return Promise.resolve(jsonResponse({ error: "boom" }, { status: 500 }));
+    }
+    return Promise.resolve(jsonResponse(changelogList(listSlug)));
   }
-  const seed = MAIN_SLUGS.indexOf(s) + 1;
-  return Promise.resolve(detailData(s, seed));
+
+  const docMatch =
+    /\/engagements\/([A-Za-z0-9_-]+)\/changelog\/[A-Za-z0-9_-]+\.json$/.exec(
+      url,
+    );
+  if (docMatch !== null) {
+    const s = docMatch[1]!;
+    if (s === MALFORMED_SLUG) {
+      // Doc missing data.scope — the mapper reports invalid_response.
+      return Promise.resolve(jsonResponse({ id: `v-${s}` }));
+    }
+    return Promise.resolve(jsonResponse(briefDoc(s, seedFor(s))));
+  }
+
+  const statsMatch = /\/engagements\/([A-Za-z0-9_-]+)\/statistics\.json$/.exec(
+    url,
+  );
+  if (statsMatch !== null) {
+    return Promise.resolve(jsonResponse(statsBody(seedFor(statsMatch[1]!))));
+  }
+
+  return Promise.resolve(jsonResponse({ error: "not found" }, { status: 404 }));
 }
 
 /** Serialized contents of every persisted store — for the secret scan. */
@@ -312,11 +329,6 @@ beforeEach(async () => {
   enrichment = await import("../lib/radar/enrichment");
   store = await import("../lib/radar/store");
   coordinator = await import("../lib/radar/coordinator");
-  offscreen = await import("../lib/radar/offscreen");
-  ApiError = (await import("../lib/api/errors")).ApiError;
-  parseBrief = offscreen.parseBriefHtml as Mock<
-    OffscreenModule["parseBriefHtml"]
-  >;
   await wipeRadarDb();
 });
 
@@ -324,14 +336,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("radar scan integration — 28 discovered, 3 program-scoped failures", () => {
+describe("radar scan integration — 12 discovered, 3 program-scoped failures", () => {
   it(
     "runs catalog → enrich → score end to end with a partial summary",
     async () => {
       fetchMock.mockImplementation((input: unknown) =>
         mainScenarioFetch(String(input)),
       );
-      parseBrief.mockImplementation((s) => mainScenarioParse(s));
       const { deps } = realDeps();
       const coord = new coordinator.RadarCoordinator(deps);
 
@@ -343,12 +354,12 @@ describe("radar scan integration — 28 discovered, 3 program-scoped failures", 
       expect(run.summary).toMatchObject({
         status: "partial",
         catalog_complete: true,
-        discovered: 28,
-        enriched: 25,
+        discovered: 12,
+        enriched: 9,
         enrichment_failed: 3,
         // scored counts every completed uuid — the 3 failed enrichments get
-        // null-score rows; 25 of them are real scores.
-        scored: 28,
+        // null-score rows; 9 of them are real scores.
+        scored: 12,
       });
       for (const [s, kind] of [
         [FORBIDDEN_SLUG, "forbidden"],
@@ -359,12 +370,12 @@ describe("radar scan integration — 28 discovered, 3 program-scoped failures", 
       }
 
       // ---- catalog ordering + wire calls --------------------------------
-      // Exactly two LIST_INDEX calls; 25+? brief fetches — the 500 case is
-      // retried to MAX_ATTEMPTS (4), the other failures are one-shot.
+      // Exactly two LIST_INDEX calls. The flaky slug's changelog list is
+      // retried to MAX_ATTEMPTS (4); other failures are one-shot.
       expect(listCalls()).toHaveLength(2);
-      expect(briefCallsFor(FORBIDDEN_SLUG)).toHaveLength(1);
-      expect(briefCallsFor(MALFORMED_SLUG)).toHaveLength(1);
-      expect(briefCallsFor(FLAKY_SLUG)).toHaveLength(4);
+      expect(changelogCallsFor(FORBIDDEN_SLUG)).toHaveLength(1);
+      expect(changelogCallsFor(MALFORMED_SLUG)).toHaveLength(1);
+      expect(changelogCallsFor(FLAKY_SLUG)).toHaveLength(4);
       // The pipeline really was session-authenticated: every request carries
       // cookies and there is no credential header at all.
       for (const call of fetchMock.mock.calls) {
@@ -385,7 +396,7 @@ describe("radar scan integration — 28 discovered, 3 program-scoped failures", 
       expect(catalogRows.map((i) => i.uuid).sort()).toEqual(
         [...MAIN_SLUGS].sort(),
       );
-      expect(new Set(catalogRows.map((i) => i.uuid)).size).toBe(28);
+      expect(new Set(catalogRows.map((i) => i.uuid)).size).toBe(12);
 
       // ---- snapshots -----------------------------------------------------
       for (const s of MAIN_SLUGS) {
@@ -416,9 +427,9 @@ describe("radar scan integration — 28 discovered, 3 program-scoped failures", 
         "best_ev",
         "1.0.0",
       );
-      expect(scoreRows).toHaveLength(28);
+      expect(scoreRows).toHaveLength(12);
       const nonNull = scoreRows.filter((r) => r.score.score !== null);
-      expect(nonNull).toHaveLength(25); // the brief's "25 scoreable"
+      expect(nonNull).toHaveLength(9); // the scenario's "9 scoreable"
       for (const s of FAILED_SLUGS) {
         const row = scoreRows.find((r) => r.uuid === s);
         expect(row?.score.score).toBeNull();
@@ -429,33 +440,35 @@ describe("radar scan integration — 28 discovered, 3 program-scoped failures", 
           row?.score.reasons.every((c) => c.startsWith("UNKNOWN_")),
         ).toBe(true);
       }
-      // Stable reason codes on a known-successful program (seed 28 →
-      // REWARD_MEDIUM band, recently updated, web surface, full safe harbor).
-      const seed28 = scoreRows.find((r) => r.uuid === slug(28));
-      expect(seed28?.score.reasons).toEqual([
+      // Stable reason codes on the pinned program (seed 28 → REWARD_MEDIUM
+      // band, recently updated, web surface, full safe harbor). The site
+      // surface exposes no participant count, so researcher_competition is
+      // honestly UNKNOWN.
+      const pinned = scoreRows.find((r) => r.uuid === PINNED_SLUG);
+      expect(pinned?.score.reasons).toEqual([
         "REWARD_MEDIUM",
         "RECENTLY_UPDATED",
-        "COMPETITION_LOW",
         "WEB_SURFACE_HIGH",
         "REWARD_BROAD",
         "SAFE_HARBOR_PRESENT",
+        "UNKNOWN_RESEARCHER_COMPETITION",
       ]);
 
       // ---- results table ---------------------------------------------------
       const results = await coord.getResults("best_ev", 200);
-      expect(results).toHaveLength(28);
+      expect(results).toHaveLength(12);
       const eligible = results.filter((r) => r.eligible);
-      expect(eligible).toHaveLength(25);
+      expect(eligible).toHaveLength(9);
       // Eligible rows sorted by score DESC; failed programs sink to the end
       // ordered by uuid ASC.
       const eligibleScores = eligible.map((r) => r.score!);
       expect([...eligibleScores].sort((a, b) => b - a)).toEqual(
         eligibleScores,
       );
-      expect(results.slice(25).map((r) => r.uuid)).toEqual(
+      expect(results.slice(9).map((r) => r.uuid)).toEqual(
         [...FAILED_SLUGS].sort(),
       );
-      expect(results.slice(25).every((r) => r.score === null)).toBe(true);
+      expect(results.slice(9).every((r) => r.score === null)).toBe(true);
 
       // ---- per-program drill-down ------------------------------------------
       const detail = await coord.getProgram(FORBIDDEN_SLUG, "best_ev");
@@ -482,7 +495,7 @@ describe("radar scan integration — 28 discovered, 3 program-scoped failures", 
   );
 
   it("dedupes a repeated slug, keeping the first-seen catalog row", async () => {
-    const page1 = Array.from({ length: 25 }, (_, i) =>
+    const page1 = Array.from({ length: 8 }, (_, i) =>
       listRow(slug(101 + i), `dup-${101 + i}`),
     );
     const dupSlug = slug(101);
@@ -498,25 +511,24 @@ describe("radar scan integration — 28 discovered, 3 program-scoped failures", 
         return Promise.resolve(
           jsonResponse({
             engagements: page === "1" ? page1 : page2,
-            paginationMeta: { limit: 25 },
+            paginationMeta: { limit: 8 },
           }),
         );
       }
-      return Promise.resolve(htmlResponse());
+      return Promise.resolve(mainScenarioFetch(url, { flaky500: false }));
     });
-    parseBrief.mockImplementation((s) => Promise.resolve(detailData(s, 1)));
     const { deps } = realDeps();
     const coord = new coordinator.RadarCoordinator(deps);
     const run = await coord.start();
     await coord.waitForIdle();
 
     expect(run.phase).toBe("done");
-    expect(run.discovered).toBe(27); // 28 raw rows, 1 duplicate dropped
+    expect(run.discovered).toBe(10); // 11 raw rows, 1 duplicate dropped
     expect(run.summary?.status).toBe("complete");
 
     const db = await store.openRadarStore();
     const rows = await store.getCatalog(db);
-    expect(rows).toHaveLength(27);
+    expect(rows).toHaveLength(10);
     // First occurrence wins: position 0 keeps the page-1 name (the code
     // field carries the slug itself on the site surface, so `name` is the
     // marker that distinguishes the two duplicate rows).
@@ -547,18 +559,17 @@ describe("radar scan integration — checkpoint/resume", () => {
           }),
         );
       }
-      const s = /\/engagements\/([A-Za-z0-9_-]+)$/.exec(url)?.[1];
+      const s = /\/engagements\/([A-Za-z0-9_-]+)\/changelog\.json$/.exec(
+        url,
+      )?.[1];
       if (s === stuckSlug && hangFirstGet) {
         // Simulates the service worker dying mid-enrich: the request never
         // returns, the run record stays "enriching" with prog-204 pending.
         hangFirstGet = false;
         return new Promise<Response>(() => {});
       }
-      return Promise.resolve(htmlResponse());
+      return mainScenarioFetch(url, { flaky500: false });
     });
-    parseBrief.mockImplementation((s) =>
-      Promise.resolve(detailData(s, resumeSlugs.indexOf(s) + 1)),
-    );
 
     const a = realDeps();
     const coordA = new coordinator.RadarCoordinator(a.deps);
@@ -586,8 +597,9 @@ describe("radar scan integration — checkpoint/resume", () => {
     expect(listCalls()).toHaveLength(1);
     expect(b.hydrate).toHaveBeenCalledTimes(1);
     expect(b.hydrate.mock.calls[0]![0].uuid).toBe(stuckSlug);
-    // The stuck slug was fetched twice across the "two workers' lifetimes".
-    expect(briefCallsFor(stuckSlug)).toHaveLength(2);
+    // The stuck slug's changelog was fetched twice across the "two workers'
+    // lifetimes".
+    expect(changelogCallsFor(stuckSlug)).toHaveLength(2);
 
     const rec = await store.getRun(db, run.run_id);
     expect(rec?.phase).toBe("done");
@@ -606,12 +618,48 @@ describe("radar scan integration — determinism", () => {
   it(
     "identical fixture input → identical scores and rank order on a fresh DB",
     async () => {
-      // The 500-exhaustion case is disabled here: 30 requests per run stay
-      // inside the 60 req/min bucket, and no retry backoff is spent.
-      fetchMock.mockImplementation((input: unknown) =>
-        mainScenarioFetch(String(input), { flaky500: false }),
-      );
-      parseBrief.mockImplementation((s) => mainScenarioParse(s));
+      // A small dedicated scenario: 5 programs × 3 fetches + 1 list call =
+      // 16 requests per run — two runs stay inside the 60 req/min bucket
+      // and no retry backoff is spent.
+      const DET_SLUGS = Array.from({ length: 5 }, (_, i) => slug(i + 50));
+      fetchMock.mockImplementation((input: unknown) => {
+        const url = String(input);
+        if (url.startsWith(`${BUGCROWD_SITE}/engagements.json?`)) {
+          return Promise.resolve(
+            jsonResponse({
+              engagements: DET_SLUGS.map((s, i) => listRow(s, `det-${i}`)),
+              paginationMeta: { limit: 25 },
+            }),
+          );
+        }
+        const listSlug = /\/engagements\/([A-Za-z0-9_-]+)\/changelog\.json$/.exec(
+          url,
+        )?.[1];
+        if (listSlug !== undefined) {
+          return Promise.resolve(jsonResponse(changelogList(listSlug)));
+        }
+        const docMatch =
+          /\/engagements\/([A-Za-z0-9_-]+)\/changelog\/[A-Za-z0-9_-]+\.json$/.exec(
+            url,
+          );
+        if (docMatch !== null) {
+          const s = docMatch[1]!;
+          return Promise.resolve(
+            jsonResponse(briefDoc(s, DET_SLUGS.indexOf(s) + 1)),
+          );
+        }
+        const statsMatch = /\/engagements\/([A-Za-z0-9_-]+)\/statistics\.json$/.exec(
+          url,
+        );
+        if (statsMatch !== null) {
+          return Promise.resolve(
+            jsonResponse(statsBody(DET_SLUGS.indexOf(statsMatch[1]!) + 1)),
+          );
+        }
+        return Promise.resolve(
+          jsonResponse({ error: "not found" }, { status: 404 }),
+        );
+      });
 
       const runScan = async () => {
         const { deps } = realDeps();
@@ -630,7 +678,7 @@ describe("radar scan integration — determinism", () => {
         );
         const hashes = (
           await Promise.all(
-            MAIN_SLUGS.map(
+            DET_SLUGS.map(
               async (s) =>
                 (await store.getLatestSnapshot(db, s))!.source_hash,
             ),
@@ -651,7 +699,7 @@ describe("radar scan integration — determinism", () => {
       );
       // Identical full score objects (score, confidence, components, reasons,
       // source_hash) for every discovered slug.
-      for (const s of MAIN_SLUGS) {
+      for (const s of DET_SLUGS) {
         expect(second.scoreByUuid.get(s)).toEqual(
           first.scoreByUuid.get(s),
         );
@@ -659,6 +707,6 @@ describe("radar scan integration — determinism", () => {
       // Identical source hashes — same semantic input, same hash.
       expect(second.hashes).toEqual(first.hashes);
     },
-    30_000,
+    60_000,
   );
 });

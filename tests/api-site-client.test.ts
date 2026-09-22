@@ -97,19 +97,58 @@ describe("siteRequest URL and request construction", () => {
     expect(url).toBe(`${BUGCROWD_SITE}/engagements.json?page=1`);
   });
 
-  it("GET_BRIEF requests the brief HTML for the slug", async () => {
-    fetchMock.mockResolvedValue(htmlResponse("<html></html>"));
+  it("GET_CHANGELOGS requests the version list JSON for the slug", async () => {
+    const body = {
+      changelogs: [
+        { id: "v1", changelogState: "Latest", publishedAt: "2026-09-11" },
+      ],
+    };
+    fetchMock.mockResolvedValue(jsonResponse(body));
     const res = await client.siteRequest({
-      operation: "GET_BRIEF",
+      operation: "GET_CHANGELOGS",
       slug: "webdotcom",
     });
-    expect(res.data).toBe("<html></html>");
+    expect(res.data).toEqual(body);
     const [url, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
-    expect(url).toBe(`${BUGCROWD_SITE}/engagements/webdotcom`);
+    expect(url).toBe(`${BUGCROWD_SITE}/engagements/webdotcom/changelog.json`);
     expect(init.credentials).toBe("include");
     const headers = init.headers as Record<string, string>;
-    expect(headers.Accept).toContain("text/html");
+    expect(headers.Accept).toContain("application/json");
     expect(headers.Authorization).toBeUndefined();
+  });
+
+  it("GET_BRIEF_DOC requests the changelog version document JSON", async () => {
+    const body = { id: "v1", data: { brief: {}, scope: [] } };
+    fetchMock.mockResolvedValue(jsonResponse(body));
+    const res = await client.siteRequest({
+      operation: "GET_BRIEF_DOC",
+      slug: "webdotcom",
+      versionId: "v1",
+    });
+    expect(res.data).toEqual(body);
+    const [url] = fetchMock.mock.calls[0]! as [string, RequestInit];
+    expect(url).toBe(
+      `${BUGCROWD_SITE}/engagements/webdotcom/changelog/v1.json`,
+    );
+  });
+
+  it("GET_BRIEF_STATS requests the statistics JSON", async () => {
+    const body = { rewardedVulnerabilities: 721, averagePayout: "$2,000" };
+    fetchMock.mockResolvedValue(jsonResponse(body));
+    const res = await client.siteRequest({
+      operation: "GET_BRIEF_STATS",
+      slug: "webdotcom",
+    });
+    expect(res.data).toEqual(body);
+    const [url] = fetchMock.mock.calls[0]! as [string, RequestInit];
+    expect(url).toBe(`${BUGCROWD_SITE}/engagements/webdotcom/statistics.json`);
+  });
+
+  it("rejects a non-JSON body on detail ops as invalid_response", async () => {
+    fetchMock.mockResolvedValue(htmlResponse("<html>spa shell</html>"));
+    await expect(
+      client.siteRequest({ operation: "GET_CHANGELOGS", slug: "x" }),
+    ).rejects.toMatchObject({ kind: "invalid_response" });
   });
 });
 
@@ -137,7 +176,7 @@ describe("siteRequest error mapping", () => {
       }),
     );
     await expect(
-      client.siteRequest({ operation: "GET_BRIEF", slug: "private-prog" }),
+      client.siteRequest({ operation: "GET_CHANGELOGS", slug: "private-prog" }),
     ).rejects.toMatchObject({ kind: "unauthorized" });
   });
 

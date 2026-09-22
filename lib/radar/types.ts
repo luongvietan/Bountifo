@@ -43,7 +43,7 @@ export type RadarSignalSource = RadarSignal["source"];
 // Catalog identity — one row per engagement discovered via GET
 // /engagements.json. `uuid` carries the engagement's brief-URL slug: the
 // researcher site surface has no org-API uuid, and the slug is the canonical
-// identity (and the GET_BRIEF path segment).
+// identity (and the detail-endpoint path segment).
 // ---------------------------------------------------------------------------
 
 export const radarCatalogItemSchema = z
@@ -59,8 +59,9 @@ export const radarCatalogItemSchema = z
 export type RadarCatalogItem = z.infer<typeof radarCatalogItemSchema>;
 
 // ---------------------------------------------------------------------------
-// Hydrated record. `detail` is the ApiEngagementData produced by parsing the
-// brief page HTML (GET /engagements/<slug> → offscreen DOM collectors); a
+// Hydrated record. `detail` is the ApiEngagementData produced by mapping the
+// structured brief document (GET /engagements/<slug>/changelog/<ver>.json +
+// statistics.json); a
 // runtime schema for ApiEngagementData is out of scope — it is only checked
 // to be a non-array object or null. `enrichment.status` is the strict
 // tri-state.

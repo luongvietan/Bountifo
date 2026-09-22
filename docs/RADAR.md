@@ -2,14 +2,15 @@
 
 Deterministic program triage over the Bugcrowd engagement catalog. Radar
 enumerates every engagement visible to the browser session, hydrates each
-program's brief page, reduces it to a fixed 13-signal feature vector, and
+program's structured brief document, reduces it to a fixed 13-signal feature vector, and
 ranks programs under six versioned weight profiles. No LLM participates in
 collection, extraction, scoring, ranking, or explanation.
 
 ```text
-GET /engagements.json?page=N    GET /engagements/<slug>
-{paginationMeta.limit,          brief HTML → offscreen
- totalCount}, ≤100 pages        document → DOM collectors
+GET /engagements.json?page=N    GET /engagements/<slug>/changelog.json
+{paginationMeta.limit,              → version list → "Latest" id
+ totalCount}, ≤100 pages            → GET …/changelog/<id>.json brief doc
+                                    + GET …/statistics.json (non-fatal)
       │                               │
       ▼                               ▼
  Catalog (lib/radar/catalog.ts)   Hydrate (lib/radar/enrichment.ts)
@@ -53,15 +54,18 @@ instead of aborting the run.
 | Input | Endpoint | Produces |
 |---|---|---|
 | Catalog | `GET /engagements.json?page=N` → `{engagements, paginationMeta{limit, totalCount}}` | `RadarCatalogItem` — uuid (the brief-URL slug), code (same slug), name, lifecycle_status (`accessStatus`), engagement_type (`productEngagementType.label`), discovered_at |
-| Detail | `GET /engagements/{slug}` → brief HTML | `ApiEngagementData` — parsed inside an MV3 offscreen document (`entrypoints/offscreen`) by the same DOM collectors the exporter runs on live pages (`collectDetails`, `collectTargets`), then mapped by `lib/radar/detailMap.ts`: identity, lifecycle timestamps, safeHarborLevel, header statistics, target groups (incl. rewards), targets (incl. tags, inScope) |
+| Version list | `GET /engagements/{slug}/changelog.json` → `{changelogs[]}` | the `changelogState:"Latest"` entry's `id` (fallback: first entry — the list is newest-first) |
+| Detail | `GET /engagements/{slug}/changelog/{version}.json` | `ApiEngagementData` via `lib/radar/detailMap.ts`: identity (`data.engagement.code`), `engagementTypeDetail.productLabel`, `statusLabel`, `data.engagement.startsAt`/`endsAt`, `lastTransitionAt`, `publishedAt` → `lastBriefUpdate`, `brief.safeHarborStatus.status`, scope groups (`inScope`, `rewardRange.pNMaxCents` — cents→dollars), targets (`uri`, `category`, `tags`) |
+| Stats | `GET /engagements/{slug}/statistics.json` | `statistics` — `rewardedVulnerabilities` → `vulnerabilities_rewarded`, `averagePayout` → `average_payout`, `validationWithin`, `validSubmissionCount` |
 
-Service workers have no DOM/`DOMParser`, which is why brief HTML crosses
-into the offscreen document (`lib/radar/offscreen.ts` bridge) rather than
-being parsed in the coordinator. `statistics.*` values arrive as display
-strings (DOM labels slug to `vulnerabilities-rewarded` and are normalized
-to the snake_case keys the extractor consumes) and are consumed only
-through a strict parser. No credential material exists on this path;
-nothing session-shaped reaches the radar store, score rows, or message
+The detail chain is pure JSON end-to-end — the brief's rendered page is a
+client-side SPA shell whose markup carries no scope content, so nothing on
+this path needs a DOM. `mapBriefDocument` throws `invalid_response` when the
+document lacks `data.scope`; a statistics failure degrades to empty
+`statistics` (the dependent signals read unknown) instead of failing the
+hydration. `statistics.*` values arrive as numbers or display strings and are
+consumed only through a strict parser. No credential material exists on this
+path; nothing session-shaped reaches the radar store, score rows, or message
 responses.
 
 ## Catalog completeness
@@ -91,7 +95,7 @@ answering). Every `ApiError` is therefore program-scoped:
 | Error | Resulting snapshot |
 |---|---|
 | `unauthorized` (login redirect / 401 — session absent for this brief), `forbidden`, `not_found` | `detail: null`, `enrichment.status: "unavailable"`, `error_kind` set |
-| `invalid_response` (incl. offscreen parse failure), `http`, `network`, `rate_limited` | `detail: null`, `enrichment.status: "failed"`, `error_kind` set |
+| `invalid_response` (non-JSON answer, empty changelog list, malformed brief doc), `http`, `network`, `rate_limited` | `detail: null`, `enrichment.status: "failed"`, `error_kind` set |
 | Non-`ApiError` throw | `detail: null`, `enrichment.status: "failed"`, `error_kind: "unknown"` |
 
 One failed engagement never destroys the run; the coordinator counts it in
@@ -137,7 +141,7 @@ three V1-unavailable signals keep `not_available_v1`.
 | `meaningful_surface` | `engagement_detail` | `in_scope_target_saturation` | `c/(c+25)` where `c` = in-scope targets with non-empty location or name. Always defined (0 targets → 0). |
 | `api_surface` | `engagement_detail` | `api_token_share` | Share of in-scope targets whose token set intersects `{api, rest, graphql, grpc, webservice, endpoint}`. 0 when no in-scope targets. |
 | `web_surface` | `engagement_detail` | `web_token_share` | Share intersecting `{web, website, webapp, webapplication}`; a target matching neither token set whose `location` parses as http(s) counts as web. 0 when no in-scope targets. |
-| `researcher_competition` | `statistics` | `researchers_participating_saturation` | `n/(n+500)`, `n` = strict-parsed `statistics.researchers_participating`. `null` when absent/unparseable. |
+| `researcher_competition` | `statistics` | `researchers_participating_saturation` | `n/(n+500)`, `n` = strict-parsed `statistics.researchers_participating`. `null` when absent/unparseable — the site surface exposes no participant count, so this is always `null` today. |
 | `rewarded_activity` | `statistics` | `vulnerabilities_rewarded_saturation` | `n/(n+200)`, `n` = strict-parsed `statistics.vulnerabilities_rewarded`. `null` when absent/unparseable. |
 | `freshness` | `engagement_detail` | `age_band` | Newest valid of `lastBriefUpdate`/`lastStatusTransition`, aged in days vs `now`. Bands below; `null` when no valid date (or invalid `now`). |
 | `safe_harbor` | `engagement_detail` | `safe_harbor_field` | `safeHarborLevel` field only: contains `full` → 1.0, `partial` → 0.5, `none`/`absent` → 0.0 (case-insensitive); anything else or missing → `null`. |
@@ -373,7 +377,10 @@ as the named API ops.
 
 - **`researcher_competition` is not duplicate probability.** It is a
   participation-count saturation (`n/(n+500)`) — a crowd proxy only. Real
-  duplicate pressure requires Known Issues / deep analysis (V1.2).
+  duplicate pressure requires Known Issues / deep analysis (V1.2). Moreover
+  the site surface (`changelog/<ver>.json` + `statistics.json`) exposes no
+  participant count at all, so the signal is `null` on every program — its
+  weight shifts into confidence loss rather than silently scoring 0.
 - **`authz_api` is not proof of authorization vulnerabilities.** It ranks
   API-heavy, authenticated-research-friendly candidates. `authz_opportunity`
   is unweighted and always `null` in V1 — no deterministic source exists

@@ -85,7 +85,7 @@ export const JobMsg = z.discriminatedUnion("op", [
 
 const radarProfileSchema = z.enum(RADAR_PROFILE_IDS);
 // Engagement identity is the brief-URL slug (the site surface has no org
-// uuid) — same charset guard the site client applies to GET_BRIEF paths.
+// uuid) — same charset guard the site client applies to the detail JSON paths.
 const radarUuidSchema = z.string().regex(/^[A-Za-z0-9_-]{1,100}$/);
 
 export const RadarMsg = z.discriminatedUnion("op", [

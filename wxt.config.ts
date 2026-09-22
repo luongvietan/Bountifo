@@ -8,7 +8,6 @@ export default defineConfig({
       "scripting",
       "storage",
       "downloads",
-      "offscreen",
     ],
     host_permissions: ["https://bugcrowd.com/*", "https://api.bugcrowd.com/*"],
   },
