@@ -115,6 +115,15 @@ export function formatCoverage(confidence: number): string {
 }
 
 /**
+ * A row's share of the eligible cohort it outranks (0.0–100.0, one decimal)
+ * rendered as "99.6%". Null on ineligible rows — the dash is honest, a 0.0%
+ * bottom-of-cohort reading is a real value and renders as such.
+ */
+export function formatPercentile(value: number | null): string {
+  return value === null ? EMPTY : `${value.toFixed(1)}%`;
+}
+
+/**
  * A score delta (deep − metadata) always signed, rounded to one decimal:
  * "+3.2", "−11.4", "+0.0". The minus is U+2212 so it doesn't read as a
  * hyphen/dash; −0 collapses to "+0.0" rather than showing a sign lie.
@@ -364,9 +373,22 @@ export function surfaceText(signals: RadarResultSignals): string {
 }
 
 /**
+ * The Reward cell folds the realized average payout into the advertised
+ * reward reading: "0.80 · avg 0.50". Mirrors surfaceText's composite — the
+ * avg suffix attaches only when statistics carried a realized average; a
+ * null payout_realized leaves the plain signal untouched.
+ */
+export function rewardText(signals: RadarResultSignals): string {
+  const base = formatSignal(signals.reward_potential);
+  return signals.payout_realized === null
+    ? base
+    : `${base} · avg ${formatSignal(signals.payout_realized)}`;
+}
+
+/**
  * One rendered row of the ranked results table (all display strings).
- * Ten cells: Rank, Program, Score (evidence badge + Δ + coverage folded
- * in), Reward, Surface, Saturation, KI Pressure, Opportunity, Access,
+ * Eleven cells: Rank, Program, Score (evidence badge + Δ + coverage folded
+ * in), Pct, Reward, Surface, Saturation, KI Pressure, Opportunity, Access,
  * AuthZ — the Freshness column was dropped for V1.3 (freshness stays in
  * `signals` and shows in the detail meta line).
  */
@@ -382,6 +404,9 @@ export interface RowView {
   score: string;
   /** "Δ −11.4" when both stage scores exist; null otherwise — never faked. */
   scoreDelta: string | null;
+  /** Eligible-cohort percentile — "99.6%"; "—" on ineligible rows. */
+  pct: string;
+  /** "0.82 · avg 0.50" when payout_realized is known, else the plain signal. */
   reward: string;
   surface: string;
   saturation: string;
@@ -419,7 +444,8 @@ export function buildRow(row: RadarResultRow, rank: number): RowView {
         ? EMPTY
         : `${base} (${delta === null ? "" : `${delta} · `}cov ${formatCoverage(row.confidence)})${row.provisional ? " provisional" : ""}`,
     scoreDelta: delta,
-    reward: formatSignal(row.signals.reward_potential),
+    pct: formatPercentile(row.percentile),
+    reward: rewardText(row.signals),
     surface: surfaceText(row.signals),
     saturation: saturationText(row.signals.research_saturation),
     kiPressure: densityText(row.signals.known_issue_density),
@@ -648,8 +674,15 @@ function diffStatus(diff: RadarSemanticDiff | null): string {
  * honestly: counts / version ids that never arrived show "—", a missing
  * deep pass reads "not analyzed", and a metadata-stage signal with no
  * brief evidence shows "—" rather than fabricating a zero.
+ *
+ * `percentile` is the clicked row's eligible-cohort rank context — it
+ * lives on RadarResultRow, not the detail envelope, so the caller passes
+ * it through (null renders "—" like every other unknown value).
  */
-export function detailRows(detail: RadarProgramDetail): DetailRowGroup[] {
+export function detailRows(
+  detail: RadarProgramDetail,
+  percentile: number | null = null,
+): DetailRowGroup[] {
   const deep: RadarDeepEnrichment | null = detail.snapshot?.deep ?? null;
   const ki = deep?.known_issues ?? null;
   const diff = deep?.semantic_diff ?? null;
@@ -665,6 +698,17 @@ export function detailRows(detail: RadarProgramDetail): DetailRowGroup[] {
         {
           label: "Known issue density",
           value: densityText(detail.vector?.known_issue_density.value ?? null),
+        },
+        {
+          label: "KI concentration",
+          // Defensive read — a vector stored before V1.5 may lack the key.
+          value: formatSignal(
+            (
+              detail.vector?.ki_concentration as
+                | { value: number | null }
+                | undefined
+            )?.value ?? null,
+          ),
         },
         { label: "Source status", value: knownIssuesStatus(ki) },
       ],
@@ -704,6 +748,17 @@ export function detailRows(detail: RadarProgramDetail): DetailRowGroup[] {
             detail.vector?.opportunity_change.value ?? null,
           ),
         },
+        {
+          label: "Scope momentum",
+          // Defensive read — a vector stored before V1.5 may lack the key.
+          value: formatSignal(
+            (
+              detail.vector?.scope_momentum as
+                | { value: number | null }
+                | undefined
+            )?.value ?? null,
+          ),
+        },
         { label: "Source status", value: diffStatus(diff) },
       ],
     },
@@ -730,6 +785,17 @@ export function detailRows(detail: RadarProgramDetail): DetailRowGroup[] {
                 | undefined
             )?.value ?? null,
           ),
+        },
+      ],
+    },
+    {
+      title: "Rank context",
+      rows: [
+        {
+          label: "Percentile",
+          // Share of the eligible cohort this row outranks — rank context
+          // carried by the results row, not a scored signal.
+          value: formatPercentile(percentile),
         },
       ],
     },

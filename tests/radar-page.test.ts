@@ -27,6 +27,7 @@ import {
   filterRows,
   formatCoverage,
   formatDelta,
+  formatPercentile,
   formatScore,
   formatSignal,
   formatWeight,
@@ -39,6 +40,7 @@ import {
   profileOptions,
   resolveResultsMode,
   RESULTS_MODE_OPTIONS,
+  rewardText,
   runHasDeepEvidence,
   saturationRows,
   saturationText,
@@ -347,6 +349,7 @@ describe("buildRow / buildRows", () => {
       evidence: "metadata",
       score: "82.4 (cov 75%)",
       scoreDelta: null,
+      pct: "—",
       reward: "0.82",
       surface: "0.60 (api 0.40 · web 0.30)",
       saturation: "0.25 · Moderate-low",
@@ -864,11 +867,14 @@ describe("detailRows", () => {
       "Known-issue intelligence",
       "Opportunity changes",
       "Access & authorization",
+      "Rank context",
     ]);
     expect(groups[0]!.rows).toEqual([
       { label: "Unique known issues", value: "90" },
       { label: "Total (incl. duplicates)", value: "224" },
       { label: "Known issue density", value: "0.61 · High" },
+      // The fixture's vector predates V1.5 — an honest dash, never 0.00.
+      { label: "KI concentration", value: "—" },
       { label: "Source status", value: "complete" },
     ]);
     expect(groups[1]!.rows).toEqual([
@@ -881,6 +887,7 @@ describe("detailRows", () => {
       { label: "Status change", value: "no" },
       { label: "Safe harbor change", value: "no" },
       { label: "Opportunity change", value: "0.30 · Moderate" },
+      { label: "Scope momentum", value: "—" },
       { label: "Source status", value: "complete" },
     ]);
     // The V1.4 metadata signals read from the embedded vector — the
@@ -922,8 +929,8 @@ describe("detailRows", () => {
         expect(row.value === "—" || row.value === "not analyzed").toBe(true);
       }
     }
-    expect(groups[0]!.rows[3]!.value).toBe("not analyzed");
-    expect(groups[1]!.rows[9]!.value).toBe("not analyzed");
+    expect(groups[0]!.rows[4]!.value).toBe("not analyzed");
+    expect(groups[1]!.rows[10]!.value).toBe("not analyzed");
   });
 
   it("carries source status words through honestly", () => {
@@ -956,12 +963,13 @@ describe("detailRows", () => {
       { label: "Unique known issues", value: "—" },
       { label: "Total (incl. duplicates)", value: "—" },
       { label: "Known issue density", value: "0.61 · High" },
+      { label: "KI concentration", value: "—" },
       { label: "Source status", value: "unavailable" },
     ]);
     expect(groups[1]!.rows[1]!.value).toBe("—"); // no baseline version
     expect(groups[1]!.rows[0]!.value).toBe("9c1f2b34"); // current still shown
     expect(groups[1]!.rows[5]!.value).toBe("—"); // reward change unknown
-    expect(groups[1]!.rows[9]!.value).toBe("no baseline");
+    expect(groups[1]!.rows[10]!.value).toBe("no baseline");
   });
 });
 
@@ -1233,6 +1241,17 @@ describe("results table markup", () => {
     expect(authz).toBeGreaterThan(access);
     expect(access).toBeGreaterThan(opportunity);
   });
+
+  it("adds the V1.5 Pct column between Score and Reward", () => {
+    const score = RADAR_HTML.search(/>\s*Score\s*</);
+    const pct = RADAR_HTML.search(/>\s*Pct\s*</);
+    const reward = RADAR_HTML.search(/>\s*Reward\s*</);
+    expect(score).toBeGreaterThan(-1);
+    expect(pct).toBeGreaterThan(-1);
+    expect(reward).toBeGreaterThan(-1);
+    expect(pct).toBeGreaterThan(score);
+    expect(reward).toBeGreaterThan(pct);
+  });
 });
 
 describe("filterRows null semantics (V1.3.1)", () => {
@@ -1311,3 +1330,170 @@ function deepSummaryAbsent(): RadarScanSummary {
     warnings: [],
   };
 }
+
+// ---------------------------------------------------------------------------
+// V1.5 — Pct column, realized-payout suffix in the Reward cell, the
+// momentum/concentration/percentile detail rows, and the new reason codes
+// (REASON_TEXT already covers them — these pin the rendered lines).
+// ---------------------------------------------------------------------------
+
+describe("formatPercentile", () => {
+  it("renders a cohort percentile to one decimal with a % sign", () => {
+    expect(formatPercentile(99.6)).toBe("99.6%");
+    expect(formatPercentile(50)).toBe("50.0%");
+    expect(formatPercentile(0)).toBe("0.0%");
+  });
+
+  it("renders null (ineligible row) as an em dash — never 0.0%", () => {
+    expect(formatPercentile(null)).toBe("—");
+  });
+});
+
+describe("rewardText", () => {
+  it("folds the realized average payout into the reward cell", () => {
+    const row = resultRow();
+    row.signals.payout_realized = 0.5;
+    expect(rewardText(row.signals)).toBe("0.82 · avg 0.50");
+  });
+
+  it("omits the avg suffix entirely when payout_realized is unknown", () => {
+    expect(rewardText(resultRow().signals)).toBe("0.82");
+  });
+
+  it("keeps the suffix honest even when the reward signal is unknown", () => {
+    const row = resultRow();
+    row.signals.reward_potential = null;
+    row.signals.payout_realized = 0.5;
+    expect(rewardText(row.signals)).toBe("— · avg 0.50");
+  });
+});
+
+describe("V1.5 result cells", () => {
+  it("renders the Pct cell from row.percentile", () => {
+    expect(buildRow(resultRow({ percentile: 99.6 }), 1).pct).toBe("99.6%");
+    expect(buildRow(resultRow({ percentile: 0 }), 1).pct).toBe("0.0%");
+  });
+
+  it("dashes the Pct cell on ineligible rows (null percentile)", () => {
+    const view = buildRow(
+      resultRow({ eligible: false, percentile: null }),
+      3,
+    );
+    expect(view.eligible).toBe(false);
+    expect(view.pct).toBe("—");
+  });
+
+  it("shows the avg suffix in the reward cell only when payout_realized is known", () => {
+    const withAvg = resultRow();
+    withAvg.signals.payout_realized = 0.5;
+    expect(buildRow(withAvg, 1).reward).toBe("0.82 · avg 0.50");
+    expect(buildRow(resultRow(), 1).reward).toBe("0.82");
+  });
+
+  it("renders cleanly when every V1.5 field is null", () => {
+    const view = buildRow(resultRow(), 1);
+    expect(view.pct).toBe("—");
+    expect(view.reward).toBe("0.82");
+    expect(view.score).toBe("82.4 (cov 75%)");
+  });
+});
+
+describe("V1.5 detail rows", () => {
+  it("shows momentum, concentration and percentile when known", () => {
+    const detail = programDetail();
+    detail.vector = {
+      ...detail.vector,
+      scope_momentum: { value: 0.42 },
+      ki_concentration: { value: 0.73 },
+    } as unknown as ProgramFeatureVector;
+    const groups = detailRows(detail, 99.6);
+    expect(groups.map((g) => g.title)).toContain("Rank context");
+    const ki = groups.find((g) => g.title === "Known-issue intelligence")!;
+    expect(
+      ki.rows.find((r) => r.label === "KI concentration"),
+    ).toEqual({ label: "KI concentration", value: "0.73" });
+    const opp = groups.find((g) => g.title === "Opportunity changes")!;
+    expect(opp.rows.find((r) => r.label === "Scope momentum")).toEqual({
+      label: "Scope momentum",
+      value: "0.42",
+    });
+    expect(groups[groups.length - 1]!.rows).toEqual([
+      { label: "Percentile", value: "99.6%" },
+    ]);
+  });
+
+  it("dashes all three rows for a pre-V1.5 vector and no row context", () => {
+    const groups = detailRows(programDetail());
+    const ki = groups.find((g) => g.title === "Known-issue intelligence")!;
+    expect(ki.rows.find((r) => r.label === "KI concentration")!.value).toBe(
+      "—",
+    );
+    const opp = groups.find((g) => g.title === "Opportunity changes")!;
+    expect(opp.rows.find((r) => r.label === "Scope momentum")!.value).toBe(
+      "—",
+    );
+    expect(groups[groups.length - 1]!.rows).toEqual([
+      { label: "Percentile", value: "—" },
+    ]);
+  });
+
+  it("renders a real 0.0% bottom-of-cohort percentile, not a dash", () => {
+    const groups = detailRows(programDetail(), 0);
+    expect(groups[groups.length - 1]!.rows).toEqual([
+      { label: "Percentile", value: "0.0%" },
+    ]);
+  });
+});
+
+describe("V1.5 explanation lines", () => {
+  const scoreWith = (reasons: string[]): ProgramScore => ({
+    schema_version: 1,
+    engagement_uuid: UUID,
+    profile: "best_ev",
+    scoring_version: "1.5.0",
+    score: 60,
+    confidence: 0.5,
+    provisional: false,
+    components: {},
+    reasons,
+    source_hash: "x",
+  });
+
+  it("renders the payout/momentum/concentration codes via REASON_TEXT", () => {
+    expect(
+      explainScore(
+        scoreWith(["PAYOUT_HIGH", "SCOPE_GROWING", "KI_CONCENTRATED"]),
+      ),
+    ).toEqual([
+      "+ high average payout",
+      "+ sustained scope growth",
+      "+ known issues concentrated in one class",
+    ]);
+  });
+
+  it("renders the low-end codes as cautions", () => {
+    expect(
+      explainScore(scoreWith(["PAYOUT_LOW", "SCOPE_FLAT", "KI_SPREAD"])),
+    ).toEqual([
+      "- low average payout",
+      "- no net scope growth",
+      "- known issues spread across classes",
+    ]);
+  });
+
+  it("renders the new UNKNOWN_ codes as gap lines", () => {
+    expect(
+      explainScore(
+        scoreWith([
+          "UNKNOWN_PAYOUT_REALIZED",
+          "UNKNOWN_SCOPE_MOMENTUM",
+          "UNKNOWN_KI_CONCENTRATION",
+        ]),
+      ),
+    ).toEqual([
+      "? payout realized unavailable",
+      "? scope momentum unavailable",
+      "? ki concentration unavailable",
+    ]);
+  });
+});
