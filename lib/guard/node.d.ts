@@ -12,6 +12,11 @@ declare module "node:fs/promises" {
 
 declare module "node:fs" {
   export function readFileSync(path: string, encoding: "utf8"): string;
+  export function writeFileSync(path: string, data: string): void;
+  export function mkdirSync(
+    path: string,
+    options?: { recursive?: boolean },
+  ): void;
   export interface Dirent {
     name: string;
     isDirectory(): boolean;
@@ -29,10 +34,12 @@ declare module "node:path" {
 
 declare module "node:url" {
   export function pathToFileURL(path: string): URL;
+  export function fileURLToPath(url: URL): string;
 }
 
 declare const process: {
   argv: string[];
+  env: Record<string, string | undefined>;
   cwd(): string;
   exit(code: number): never;
   stdout: { write(chunk: string): void };

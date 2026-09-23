@@ -46,6 +46,12 @@ Important semantics:
 - Conflicting exact evidence remains unresolved and is never silently chosen.
 - Evidence and normalized hashes exclude volatile job/collection timestamps and are deterministic for identical logical inputs.
 
+## Engagement Radar
+
+The **Radar** page (`Open radar` in the popup) scans the Bugcrowd engagement catalog and ranks programs under six deterministic scoring profiles — Best EV, Low Saturation, High Reward, AuthZ/API, Fresh Opportunity, and Easy Entry. Scoring is two-stage: every program gets a metadata-stage score, and a bounded candidate union (≤ 60 programs) is re-scored on deep evidence (known issues, semantic brief diffs, scope arc, per-group stats). Rows always show which stage produced them — a metadata-only program is never presented as deep-analyzed. See `docs/RADAR.md` for the full signal and ranking semantics.
+
+**Export report** downloads the latest saved scan as Markdown, JSON, or CSV — one profile or all six, Top 20/Top 50/all eligible, with optional per-signal evidence and deep-source diagnostics. Export is read-only (it never starts a scan or hits the API), keeps the wall-clock timestamp outside the deterministic content hash, redacts the stored credential, and flags reports containing gated/invitation-only program data. Deterministic samples live in `docs/samples/`.
+
 ## Security model
 
 - The optional token is stored only in Chrome local storage for the current browser profile. It is not an encrypted secret vault.

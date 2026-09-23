@@ -632,6 +632,48 @@ sender's document URL against the extension origin instead.
 | `RADAR_GET_STATE` | — | `{run}` — current run state or `null` |
 | `RADAR_GET_RESULTS` | `profile` (enum), `limit` int 1–200 (default 50), `minConfidence` 0–1 optional, `mode` `"metadata"`/`"deep"` (default `"metadata"`) | `{rows}` ranked result rows — rows carry `evidence_level`, `metadata_score`, `deep_score`, `score_delta` |
 | `RADAR_GET_PROGRAM` | `uuid` (the engagement's slug — `[A-Za-z0-9_-]{1,100}`), `profile` optional (router defaults to `best_ev`) | `{program}` — snapshot, score, rendered explanation, catalog row |
+| `RADAR_EXPORT_REPORT` | `format` `"markdown"`/`"json"`/`"csv"`, `scope` `"current"`/`"all"`, `profile` (required when `scope` is `"current"`), `limit` `20`/`50`/`"all"` (default `50`), `detail` bool (default true), `diagnostics` bool (default true) | `{export}` — `{filename, mime, body, content_hash, generated_at}`; `{error:"no_scan"}` when no run is persisted, `invalid_params` for a profile-less current scope |
+
+## Report export
+
+The **Export report** button on the radar page opens a dialog and serializes
+the **latest persisted run** into a local download — Markdown, JSON, or CSV,
+one profile or all six, Top 20 / Top 50 / the whole eligible cohort, with
+optional detailed evidence and diagnostics. It is strictly read-only: no
+scan is started, no API request is made, no stored state is modified, and
+the body is assembled entirely inside the browser.
+
+Three invariants hold across every format:
+
+- **One snapshot.** Every section reads the same `run_id` — rows, digests,
+  and diagnostics never mix runs or scoring versions. Deep rows are gated by
+  that run's `deep_completed_uuids`, so a metadata-only program is never
+  presented as deep-enriched.
+- **Full-cohort percentile.** `percentile` is computed over the complete
+  eligible cohort *before* the Top-N limit truncates the export — truncating
+  the report never recalculates rank context.
+- **Deterministic body.** For identical persisted data and options the
+  report is byte-identical. `content_hash` is `sha256` of the canonical JSON
+  export model — format-independent, and independent of the wall-clock
+  `generated_at` carried in the message envelope only.
+
+Markdown renders an executive summary, one results table per profile
+(exact `profile_id` + version, metadata vs deep scores kept explicit), a
+detailed-evidence block with weights/contributions/reason codes/source
+hashes, and a diagnostics table distinguishing `complete`, `unavailable`,
+`failed`, `no_baseline`, `skipped`, and `absent` deep sub-source outcomes —
+a `0` signal cell is a real observed zero, never conflated with missing
+evidence. JSON is a versioned `bce-radar-export` envelope for downstream
+agents, with `null` for every unavailable value. CSV is flat columns
+(`profile_id`, `profile_version`, `rank`, `evidence_level`,
+`engagement_slug`, …) with formula-injection escaping on untrusted text.
+
+The stored API credential is redacted from the serialized body as
+defense-in-depth, and reports containing rows from gated/invitation-only
+programs carry an authenticated-content notice. Samples are checked in at
+`docs/samples/radar-report.{md,json,csv}` and guarded by
+`tests/radar-samples.test.ts`; regenerate after intentional format changes
+with `WRITE_SAMPLES=1 npx vitest run tests/radar-samples.test.ts`.
 
 ## Limitations
 

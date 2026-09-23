@@ -1,0 +1,2231 @@
+{
+  "schema": "bce-radar-export",
+  "schema_version": 1,
+  "content_sha256": "sha256:879da691f596827cf8bb1766707b3fd2f6c3c88f45b0d1ad9e9ad782494494bb",
+  "report": {
+    "run": {
+      "run_id": "radar_sample01",
+      "phase": "done",
+      "started_at": "2026-09-20T08:00:00.000Z",
+      "updated_at": "2026-09-20T08:07:31.000Z",
+      "status": "complete",
+      "catalog_complete": true,
+      "discovered": 4,
+      "enriched": 3,
+      "enrichment_failed": 1,
+      "scored": 3,
+      "warnings": 1,
+      "warning_details": [
+        "initech-vdp: brief fetch failed after 2 attempts"
+      ],
+      "deep_candidates": 2,
+      "deep_analyzed": 1,
+      "deep_enriched": 1,
+      "deep_rounds": 1,
+      "deep_budget": 60,
+      "deep_stabilization": "stable"
+    },
+    "provenance": {
+      "schema": "bce-radar-export",
+      "schema_version": 1,
+      "app_version": "0.1.0",
+      "commit_sha": "0123456789abcdef0123456789abcdef01234567"
+    },
+    "options": {
+      "profiles": [
+        "best_ev",
+        "low_competition",
+        "high_reward",
+        "authz_api",
+        "fresh_programs",
+        "easy_entry"
+      ],
+      "limit": 50,
+      "detail": true,
+      "diagnostics": true
+    },
+    "restricted_access": {
+      "count": 1,
+      "programs": [
+        "acme-security-bb"
+      ]
+    },
+    "sections": [
+      {
+        "profile_id": "best_ev",
+        "profile_version": "1.5.0",
+        "profile_label": "Best EV",
+        "min_confidence": 0.6,
+        "total_ranked": 3,
+        "eligible_count": 2,
+        "exported_count": 3,
+        "rows": [
+          {
+            "rank": 1,
+            "uuid": "3f8a2c10-7b4e-4a1d-9c2f-8e5b6d7a9012",
+            "slug": "acme-security-bb",
+            "engagement_url": "https://bugcrowd.com/engagements/acme-security-bb",
+            "name": "Acme Security Bug Bounty",
+            "score": 72.4,
+            "metadata_score": 72.4,
+            "deep_score": 78.9,
+            "score_delta": 6.5,
+            "evidence_level": "deep",
+            "coverage": 0.75,
+            "percentile": 50,
+            "eligible": true,
+            "provisional": false,
+            "restricted_access": true,
+            "source_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "scoring_version": "1.5.0",
+            "reasons": [
+              "REWARD_HIGH",
+              "SATURATION_LOW"
+            ],
+            "signals": {
+              "reward_potential": 0.82,
+              "reward_breadth": null,
+              "meaningful_surface": 0.61,
+              "api_surface": 0.55,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": 0.12,
+              "freshness": 0.1,
+              "safe_harbor": null,
+              "target_data_quality": null,
+              "accessibility": 0.35,
+              "known_issue_density": 0.31,
+              "opportunity_change": 0.74,
+              "authz_opportunity": 0.66,
+              "payout_realized": 0.58,
+              "scope_momentum": 0.4,
+              "ki_concentration": 0.22
+            },
+            "enrichment_status": "complete",
+            "deep": {
+              "status": "partial",
+              "known_issues": {
+                "status": "complete",
+                "unique_count": 7,
+                "total_count": 26,
+                "group_stats": {
+                  "status": "complete",
+                  "groups_fetched": 3,
+                  "groups_total": 3
+                }
+              },
+              "semantic_diff": {
+                "status": "complete",
+                "from_version": "v-2026-08",
+                "to_version": "v-2026-09"
+              },
+              "scope_arc": {
+                "status": "no_baseline",
+                "window_versions": null
+              }
+            },
+            "detail": {
+              "stages": [
+                {
+                  "stage": "metadata",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "score": 72.4,
+                  "confidence": 0.75,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.82,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 2.46
+                    },
+                    "research_saturation": {
+                      "signal": 0.12,
+                      "weight": 1.5,
+                      "direction": "cost",
+                      "contribution": 1.32
+                    },
+                    "known_issue_density": {
+                      "signal": null,
+                      "weight": 1,
+                      "direction": "cost",
+                      "contribution": null
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_HIGH",
+                    "SATURATION_LOW",
+                    "UNKNOWN_KI_DENSITY"
+                  ]
+                },
+                {
+                  "stage": "deep",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "score": 78.9,
+                  "confidence": 0.9,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.82,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 2.46
+                    },
+                    "known_issue_density": {
+                      "signal": 0.31,
+                      "weight": 1,
+                      "direction": "cost",
+                      "contribution": 0.69
+                    },
+                    "opportunity_change": {
+                      "signal": 0.74,
+                      "weight": 2,
+                      "direction": "benefit",
+                      "contribution": 1.48
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_HIGH",
+                    "OPPORTUNITY_EXPANDING"
+                  ]
+                }
+              ],
+              "signal_meta": {
+                "reward_potential": {
+                  "source": "engagement_detail",
+                  "reason_code": "REWARD_HIGH"
+                },
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": {
+                  "source": "engagement_detail",
+                  "reason_code": "SATURATION_LOW"
+                },
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": {
+                  "source": "deep_enrichment",
+                  "reason_code": "KI_DENSITY"
+                },
+                "opportunity_change": {
+                  "source": "deep_enrichment",
+                  "reason_code": "OPPORTUNITY_EXPANDING"
+                },
+                "authz_opportunity": null,
+                "payout_realized": null,
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "uuid": "7d1e9b42-2c6f-4e8a-b3d1-0f9a8c7e6b5d",
+            "slug": "globex-bb",
+            "engagement_url": "https://bugcrowd.com/engagements/globex-bb",
+            "name": "Globex Corporation",
+            "score": 51.6,
+            "metadata_score": 51.6,
+            "deep_score": null,
+            "score_delta": null,
+            "evidence_level": "metadata",
+            "coverage": 0.5,
+            "percentile": 0,
+            "eligible": true,
+            "provisional": false,
+            "restricted_access": false,
+            "source_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "scoring_version": "1.5.0",
+            "reasons": [
+              "REWARD_MEDIUM"
+            ],
+            "signals": {
+              "reward_potential": 0.4,
+              "reward_breadth": null,
+              "meaningful_surface": 0.33,
+              "api_surface": null,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": 0.05,
+              "freshness": 0.85,
+              "safe_harbor": 1,
+              "target_data_quality": null,
+              "accessibility": 0.9,
+              "known_issue_density": null,
+              "opportunity_change": null,
+              "authz_opportunity": null,
+              "payout_realized": 0,
+              "scope_momentum": null,
+              "ki_concentration": null
+            },
+            "enrichment_status": "complete",
+            "deep": null,
+            "detail": {
+              "stages": [
+                {
+                  "stage": "metadata",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "score": 51.6,
+                  "confidence": 0.7,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.4,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 1.2
+                    },
+                    "payout_realized": {
+                      "signal": 0,
+                      "weight": 1,
+                      "direction": "benefit",
+                      "contribution": 0
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_MEDIUM"
+                  ]
+                }
+              ],
+              "signal_meta": {
+                "reward_potential": {
+                  "source": "engagement_detail",
+                  "reason_code": "REWARD_MEDIUM"
+                },
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": null,
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": null,
+                "opportunity_change": null,
+                "authz_opportunity": null,
+                "payout_realized": {
+                  "source": "engagement_detail",
+                  "reason_code": "PAYOUT_NONE"
+                },
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "uuid": "9c0d4e7f-1a3b-4f5c-8d2e-6b7a8c9d0e1f",
+            "slug": "initech-vdp",
+            "engagement_url": "https://bugcrowd.com/engagements/initech-vdp",
+            "name": "Initech VDP",
+            "score": null,
+            "metadata_score": null,
+            "deep_score": null,
+            "score_delta": null,
+            "evidence_level": "metadata",
+            "coverage": 0.15,
+            "percentile": null,
+            "eligible": false,
+            "provisional": true,
+            "restricted_access": false,
+            "source_hash": null,
+            "scoring_version": "1.5.0",
+            "reasons": [
+              "NO_REWARD_POOL"
+            ],
+            "signals": {
+              "reward_potential": null,
+              "reward_breadth": null,
+              "meaningful_surface": 0.1,
+              "api_surface": null,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": null,
+              "freshness": null,
+              "safe_harbor": null,
+              "target_data_quality": null,
+              "accessibility": 0.4,
+              "known_issue_density": null,
+              "opportunity_change": null,
+              "authz_opportunity": null,
+              "payout_realized": null,
+              "scope_momentum": null,
+              "ki_concentration": null
+            },
+            "enrichment_status": "unavailable",
+            "deep": null,
+            "detail": {
+              "stages": [],
+              "signal_meta": {
+                "reward_potential": null,
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": null,
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": null,
+                "opportunity_change": null,
+                "authz_opportunity": null,
+                "payout_realized": null,
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          }
+        ]
+      },
+      {
+        "profile_id": "low_competition",
+        "profile_version": "1.5.0",
+        "profile_label": "Low Saturation",
+        "min_confidence": 0.5,
+        "total_ranked": 3,
+        "eligible_count": 2,
+        "exported_count": 3,
+        "rows": [
+          {
+            "rank": 1,
+            "uuid": "3f8a2c10-7b4e-4a1d-9c2f-8e5b6d7a9012",
+            "slug": "acme-security-bb",
+            "engagement_url": "https://bugcrowd.com/engagements/acme-security-bb",
+            "name": "Acme Security Bug Bounty",
+            "score": 68.1,
+            "metadata_score": 68.1,
+            "deep_score": 61.3,
+            "score_delta": -6.8,
+            "evidence_level": "deep",
+            "coverage": 0.75,
+            "percentile": 50,
+            "eligible": true,
+            "provisional": false,
+            "restricted_access": true,
+            "source_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "scoring_version": "1.5.0",
+            "reasons": [
+              "REWARD_HIGH",
+              "SATURATION_LOW"
+            ],
+            "signals": {
+              "reward_potential": 0.82,
+              "reward_breadth": null,
+              "meaningful_surface": 0.61,
+              "api_surface": 0.55,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": 0.12,
+              "freshness": 0.1,
+              "safe_harbor": null,
+              "target_data_quality": null,
+              "accessibility": 0.35,
+              "known_issue_density": 0.31,
+              "opportunity_change": 0.74,
+              "authz_opportunity": 0.66,
+              "payout_realized": 0.58,
+              "scope_momentum": 0.4,
+              "ki_concentration": 0.22
+            },
+            "enrichment_status": "complete",
+            "deep": {
+              "status": "partial",
+              "known_issues": {
+                "status": "complete",
+                "unique_count": 7,
+                "total_count": 26,
+                "group_stats": {
+                  "status": "complete",
+                  "groups_fetched": 3,
+                  "groups_total": 3
+                }
+              },
+              "semantic_diff": {
+                "status": "complete",
+                "from_version": "v-2026-08",
+                "to_version": "v-2026-09"
+              },
+              "scope_arc": {
+                "status": "no_baseline",
+                "window_versions": null
+              }
+            },
+            "detail": {
+              "stages": [
+                {
+                  "stage": "metadata",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "score": 72.4,
+                  "confidence": 0.75,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.82,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 2.46
+                    },
+                    "research_saturation": {
+                      "signal": 0.12,
+                      "weight": 1.5,
+                      "direction": "cost",
+                      "contribution": 1.32
+                    },
+                    "known_issue_density": {
+                      "signal": null,
+                      "weight": 1,
+                      "direction": "cost",
+                      "contribution": null
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_HIGH",
+                    "SATURATION_LOW",
+                    "UNKNOWN_KI_DENSITY"
+                  ]
+                },
+                {
+                  "stage": "deep",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "score": 78.9,
+                  "confidence": 0.9,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.82,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 2.46
+                    },
+                    "known_issue_density": {
+                      "signal": 0.31,
+                      "weight": 1,
+                      "direction": "cost",
+                      "contribution": 0.69
+                    },
+                    "opportunity_change": {
+                      "signal": 0.74,
+                      "weight": 2,
+                      "direction": "benefit",
+                      "contribution": 1.48
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_HIGH",
+                    "OPPORTUNITY_EXPANDING"
+                  ]
+                }
+              ],
+              "signal_meta": {
+                "reward_potential": {
+                  "source": "engagement_detail",
+                  "reason_code": "REWARD_HIGH"
+                },
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": {
+                  "source": "engagement_detail",
+                  "reason_code": "SATURATION_LOW"
+                },
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": {
+                  "source": "deep_enrichment",
+                  "reason_code": "KI_DENSITY"
+                },
+                "opportunity_change": {
+                  "source": "deep_enrichment",
+                  "reason_code": "OPPORTUNITY_EXPANDING"
+                },
+                "authz_opportunity": null,
+                "payout_realized": null,
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "uuid": "7d1e9b42-2c6f-4e8a-b3d1-0f9a8c7e6b5d",
+            "slug": "globex-bb",
+            "engagement_url": "https://bugcrowd.com/engagements/globex-bb",
+            "name": "Globex Corporation",
+            "score": 44.9,
+            "metadata_score": 44.9,
+            "deep_score": null,
+            "score_delta": null,
+            "evidence_level": "metadata",
+            "coverage": 0.5,
+            "percentile": 0,
+            "eligible": true,
+            "provisional": false,
+            "restricted_access": false,
+            "source_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "scoring_version": "1.5.0",
+            "reasons": [
+              "REWARD_MEDIUM"
+            ],
+            "signals": {
+              "reward_potential": 0.4,
+              "reward_breadth": null,
+              "meaningful_surface": 0.33,
+              "api_surface": null,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": 0.05,
+              "freshness": 0.85,
+              "safe_harbor": 1,
+              "target_data_quality": null,
+              "accessibility": 0.9,
+              "known_issue_density": null,
+              "opportunity_change": null,
+              "authz_opportunity": null,
+              "payout_realized": 0,
+              "scope_momentum": null,
+              "ki_concentration": null
+            },
+            "enrichment_status": "complete",
+            "deep": null,
+            "detail": {
+              "stages": [
+                {
+                  "stage": "metadata",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "score": 51.6,
+                  "confidence": 0.7,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.4,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 1.2
+                    },
+                    "payout_realized": {
+                      "signal": 0,
+                      "weight": 1,
+                      "direction": "benefit",
+                      "contribution": 0
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_MEDIUM"
+                  ]
+                }
+              ],
+              "signal_meta": {
+                "reward_potential": {
+                  "source": "engagement_detail",
+                  "reason_code": "REWARD_MEDIUM"
+                },
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": null,
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": null,
+                "opportunity_change": null,
+                "authz_opportunity": null,
+                "payout_realized": {
+                  "source": "engagement_detail",
+                  "reason_code": "PAYOUT_NONE"
+                },
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "uuid": "9c0d4e7f-1a3b-4f5c-8d2e-6b7a8c9d0e1f",
+            "slug": "initech-vdp",
+            "engagement_url": "https://bugcrowd.com/engagements/initech-vdp",
+            "name": "Initech VDP",
+            "score": null,
+            "metadata_score": null,
+            "deep_score": null,
+            "score_delta": null,
+            "evidence_level": "metadata",
+            "coverage": 0.15,
+            "percentile": null,
+            "eligible": false,
+            "provisional": true,
+            "restricted_access": false,
+            "source_hash": null,
+            "scoring_version": "1.5.0",
+            "reasons": [
+              "NO_REWARD_POOL"
+            ],
+            "signals": {
+              "reward_potential": null,
+              "reward_breadth": null,
+              "meaningful_surface": 0.1,
+              "api_surface": null,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": null,
+              "freshness": null,
+              "safe_harbor": null,
+              "target_data_quality": null,
+              "accessibility": 0.4,
+              "known_issue_density": null,
+              "opportunity_change": null,
+              "authz_opportunity": null,
+              "payout_realized": null,
+              "scope_momentum": null,
+              "ki_concentration": null
+            },
+            "enrichment_status": "unavailable",
+            "deep": null,
+            "detail": {
+              "stages": [],
+              "signal_meta": {
+                "reward_potential": null,
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": null,
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": null,
+                "opportunity_change": null,
+                "authz_opportunity": null,
+                "payout_realized": null,
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          }
+        ]
+      },
+      {
+        "profile_id": "high_reward",
+        "profile_version": "1.5.0",
+        "profile_label": "High Reward",
+        "min_confidence": 0.5,
+        "total_ranked": 3,
+        "eligible_count": 2,
+        "exported_count": 3,
+        "rows": [
+          {
+            "rank": 1,
+            "uuid": "3f8a2c10-7b4e-4a1d-9c2f-8e5b6d7a9012",
+            "slug": "acme-security-bb",
+            "engagement_url": "https://bugcrowd.com/engagements/acme-security-bb",
+            "name": "Acme Security Bug Bounty",
+            "score": 81,
+            "metadata_score": 81,
+            "deep_score": null,
+            "score_delta": null,
+            "evidence_level": "metadata",
+            "coverage": 0.75,
+            "percentile": 50,
+            "eligible": true,
+            "provisional": false,
+            "restricted_access": true,
+            "source_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "scoring_version": "1.5.0",
+            "reasons": [
+              "REWARD_HIGH",
+              "SATURATION_LOW"
+            ],
+            "signals": {
+              "reward_potential": 0.82,
+              "reward_breadth": null,
+              "meaningful_surface": 0.61,
+              "api_surface": 0.55,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": 0.12,
+              "freshness": 0.1,
+              "safe_harbor": null,
+              "target_data_quality": null,
+              "accessibility": 0.35,
+              "known_issue_density": 0.31,
+              "opportunity_change": 0.74,
+              "authz_opportunity": 0.66,
+              "payout_realized": 0.58,
+              "scope_momentum": 0.4,
+              "ki_concentration": 0.22
+            },
+            "enrichment_status": "complete",
+            "deep": {
+              "status": "partial",
+              "known_issues": {
+                "status": "complete",
+                "unique_count": 7,
+                "total_count": 26,
+                "group_stats": {
+                  "status": "complete",
+                  "groups_fetched": 3,
+                  "groups_total": 3
+                }
+              },
+              "semantic_diff": {
+                "status": "complete",
+                "from_version": "v-2026-08",
+                "to_version": "v-2026-09"
+              },
+              "scope_arc": {
+                "status": "no_baseline",
+                "window_versions": null
+              }
+            },
+            "detail": {
+              "stages": [
+                {
+                  "stage": "metadata",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "score": 72.4,
+                  "confidence": 0.75,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.82,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 2.46
+                    },
+                    "research_saturation": {
+                      "signal": 0.12,
+                      "weight": 1.5,
+                      "direction": "cost",
+                      "contribution": 1.32
+                    },
+                    "known_issue_density": {
+                      "signal": null,
+                      "weight": 1,
+                      "direction": "cost",
+                      "contribution": null
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_HIGH",
+                    "SATURATION_LOW",
+                    "UNKNOWN_KI_DENSITY"
+                  ]
+                },
+                {
+                  "stage": "deep",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "score": 78.9,
+                  "confidence": 0.9,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.82,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 2.46
+                    },
+                    "known_issue_density": {
+                      "signal": 0.31,
+                      "weight": 1,
+                      "direction": "cost",
+                      "contribution": 0.69
+                    },
+                    "opportunity_change": {
+                      "signal": 0.74,
+                      "weight": 2,
+                      "direction": "benefit",
+                      "contribution": 1.48
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_HIGH",
+                    "OPPORTUNITY_EXPANDING"
+                  ]
+                }
+              ],
+              "signal_meta": {
+                "reward_potential": {
+                  "source": "engagement_detail",
+                  "reason_code": "REWARD_HIGH"
+                },
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": {
+                  "source": "engagement_detail",
+                  "reason_code": "SATURATION_LOW"
+                },
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": {
+                  "source": "deep_enrichment",
+                  "reason_code": "KI_DENSITY"
+                },
+                "opportunity_change": {
+                  "source": "deep_enrichment",
+                  "reason_code": "OPPORTUNITY_EXPANDING"
+                },
+                "authz_opportunity": null,
+                "payout_realized": null,
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "uuid": "7d1e9b42-2c6f-4e8a-b3d1-0f9a8c7e6b5d",
+            "slug": "globex-bb",
+            "engagement_url": "https://bugcrowd.com/engagements/globex-bb",
+            "name": "Globex Corporation",
+            "score": 47.3,
+            "metadata_score": 47.3,
+            "deep_score": null,
+            "score_delta": null,
+            "evidence_level": "metadata",
+            "coverage": 0.5,
+            "percentile": 0,
+            "eligible": true,
+            "provisional": false,
+            "restricted_access": false,
+            "source_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "scoring_version": "1.5.0",
+            "reasons": [
+              "REWARD_MEDIUM"
+            ],
+            "signals": {
+              "reward_potential": 0.4,
+              "reward_breadth": null,
+              "meaningful_surface": 0.33,
+              "api_surface": null,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": 0.05,
+              "freshness": 0.85,
+              "safe_harbor": 1,
+              "target_data_quality": null,
+              "accessibility": 0.9,
+              "known_issue_density": null,
+              "opportunity_change": null,
+              "authz_opportunity": null,
+              "payout_realized": 0,
+              "scope_momentum": null,
+              "ki_concentration": null
+            },
+            "enrichment_status": "complete",
+            "deep": null,
+            "detail": {
+              "stages": [
+                {
+                  "stage": "metadata",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "score": 51.6,
+                  "confidence": 0.7,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.4,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 1.2
+                    },
+                    "payout_realized": {
+                      "signal": 0,
+                      "weight": 1,
+                      "direction": "benefit",
+                      "contribution": 0
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_MEDIUM"
+                  ]
+                }
+              ],
+              "signal_meta": {
+                "reward_potential": {
+                  "source": "engagement_detail",
+                  "reason_code": "REWARD_MEDIUM"
+                },
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": null,
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": null,
+                "opportunity_change": null,
+                "authz_opportunity": null,
+                "payout_realized": {
+                  "source": "engagement_detail",
+                  "reason_code": "PAYOUT_NONE"
+                },
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "uuid": "9c0d4e7f-1a3b-4f5c-8d2e-6b7a8c9d0e1f",
+            "slug": "initech-vdp",
+            "engagement_url": "https://bugcrowd.com/engagements/initech-vdp",
+            "name": "Initech VDP",
+            "score": null,
+            "metadata_score": null,
+            "deep_score": null,
+            "score_delta": null,
+            "evidence_level": "metadata",
+            "coverage": 0.15,
+            "percentile": null,
+            "eligible": false,
+            "provisional": true,
+            "restricted_access": false,
+            "source_hash": null,
+            "scoring_version": "1.5.0",
+            "reasons": [
+              "NO_REWARD_POOL"
+            ],
+            "signals": {
+              "reward_potential": null,
+              "reward_breadth": null,
+              "meaningful_surface": 0.1,
+              "api_surface": null,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": null,
+              "freshness": null,
+              "safe_harbor": null,
+              "target_data_quality": null,
+              "accessibility": 0.4,
+              "known_issue_density": null,
+              "opportunity_change": null,
+              "authz_opportunity": null,
+              "payout_realized": null,
+              "scope_momentum": null,
+              "ki_concentration": null
+            },
+            "enrichment_status": "unavailable",
+            "deep": null,
+            "detail": {
+              "stages": [],
+              "signal_meta": {
+                "reward_potential": null,
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": null,
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": null,
+                "opportunity_change": null,
+                "authz_opportunity": null,
+                "payout_realized": null,
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          }
+        ]
+      },
+      {
+        "profile_id": "authz_api",
+        "profile_version": "1.5.0",
+        "profile_label": "AuthZ/API",
+        "min_confidence": 0.5,
+        "total_ranked": 3,
+        "eligible_count": 2,
+        "exported_count": 3,
+        "rows": [
+          {
+            "rank": 1,
+            "uuid": "3f8a2c10-7b4e-4a1d-9c2f-8e5b6d7a9012",
+            "slug": "acme-security-bb",
+            "engagement_url": "https://bugcrowd.com/engagements/acme-security-bb",
+            "name": "Acme Security Bug Bounty",
+            "score": 74.6,
+            "metadata_score": 74.6,
+            "deep_score": 80.2,
+            "score_delta": 5.6,
+            "evidence_level": "deep",
+            "coverage": 0.75,
+            "percentile": 50,
+            "eligible": true,
+            "provisional": false,
+            "restricted_access": true,
+            "source_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "scoring_version": "1.5.0",
+            "reasons": [
+              "REWARD_HIGH",
+              "SATURATION_LOW"
+            ],
+            "signals": {
+              "reward_potential": 0.82,
+              "reward_breadth": null,
+              "meaningful_surface": 0.61,
+              "api_surface": 0.55,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": 0.12,
+              "freshness": 0.1,
+              "safe_harbor": null,
+              "target_data_quality": null,
+              "accessibility": 0.35,
+              "known_issue_density": 0.31,
+              "opportunity_change": 0.74,
+              "authz_opportunity": 0.66,
+              "payout_realized": 0.58,
+              "scope_momentum": 0.4,
+              "ki_concentration": 0.22
+            },
+            "enrichment_status": "complete",
+            "deep": {
+              "status": "partial",
+              "known_issues": {
+                "status": "complete",
+                "unique_count": 7,
+                "total_count": 26,
+                "group_stats": {
+                  "status": "complete",
+                  "groups_fetched": 3,
+                  "groups_total": 3
+                }
+              },
+              "semantic_diff": {
+                "status": "complete",
+                "from_version": "v-2026-08",
+                "to_version": "v-2026-09"
+              },
+              "scope_arc": {
+                "status": "no_baseline",
+                "window_versions": null
+              }
+            },
+            "detail": {
+              "stages": [
+                {
+                  "stage": "metadata",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "score": 72.4,
+                  "confidence": 0.75,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.82,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 2.46
+                    },
+                    "research_saturation": {
+                      "signal": 0.12,
+                      "weight": 1.5,
+                      "direction": "cost",
+                      "contribution": 1.32
+                    },
+                    "known_issue_density": {
+                      "signal": null,
+                      "weight": 1,
+                      "direction": "cost",
+                      "contribution": null
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_HIGH",
+                    "SATURATION_LOW",
+                    "UNKNOWN_KI_DENSITY"
+                  ]
+                },
+                {
+                  "stage": "deep",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "score": 78.9,
+                  "confidence": 0.9,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.82,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 2.46
+                    },
+                    "known_issue_density": {
+                      "signal": 0.31,
+                      "weight": 1,
+                      "direction": "cost",
+                      "contribution": 0.69
+                    },
+                    "opportunity_change": {
+                      "signal": 0.74,
+                      "weight": 2,
+                      "direction": "benefit",
+                      "contribution": 1.48
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_HIGH",
+                    "OPPORTUNITY_EXPANDING"
+                  ]
+                }
+              ],
+              "signal_meta": {
+                "reward_potential": {
+                  "source": "engagement_detail",
+                  "reason_code": "REWARD_HIGH"
+                },
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": {
+                  "source": "engagement_detail",
+                  "reason_code": "SATURATION_LOW"
+                },
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": {
+                  "source": "deep_enrichment",
+                  "reason_code": "KI_DENSITY"
+                },
+                "opportunity_change": {
+                  "source": "deep_enrichment",
+                  "reason_code": "OPPORTUNITY_EXPANDING"
+                },
+                "authz_opportunity": null,
+                "payout_realized": null,
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "uuid": "7d1e9b42-2c6f-4e8a-b3d1-0f9a8c7e6b5d",
+            "slug": "globex-bb",
+            "engagement_url": "https://bugcrowd.com/engagements/globex-bb",
+            "name": "Globex Corporation",
+            "score": 38.8,
+            "metadata_score": 38.8,
+            "deep_score": null,
+            "score_delta": null,
+            "evidence_level": "metadata",
+            "coverage": 0.5,
+            "percentile": 0,
+            "eligible": true,
+            "provisional": false,
+            "restricted_access": false,
+            "source_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "scoring_version": "1.5.0",
+            "reasons": [
+              "REWARD_MEDIUM"
+            ],
+            "signals": {
+              "reward_potential": 0.4,
+              "reward_breadth": null,
+              "meaningful_surface": 0.33,
+              "api_surface": null,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": 0.05,
+              "freshness": 0.85,
+              "safe_harbor": 1,
+              "target_data_quality": null,
+              "accessibility": 0.9,
+              "known_issue_density": null,
+              "opportunity_change": null,
+              "authz_opportunity": null,
+              "payout_realized": 0,
+              "scope_momentum": null,
+              "ki_concentration": null
+            },
+            "enrichment_status": "complete",
+            "deep": null,
+            "detail": {
+              "stages": [
+                {
+                  "stage": "metadata",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "score": 51.6,
+                  "confidence": 0.7,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.4,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 1.2
+                    },
+                    "payout_realized": {
+                      "signal": 0,
+                      "weight": 1,
+                      "direction": "benefit",
+                      "contribution": 0
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_MEDIUM"
+                  ]
+                }
+              ],
+              "signal_meta": {
+                "reward_potential": {
+                  "source": "engagement_detail",
+                  "reason_code": "REWARD_MEDIUM"
+                },
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": null,
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": null,
+                "opportunity_change": null,
+                "authz_opportunity": null,
+                "payout_realized": {
+                  "source": "engagement_detail",
+                  "reason_code": "PAYOUT_NONE"
+                },
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "uuid": "9c0d4e7f-1a3b-4f5c-8d2e-6b7a8c9d0e1f",
+            "slug": "initech-vdp",
+            "engagement_url": "https://bugcrowd.com/engagements/initech-vdp",
+            "name": "Initech VDP",
+            "score": null,
+            "metadata_score": null,
+            "deep_score": null,
+            "score_delta": null,
+            "evidence_level": "metadata",
+            "coverage": 0.15,
+            "percentile": null,
+            "eligible": false,
+            "provisional": true,
+            "restricted_access": false,
+            "source_hash": null,
+            "scoring_version": "1.5.0",
+            "reasons": [
+              "NO_REWARD_POOL"
+            ],
+            "signals": {
+              "reward_potential": null,
+              "reward_breadth": null,
+              "meaningful_surface": 0.1,
+              "api_surface": null,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": null,
+              "freshness": null,
+              "safe_harbor": null,
+              "target_data_quality": null,
+              "accessibility": 0.4,
+              "known_issue_density": null,
+              "opportunity_change": null,
+              "authz_opportunity": null,
+              "payout_realized": null,
+              "scope_momentum": null,
+              "ki_concentration": null
+            },
+            "enrichment_status": "unavailable",
+            "deep": null,
+            "detail": {
+              "stages": [],
+              "signal_meta": {
+                "reward_potential": null,
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": null,
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": null,
+                "opportunity_change": null,
+                "authz_opportunity": null,
+                "payout_realized": null,
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          }
+        ]
+      },
+      {
+        "profile_id": "fresh_programs",
+        "profile_version": "1.5.0",
+        "profile_label": "Fresh Opportunity",
+        "min_confidence": 0.4,
+        "total_ranked": 3,
+        "eligible_count": 2,
+        "exported_count": 3,
+        "rows": [
+          {
+            "rank": 1,
+            "uuid": "7d1e9b42-2c6f-4e8a-b3d1-0f9a8c7e6b5d",
+            "slug": "globex-bb",
+            "engagement_url": "https://bugcrowd.com/engagements/globex-bb",
+            "name": "Globex Corporation",
+            "score": 63,
+            "metadata_score": 63,
+            "deep_score": null,
+            "score_delta": null,
+            "evidence_level": "metadata",
+            "coverage": 0.5,
+            "percentile": 50,
+            "eligible": true,
+            "provisional": false,
+            "restricted_access": false,
+            "source_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "scoring_version": "1.5.0",
+            "reasons": [
+              "REWARD_MEDIUM"
+            ],
+            "signals": {
+              "reward_potential": 0.4,
+              "reward_breadth": null,
+              "meaningful_surface": 0.33,
+              "api_surface": null,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": 0.05,
+              "freshness": 0.85,
+              "safe_harbor": 1,
+              "target_data_quality": null,
+              "accessibility": 0.9,
+              "known_issue_density": null,
+              "opportunity_change": null,
+              "authz_opportunity": null,
+              "payout_realized": 0,
+              "scope_momentum": null,
+              "ki_concentration": null
+            },
+            "enrichment_status": "complete",
+            "deep": null,
+            "detail": {
+              "stages": [
+                {
+                  "stage": "metadata",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "score": 51.6,
+                  "confidence": 0.7,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.4,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 1.2
+                    },
+                    "payout_realized": {
+                      "signal": 0,
+                      "weight": 1,
+                      "direction": "benefit",
+                      "contribution": 0
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_MEDIUM"
+                  ]
+                }
+              ],
+              "signal_meta": {
+                "reward_potential": {
+                  "source": "engagement_detail",
+                  "reason_code": "REWARD_MEDIUM"
+                },
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": null,
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": null,
+                "opportunity_change": null,
+                "authz_opportunity": null,
+                "payout_realized": {
+                  "source": "engagement_detail",
+                  "reason_code": "PAYOUT_NONE"
+                },
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "uuid": "3f8a2c10-7b4e-4a1d-9c2f-8e5b6d7a9012",
+            "slug": "acme-security-bb",
+            "engagement_url": "https://bugcrowd.com/engagements/acme-security-bb",
+            "name": "Acme Security Bug Bounty",
+            "score": 55.2,
+            "metadata_score": 55.2,
+            "deep_score": 66.7,
+            "score_delta": 11.5,
+            "evidence_level": "deep",
+            "coverage": 0.75,
+            "percentile": 0,
+            "eligible": true,
+            "provisional": false,
+            "restricted_access": true,
+            "source_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "scoring_version": "1.5.0",
+            "reasons": [
+              "REWARD_HIGH",
+              "SATURATION_LOW"
+            ],
+            "signals": {
+              "reward_potential": 0.82,
+              "reward_breadth": null,
+              "meaningful_surface": 0.61,
+              "api_surface": 0.55,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": 0.12,
+              "freshness": 0.1,
+              "safe_harbor": null,
+              "target_data_quality": null,
+              "accessibility": 0.35,
+              "known_issue_density": 0.31,
+              "opportunity_change": 0.74,
+              "authz_opportunity": 0.66,
+              "payout_realized": 0.58,
+              "scope_momentum": 0.4,
+              "ki_concentration": 0.22
+            },
+            "enrichment_status": "complete",
+            "deep": {
+              "status": "partial",
+              "known_issues": {
+                "status": "complete",
+                "unique_count": 7,
+                "total_count": 26,
+                "group_stats": {
+                  "status": "complete",
+                  "groups_fetched": 3,
+                  "groups_total": 3
+                }
+              },
+              "semantic_diff": {
+                "status": "complete",
+                "from_version": "v-2026-08",
+                "to_version": "v-2026-09"
+              },
+              "scope_arc": {
+                "status": "no_baseline",
+                "window_versions": null
+              }
+            },
+            "detail": {
+              "stages": [
+                {
+                  "stage": "metadata",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "score": 72.4,
+                  "confidence": 0.75,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.82,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 2.46
+                    },
+                    "research_saturation": {
+                      "signal": 0.12,
+                      "weight": 1.5,
+                      "direction": "cost",
+                      "contribution": 1.32
+                    },
+                    "known_issue_density": {
+                      "signal": null,
+                      "weight": 1,
+                      "direction": "cost",
+                      "contribution": null
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_HIGH",
+                    "SATURATION_LOW",
+                    "UNKNOWN_KI_DENSITY"
+                  ]
+                },
+                {
+                  "stage": "deep",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "score": 78.9,
+                  "confidence": 0.9,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.82,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 2.46
+                    },
+                    "known_issue_density": {
+                      "signal": 0.31,
+                      "weight": 1,
+                      "direction": "cost",
+                      "contribution": 0.69
+                    },
+                    "opportunity_change": {
+                      "signal": 0.74,
+                      "weight": 2,
+                      "direction": "benefit",
+                      "contribution": 1.48
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_HIGH",
+                    "OPPORTUNITY_EXPANDING"
+                  ]
+                }
+              ],
+              "signal_meta": {
+                "reward_potential": {
+                  "source": "engagement_detail",
+                  "reason_code": "REWARD_HIGH"
+                },
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": {
+                  "source": "engagement_detail",
+                  "reason_code": "SATURATION_LOW"
+                },
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": {
+                  "source": "deep_enrichment",
+                  "reason_code": "KI_DENSITY"
+                },
+                "opportunity_change": {
+                  "source": "deep_enrichment",
+                  "reason_code": "OPPORTUNITY_EXPANDING"
+                },
+                "authz_opportunity": null,
+                "payout_realized": null,
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "uuid": "9c0d4e7f-1a3b-4f5c-8d2e-6b7a8c9d0e1f",
+            "slug": "initech-vdp",
+            "engagement_url": "https://bugcrowd.com/engagements/initech-vdp",
+            "name": "Initech VDP",
+            "score": null,
+            "metadata_score": null,
+            "deep_score": null,
+            "score_delta": null,
+            "evidence_level": "metadata",
+            "coverage": 0.15,
+            "percentile": null,
+            "eligible": false,
+            "provisional": true,
+            "restricted_access": false,
+            "source_hash": null,
+            "scoring_version": "1.5.0",
+            "reasons": [
+              "NO_REWARD_POOL"
+            ],
+            "signals": {
+              "reward_potential": null,
+              "reward_breadth": null,
+              "meaningful_surface": 0.1,
+              "api_surface": null,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": null,
+              "freshness": null,
+              "safe_harbor": null,
+              "target_data_quality": null,
+              "accessibility": 0.4,
+              "known_issue_density": null,
+              "opportunity_change": null,
+              "authz_opportunity": null,
+              "payout_realized": null,
+              "scope_momentum": null,
+              "ki_concentration": null
+            },
+            "enrichment_status": "unavailable",
+            "deep": null,
+            "detail": {
+              "stages": [],
+              "signal_meta": {
+                "reward_potential": null,
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": null,
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": null,
+                "opportunity_change": null,
+                "authz_opportunity": null,
+                "payout_realized": null,
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          }
+        ]
+      },
+      {
+        "profile_id": "easy_entry",
+        "profile_version": "1.4.0",
+        "profile_label": "Easy Entry",
+        "min_confidence": 0.3,
+        "total_ranked": 3,
+        "eligible_count": 2,
+        "exported_count": 3,
+        "rows": [
+          {
+            "rank": 1,
+            "uuid": "7d1e9b42-2c6f-4e8a-b3d1-0f9a8c7e6b5d",
+            "slug": "globex-bb",
+            "engagement_url": "https://bugcrowd.com/engagements/globex-bb",
+            "name": "Globex Corporation",
+            "score": 61.2,
+            "metadata_score": 61.2,
+            "deep_score": null,
+            "score_delta": null,
+            "evidence_level": "metadata",
+            "coverage": 0.5,
+            "percentile": 50,
+            "eligible": true,
+            "provisional": false,
+            "restricted_access": false,
+            "source_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "scoring_version": "1.4.0",
+            "reasons": [
+              "REWARD_MEDIUM"
+            ],
+            "signals": {
+              "reward_potential": 0.4,
+              "reward_breadth": null,
+              "meaningful_surface": 0.33,
+              "api_surface": null,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": 0.05,
+              "freshness": 0.85,
+              "safe_harbor": 1,
+              "target_data_quality": null,
+              "accessibility": 0.9,
+              "known_issue_density": null,
+              "opportunity_change": null,
+              "authz_opportunity": null,
+              "payout_realized": 0,
+              "scope_momentum": null,
+              "ki_concentration": null
+            },
+            "enrichment_status": "complete",
+            "deep": null,
+            "detail": {
+              "stages": [
+                {
+                  "stage": "metadata",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "score": 51.6,
+                  "confidence": 0.7,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.4,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 1.2
+                    },
+                    "payout_realized": {
+                      "signal": 0,
+                      "weight": 1,
+                      "direction": "benefit",
+                      "contribution": 0
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_MEDIUM"
+                  ]
+                }
+              ],
+              "signal_meta": {
+                "reward_potential": {
+                  "source": "engagement_detail",
+                  "reason_code": "REWARD_MEDIUM"
+                },
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": null,
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": null,
+                "opportunity_change": null,
+                "authz_opportunity": null,
+                "payout_realized": {
+                  "source": "engagement_detail",
+                  "reason_code": "PAYOUT_NONE"
+                },
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "uuid": "3f8a2c10-7b4e-4a1d-9c2f-8e5b6d7a9012",
+            "slug": "acme-security-bb",
+            "engagement_url": "https://bugcrowd.com/engagements/acme-security-bb",
+            "name": "Acme Security Bug Bounty",
+            "score": 43.5,
+            "metadata_score": 43.5,
+            "deep_score": null,
+            "score_delta": null,
+            "evidence_level": "metadata",
+            "coverage": 0.75,
+            "percentile": 0,
+            "eligible": true,
+            "provisional": false,
+            "restricted_access": true,
+            "source_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "scoring_version": "1.4.0",
+            "reasons": [
+              "REWARD_HIGH",
+              "SATURATION_LOW"
+            ],
+            "signals": {
+              "reward_potential": 0.82,
+              "reward_breadth": null,
+              "meaningful_surface": 0.61,
+              "api_surface": 0.55,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": 0.12,
+              "freshness": 0.1,
+              "safe_harbor": null,
+              "target_data_quality": null,
+              "accessibility": 0.35,
+              "known_issue_density": 0.31,
+              "opportunity_change": 0.74,
+              "authz_opportunity": 0.66,
+              "payout_realized": 0.58,
+              "scope_momentum": 0.4,
+              "ki_concentration": 0.22
+            },
+            "enrichment_status": "complete",
+            "deep": {
+              "status": "partial",
+              "known_issues": {
+                "status": "complete",
+                "unique_count": 7,
+                "total_count": 26,
+                "group_stats": {
+                  "status": "complete",
+                  "groups_fetched": 3,
+                  "groups_total": 3
+                }
+              },
+              "semantic_diff": {
+                "status": "complete",
+                "from_version": "v-2026-08",
+                "to_version": "v-2026-09"
+              },
+              "scope_arc": {
+                "status": "no_baseline",
+                "window_versions": null
+              }
+            },
+            "detail": {
+              "stages": [
+                {
+                  "stage": "metadata",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "score": 72.4,
+                  "confidence": 0.75,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.82,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 2.46
+                    },
+                    "research_saturation": {
+                      "signal": 0.12,
+                      "weight": 1.5,
+                      "direction": "cost",
+                      "contribution": 1.32
+                    },
+                    "known_issue_density": {
+                      "signal": null,
+                      "weight": 1,
+                      "direction": "cost",
+                      "contribution": null
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_HIGH",
+                    "SATURATION_LOW",
+                    "UNKNOWN_KI_DENSITY"
+                  ]
+                },
+                {
+                  "stage": "deep",
+                  "scoring_version": "1.5.0",
+                  "source_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "score": 78.9,
+                  "confidence": 0.9,
+                  "provisional": false,
+                  "components": {
+                    "reward_potential": {
+                      "signal": 0.82,
+                      "weight": 3,
+                      "direction": "benefit",
+                      "contribution": 2.46
+                    },
+                    "known_issue_density": {
+                      "signal": 0.31,
+                      "weight": 1,
+                      "direction": "cost",
+                      "contribution": 0.69
+                    },
+                    "opportunity_change": {
+                      "signal": 0.74,
+                      "weight": 2,
+                      "direction": "benefit",
+                      "contribution": 1.48
+                    }
+                  },
+                  "reasons": [
+                    "REWARD_HIGH",
+                    "OPPORTUNITY_EXPANDING"
+                  ]
+                }
+              ],
+              "signal_meta": {
+                "reward_potential": {
+                  "source": "engagement_detail",
+                  "reason_code": "REWARD_HIGH"
+                },
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": {
+                  "source": "engagement_detail",
+                  "reason_code": "SATURATION_LOW"
+                },
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": {
+                  "source": "deep_enrichment",
+                  "reason_code": "KI_DENSITY"
+                },
+                "opportunity_change": {
+                  "source": "deep_enrichment",
+                  "reason_code": "OPPORTUNITY_EXPANDING"
+                },
+                "authz_opportunity": null,
+                "payout_realized": null,
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "uuid": "9c0d4e7f-1a3b-4f5c-8d2e-6b7a8c9d0e1f",
+            "slug": "initech-vdp",
+            "engagement_url": "https://bugcrowd.com/engagements/initech-vdp",
+            "name": "Initech VDP",
+            "score": null,
+            "metadata_score": null,
+            "deep_score": null,
+            "score_delta": null,
+            "evidence_level": "metadata",
+            "coverage": 0.15,
+            "percentile": null,
+            "eligible": false,
+            "provisional": true,
+            "restricted_access": false,
+            "source_hash": null,
+            "scoring_version": "1.4.0",
+            "reasons": [
+              "NO_REWARD_POOL"
+            ],
+            "signals": {
+              "reward_potential": null,
+              "reward_breadth": null,
+              "meaningful_surface": 0.1,
+              "api_surface": null,
+              "api_surface_size": null,
+              "web_surface": null,
+              "researcher_competition": null,
+              "rewarded_activity": null,
+              "submission_activity": null,
+              "research_saturation": null,
+              "freshness": null,
+              "safe_harbor": null,
+              "target_data_quality": null,
+              "accessibility": 0.4,
+              "known_issue_density": null,
+              "opportunity_change": null,
+              "authz_opportunity": null,
+              "payout_realized": null,
+              "scope_momentum": null,
+              "ki_concentration": null
+            },
+            "enrichment_status": "unavailable",
+            "deep": null,
+            "detail": {
+              "stages": [],
+              "signal_meta": {
+                "reward_potential": null,
+                "reward_breadth": null,
+                "meaningful_surface": null,
+                "api_surface": null,
+                "api_surface_size": null,
+                "web_surface": null,
+                "researcher_competition": null,
+                "rewarded_activity": null,
+                "submission_activity": null,
+                "research_saturation": null,
+                "freshness": null,
+                "safe_harbor": null,
+                "target_data_quality": null,
+                "accessibility": null,
+                "known_issue_density": null,
+                "opportunity_change": null,
+                "authz_opportunity": null,
+                "payout_realized": null,
+                "scope_momentum": null,
+                "ki_concentration": null
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "diagnostics": {
+      "deep_candidates": 2,
+      "deep_analyzed": 1,
+      "not_analyzed": 1,
+      "sub_sources": {
+        "known_issues": {
+          "complete": 1,
+          "unavailable": 0,
+          "failed": 0,
+          "no_baseline": 0,
+          "skipped": 0,
+          "absent": 0
+        },
+        "semantic_diff": {
+          "complete": 1,
+          "unavailable": 0,
+          "failed": 0,
+          "no_baseline": 0,
+          "skipped": 0,
+          "absent": 0
+        },
+        "scope_arc": {
+          "complete": 0,
+          "unavailable": 0,
+          "failed": 0,
+          "no_baseline": 1,
+          "skipped": 0,
+          "absent": 0
+        },
+        "group_stats": {
+          "complete": 1,
+          "unavailable": 0,
+          "failed": 0,
+          "no_baseline": 0,
+          "skipped": 0,
+          "absent": 0
+        }
+      }
+    }
+  }
+}
