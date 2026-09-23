@@ -47,6 +47,25 @@ const FRICTION_RE =
 /** Gated-participation family, matched against the participation string. */
 const GATED_RE = /invite|application|approval|waitlist|private|managed|closed/i;
 
+/**
+ * True when the program's stated posture is gated/invitation-only — the
+ * report-export restricted-access flag. Same precedence as the rubric:
+ * `detail.participation` wins, catalog `lifecycle_status` is the fallback,
+ * and a posture containing "open" ("reopened") is never gated. A program
+ * with no stated posture is NOT flagged — absence is not evidence.
+ */
+export function isRestrictedAccess(
+  detail: { participation: string | null } | null,
+  catalog: { lifecycle_status: string | null } | null,
+): boolean {
+  const part = (
+    detail?.participation ??
+    catalog?.lifecycle_status ??
+    ""
+  ).toLowerCase();
+  return !part.includes("open") && GATED_RE.test(part);
+}
+
 // Base bands — pinned V1.4 calibration. 0.8 leaves headroom for the two
 // +0.10 bonuses to reach 1.0 on a fully self-serve open program; 0.2 can be
 // softened by shipped credentials but never reach "open"; 0.5 is the honest

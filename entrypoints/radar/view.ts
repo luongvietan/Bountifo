@@ -221,16 +221,61 @@ export function deepSummaryText(summary: RadarScanSummary): string | null {
   }
   const analyzed = summary.deep_analyzed ?? 0;
   const candidates = summary.deep_candidates ?? 0;
+  // "X of Y analyzed" whenever the union was cut short — and whenever V1.5.1
+  // source tallies are present, so the diagnostics-bearing line always names
+  // the full candidate set it measured. Legacy summaries keep "X analyzed".
   const counts =
-    candidates > analyzed
+    candidates > analyzed || summary.deep_sources !== undefined
       ? `${analyzed} of ${candidates} analyzed`
       : `${analyzed} analyzed`;
   const rounds = plural(summary.deep_rounds ?? 0, "round");
   const stabilization = stabilizationLabel(summary.deep_stabilization);
+  const sources = deepSourcesText(summary.deep_sources, analyzed);
   return (
     `Deep: ${counts} · ${rounds}` +
-    (stabilization === null ? "" : ` · ${stabilization}`)
+    (stabilization === null ? "" : ` · ${stabilization}`) +
+    sources
   );
+}
+
+/**
+ * Per-sub-source segment of the deep summary, e.g.
+ * "KI 0/60 unavailable · diff 58/60 · arc 55/60 · groups 0/60
+ * skipped_upstream" — complete count over deep_analyzed plus the dominant
+ * non-complete outcome, so a systemic outage reads on the status line
+ * instead of hiding inside per-program detail panes. A source with no
+ * observed outcomes is omitted; a clean sweep shows bare counts.
+ */
+function deepSourcesText(
+  deepSources: RadarScanSummary["deep_sources"],
+  analyzed: number,
+): string {
+  if (deepSources === undefined) return "";
+  const segment = (
+    label: string,
+    tally: Record<string, number>,
+  ): string | null => {
+    const entries = Object.entries(tally);
+    if (entries.length === 0) return null;
+    const complete = tally.complete ?? 0;
+    let suffix = "";
+    if (complete < analyzed) {
+      const dominant = entries
+        .filter(([status]) => status !== "complete")
+        .sort(
+          (a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0),
+        )[0]?.[0];
+      if (dominant !== undefined) suffix = ` ${dominant}`;
+    }
+    return `${label} ${complete}/${analyzed}${suffix}`;
+  };
+  const parts = [
+    segment("KI", deepSources.known_issues),
+    segment("diff", deepSources.semantic_diff),
+    segment("arc", deepSources.scope_arc),
+    segment("groups", deepSources.group_stats),
+  ].filter((s): s is string => s !== null);
+  return parts.length === 0 ? "" : ` · ${parts.join(" · ")}`;
 }
 
 /**

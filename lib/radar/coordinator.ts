@@ -1,9 +1,27 @@
 import { ApiError } from "../api/errors";
+import { isRestrictedAccess } from "./accessibility";
 import type { CatalogScanResult } from "./catalog";
+import {
+  radarEngagementUrl,
+  type RadarDeepDiagnostics,
+  type RadarExportData,
+  type RadarExportDeepDigest,
+  type RadarExportQuery,
+  type RadarExportRow,
+  type RadarExportRowDetail,
+  type RadarExportSection,
+  type RadarExportStageScore,
+  type SubSourceCounts,
+} from "./export";
 import { extractProgramFeatures } from "./features";
 import { cohortPercentile } from "./percentile";
 import { getRadarProfile } from "./profiles";
-import { explainScore, rankPrograms, scoreProgram } from "./scoring";
+import {
+  explainScore,
+  rankPrograms,
+  scoreProgram,
+  type RankedProgram,
+} from "./scoring";
 import {
   compareBookkeeping,
   getCatalog,
@@ -24,6 +42,7 @@ import {
   type RadarRunRecord,
   type ScoreRow,
 } from "./store";
+import type { RadarDeepEnrichment } from "./deepTypes";
 import { annotateEvidence } from "./stage";
 import { selectDeepCandidates } from "./shortlist";
 import { evaluateFrontier } from "./stabilize";
@@ -34,6 +53,7 @@ import {
   PROFILE_CANDIDATE_DEPTH,
   STABILITY_BUFFER,
   STABLE_TOP_K,
+  RADAR_FEATURE_KEYS,
   RADAR_PROFILE_IDS,
   type DeepCandidate,
   type DeepStabilization,
@@ -97,10 +117,32 @@ export interface RadarRunState {
   deep_stabilization: DeepStabilization | null;
   /** Total warning count (details capped — see RadarScanSummary.warnings). */
   warnings: number;
+  /**
+   * V1.5.1 per-sub-source outcome tallies accumulated by the deep worker —
+   * e.g. {known_issues: {unavailable: 60}} is the run-level signature of a
+   * systemic source outage that per-program honest nulls alone cannot
+   * express. Counts only programs that produced a deep payload; a completed
+   * candidate with no detail tallies nothing. "absent" marks a sub-object
+   * missing from the payload entirely.
+   */
+  deep_sources: RadarDeepSources;
   started_at: string;
   updated_at: string;
   /** Lifecycle verdict written when the run reaches done/failed (Task 17). */
   summary?: RadarScanSummary;
+}
+
+/**
+ * Per-sub-source outcome tallies for the deep stage: literal status string
+ * → program count (plus "absent" when the sub-object was missing from the
+ * payload). Keys appear only for outcomes actually observed — deterministic
+ * bookkeeping, no fabrication.
+ */
+export interface RadarDeepSources {
+  known_issues: Record<string, number>;
+  semantic_diff: Record<string, number>;
+  scope_arc: Record<string, number>;
+  group_stats: Record<string, number>;
 }
 
 /** Scan-result integrity status — never silently "complete" (Task 17). */
@@ -122,6 +164,12 @@ export interface RadarScanSummary {
   deep_rounds?: number;
   deep_budget?: number;
   deep_stabilization?: DeepStabilization | null;
+  /**
+   * V1.5.1 deep-stage source diagnostics — present exactly when the other
+   * deep fields are. Per-sub-source outcome tallies let a scan that "ran
+   * fine" still disclose a systemic deep-evidence outage.
+   */
+  deep_sources?: RadarDeepSources;
 }
 
 /**
@@ -303,6 +351,134 @@ function asIsoString(value: unknown, fallback: string): string {
   return typeof value === "string" && value !== "" ? value : fallback;
 }
 
+const DEEP_SOURCE_KEYS = [
+  "known_issues",
+  "semantic_diff",
+  "scope_arc",
+  "group_stats",
+] as const;
+
+function emptyDeepSources(): RadarDeepSources {
+  return {
+    known_issues: {},
+    semantic_diff: {},
+    scope_arc: {},
+    group_stats: {},
+  };
+}
+
+/** Loose persisted deep_sources → typed tallies (bad entries dropped). */
+function asDeepSources(value: unknown): RadarDeepSources {
+  const out = emptyDeepSources();
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return out;
+  }
+  const v = value as Record<string, unknown>;
+  for (const key of DEEP_SOURCE_KEYS) {
+    const tally = v[key];
+    if (tally === null || typeof tally !== "object" || Array.isArray(tally)) {
+      continue;
+    }
+    for (const [status, count] of Object.entries(tally)) {
+      if (status === "") continue;
+      if (typeof count !== "number" || !Number.isInteger(count) || count <= 0) {
+        continue;
+      }
+      out[key][status] = count;
+    }
+  }
+  return out;
+}
+
+/** A tally is an object of non-empty status keys → positive int counts. */
+function isTally(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  return Object.entries(value as Record<string, unknown>).every(
+    ([status, count]) =>
+      status !== "" &&
+      typeof count === "number" &&
+      Number.isInteger(count) &&
+      count > 0,
+  );
+}
+
+/** Summary-level validation: all four tallies must be present and clean. */
+function isDeepSources(value: unknown): value is RadarDeepSources {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  return DEEP_SOURCE_KEYS.every((key) => isTally(v[key]));
+}
+
+/**
+ * Folds one deep payload into the run tallies — the literal sub-source
+ * statuses, "absent" when the sub-object is missing. Group stats ride on
+ * the aggregate's sub-block; an absent aggregate reads absent here too.
+ */
+function tallyDeepSources(
+  tallies: RadarDeepSources,
+  deep: RadarDeepEnrichment,
+): void {
+  const bump = (tally: Record<string, number>, status: string): void => {
+    tally[status] = (tally[status] ?? 0) + 1;
+  };
+  bump(tallies.known_issues, deep.known_issues?.status ?? "absent");
+  bump(tallies.semantic_diff, deep.semantic_diff?.status ?? "absent");
+  bump(tallies.scope_arc, deep.scope_arc?.status ?? "absent");
+  bump(
+    tallies.group_stats,
+    deep.known_issues?.group_stats?.status ?? "absent",
+  );
+}
+
+/**
+ * Systemic-outage warnings: a sub-source that reached a failure state for
+ * EVERY program that attempted it is a run-level event (dead session, dead
+ * route), not per-program noise. Deliberate bounds are not failures —
+ * skipped_* group-stats states and no_baseline diffs warn nothing, and a
+ * mixed outcome (some complete, some not) is ordinary per-program variance.
+ */
+function deepSourceWarnings(t: RadarDeepSources): string[] {
+  const warnings: string[] = [];
+  const sum = (tally: Record<string, number>): number =>
+    Object.values(tally).reduce((a, n) => a + n, 0);
+
+  const ki = t.known_issues;
+  const kiAttempted = sum(ki) - (ki.absent ?? 0);
+  const kiUnavailable = ki.unavailable ?? 0;
+  const kiFailed = ki.failed ?? 0;
+  if (
+    kiAttempted > 0 &&
+    (ki.complete ?? 0) === 0 &&
+    kiUnavailable + kiFailed === kiAttempted
+  ) {
+    warnings.push(
+      kiUnavailable >= kiFailed
+        ? "deep_known_issues_unavailable"
+        : "deep_known_issues_failed",
+    );
+  }
+
+  for (const key of ["semantic_diff", "scope_arc"] as const) {
+    const tally = t[key];
+    const attempted = sum(tally) - (tally.absent ?? 0);
+    if (attempted > 0 && (tally.unavailable ?? 0) === attempted) {
+      warnings.push(`deep_${key}_unavailable`);
+    }
+  }
+
+  const gs = t.group_stats;
+  const gsAttempted =
+    (gs.complete ?? 0) + (gs.unavailable ?? 0) + (gs.failed ?? 0);
+  if (gsAttempted > 0 && (gs.complete ?? 0) === 0) {
+    warnings.push("deep_group_stats_failed");
+  }
+  return warnings;
+}
+
 function isSummary(value: unknown): value is RadarScanSummary {
   if (value === null || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
@@ -346,6 +522,7 @@ function isSummary(value: unknown): value is RadarScanSummary {
   ] as const) {
     if (key in v && typeof v[key] !== "number") return false;
   }
+  if ("deep_sources" in v && !isDeepSources(v.deep_sources)) return false;
   return (
     !("deep_stabilization" in v) ||
     v.deep_stabilization === null ||
@@ -436,6 +613,7 @@ function normalizeRunRecord(
     deep_round: asCount(record.deep_round),
     deep_budget: asCount(record.deep_budget),
     deep_stabilization: asStabilization(record.deep_stabilization),
+    deep_sources: asDeepSources(record.deep_sources),
   };
 }
 
@@ -550,6 +728,7 @@ export class RadarCoordinator {
       deep_round: 0,
       deep_budget: 0,
       deep_stabilization: null,
+      deep_sources: emptyDeepSources(),
     };
     await this.checkpoint(db, this.run);
     await setLatestRunId(db, this.run.run_id);
@@ -617,10 +796,17 @@ export class RadarCoordinator {
    * LATEST run actually deep-analyzed display deep scores/badges. A stale
    * deep row from an earlier scan stays cached but is not presented as
    * current evidence.
+   *
+   * The normalized run record rides along so report export can describe the
+   * same coherent snapshot without a second load.
    */
   private async latestRunContext(
     db: RadarDb,
-  ): Promise<{ scope: Set<string>; deepCompleted: Set<string> } | null> {
+  ): Promise<{
+    run: PersistedRadarRun;
+    scope: Set<string>;
+    deepCompleted: Set<string>;
+  } | null> {
     const runId = await getLatestRunId(db);
     if (runId === null) return null;
     const record = await getRun(db, runId);
@@ -629,34 +815,29 @@ export class RadarCoordinator {
     for (const uuid of asStringList(record.completed_uuids)) scope.add(uuid);
     for (const uuid of asStringList(record.pending_uuids)) scope.add(uuid);
     return {
+      run: normalizeRunRecord(record, this.deps.now()),
       scope,
       deepCompleted: new Set(asStringList(record.deep_completed_uuids)),
     };
   }
 
-  /**
-   * Ranked results rows for one profile, at one evidence level:
-   *
-   *   mode "metadata" — every in-scope program ranked by its metadata-stage
-   *     score; rows that were also deep-analyzed are annotated with
-   *     evidence_level "deep" plus deep_score/score_delta.
-   *   mode "deep" — ONLY programs holding a deep-stage score, ranked among
-   *     themselves. Metadata-only programs never share this rank: the
-   *     ordinal ordering would compare different evidence levels.
-   *
-   * For profiles without deep weights no deep rows are written, so "deep"
-   * mode is honestly empty. `rankPrograms` supplies ordering;
-   * `minConfidence` is an optional extra filter; `limit` clamps to ≤200.
-   */
-  async getResults(
+  /** The shared row-collection half of getResults: latest-run scope filter,
+   *  deep-gating, ranking, and the per-uuid lookups both consumers need.
+   *  Percentile/limit stay with the caller — the export path applies its own
+   *  cap after the full-cohort percentile is assigned. */
+  private async collectProfileRows(
+    db: RadarDb,
+    ctx: { scope: Set<string>; deepCompleted: Set<string> },
     profileId: RadarProfileId,
-    limit: number = 50,
-    minConfidence?: number,
-    mode: RadarResultMode = "metadata",
-  ): Promise<RadarResultRow[]> {
-    const db = await this.database();
-    const ctx = await this.latestRunContext(db);
-    if (ctx === null) return [];
+    mode: RadarResultMode,
+  ): Promise<{
+    profile: ReturnType<typeof getRadarProfile>;
+    ranked: RankedProgram[];
+    metaByUuid: Map<string, ScoreRow>;
+    deepByUuid: Map<string, ScoreRow>;
+    shownByUuid: Map<string, ScoreRow>;
+    catalog: Map<string, RadarCatalogItem>;
+  }> {
     const profile = getRadarProfile(profileId);
     const staged = await getLatestScoreRowsByStage(
       db,
@@ -682,6 +863,34 @@ export class RadarCoordinator {
     const catalog = new Map(
       (await getCatalog(db)).map((item) => [item.uuid, item]),
     );
+    return { profile, ranked, metaByUuid, deepByUuid, shownByUuid, catalog };
+  }
+
+  /**
+   * Ranked results rows for one profile, at one evidence level:
+   *
+   *   mode "metadata" — every in-scope program ranked by its metadata-stage
+   *     score; rows that were also deep-analyzed are annotated with
+   *     evidence_level "deep" plus deep_score/score_delta.
+   *   mode "deep" — ONLY programs holding a deep-stage score, ranked among
+   *     themselves. Metadata-only programs never share this rank: the
+   *     ordinal ordering would compare different evidence levels.
+   *
+   * For profiles without deep weights no deep rows are written, so "deep"
+   * mode is honestly empty. `rankPrograms` supplies ordering;
+   * `minConfidence` is an optional extra filter; `limit` clamps to ≤200.
+   */
+  async getResults(
+    profileId: RadarProfileId,
+    limit: number = 50,
+    minConfidence?: number,
+    mode: RadarResultMode = "metadata",
+  ): Promise<RadarResultRow[]> {
+    const db = await this.database();
+    const ctx = await this.latestRunContext(db);
+    if (ctx === null) return [];
+    const { profile, ranked, metaByUuid, deepByUuid, shownByUuid, catalog } =
+      await this.collectProfileRows(db, ctx, profileId, mode);
     const cap = Number.isFinite(limit)
       ? Math.max(1, Math.min(Math.floor(limit), MAX_RESULT_LIMIT))
       : MAX_RESULT_LIMIT;
@@ -746,6 +955,341 @@ export class RadarCoordinator {
       });
     }
     return out;
+  }
+
+  // -------------------------------------------------------------------------
+  // Report export (V1.5) — one coherent snapshot of the persisted latest run.
+  // Read-only by construction: no enumerate/hydrate calls, no store writes;
+  // the same scope/deep-gating rules as getResults apply, but the row cap is
+  // the export's own (Top-20/50/all) and never the UI's 200-row page limit.
+  // -------------------------------------------------------------------------
+
+  /** Persisted deep payload → export digest; null → honest absent. */
+  private static deepDigest(
+    deep: RadarProgramSnapshot["deep"],
+  ): RadarExportDeepDigest | null {
+    if (deep == null) return null;
+    const ki = deep.known_issues;
+    return {
+      status: deep.status,
+      known_issues:
+        ki === null
+          ? null
+          : {
+              status: ki.status,
+              unique_count: ki.unique_count,
+              total_count: ki.total_count,
+              group_stats:
+                ki.group_stats === undefined
+                  ? null
+                  : {
+                      status: ki.group_stats.status,
+                      groups_fetched: ki.group_stats.groups_fetched,
+                      groups_total: ki.group_stats.groups_total,
+                    },
+            },
+      semantic_diff:
+        deep.semantic_diff === null
+          ? null
+          : {
+              status: deep.semantic_diff.status,
+              from_version: deep.semantic_diff.from_version,
+              to_version: deep.semantic_diff.to_version,
+            },
+      scope_arc:
+        deep.scope_arc == null
+          ? null
+          : {
+              status: deep.scope_arc.status,
+              window_versions: deep.scope_arc.window_versions,
+            },
+    };
+  }
+
+  /** Tally one status string into the sub-source bucket it belongs to. */
+  private static tally(
+    counts: SubSourceCounts,
+    status: string | null | undefined,
+  ): void {
+    switch (status) {
+      case "complete":
+        counts.complete += 1;
+        break;
+      case "unavailable":
+        counts.unavailable += 1;
+        break;
+      case "failed":
+        counts.failed += 1;
+        break;
+      case "no_baseline":
+        counts.no_baseline += 1;
+        break;
+      case "skipped_upstream":
+      case "skipped_low_volume":
+      case "skipped_group_count":
+        counts.skipped += 1;
+        break;
+      default:
+        // Absent sub-block or a status this exporter does not recognize —
+        // an honest unknown, never silently counted as success or failure.
+        counts.absent += 1;
+    }
+  }
+
+  /**
+   * Assembles the report data model for the persisted latest run — the SAME
+   * scope + deep-completion gating the results table uses. Returns null when
+   * no scan has ever run. Every unknown stays null; nothing is recomputed,
+   * fabricated, or merged across runs.
+   */
+  async getExportData(
+    query: RadarExportQuery,
+  ): Promise<RadarExportData | null> {
+    const db = await this.database();
+    const ctx = await this.latestRunContext(db);
+    if (ctx === null) return null;
+    const run = ctx.run;
+
+    // One snapshot read per exported uuid, shared across profile sections.
+    const snapshots = new Map<string, RadarProgramSnapshot | null>();
+    const snapshotFor = async (
+      uuid: string,
+    ): Promise<RadarProgramSnapshot | null> => {
+      if (!snapshots.has(uuid)) {
+        snapshots.set(uuid, await getLatestSnapshot(db, uuid));
+      }
+      return snapshots.get(uuid)!;
+    };
+
+    const restricted = new Set<string>();
+    const sections: RadarExportSection[] = [];
+    for (const profileId of query.profiles) {
+      const { profile, ranked, metaByUuid, deepByUuid, shownByUuid, catalog } =
+        await this.collectProfileRows(db, ctx, profileId, "metadata");
+      // Percentile over the FULL eligible cohort — identical walk to
+      // getResults with no minConfidence filter; the export cap truncates
+      // rows afterwards, never the cohort math.
+      const cohortSize = ranked.filter((r) => r.eligible).length;
+      let eligiblePos = 0;
+      const rows: RadarExportRow[] = [];
+      const limit = query.limit;
+      for (const { score, eligible } of ranked) {
+        if (limit !== null && rows.length >= limit) break;
+        if (eligible) eligiblePos += 1;
+        const uuid = score.engagement_uuid;
+        const ann = annotateEvidence(
+          metaByUuid.get(uuid)?.score ?? null,
+          deepByUuid.get(uuid)?.score ?? null,
+        );
+        const metaRow = metaByUuid.get(uuid);
+        const deepRow = deepByUuid.get(uuid);
+        const vector = deepRow?.vector ?? shownByUuid.get(uuid)?.vector;
+        const snap = await snapshotFor(uuid);
+        const cat = catalog.get(uuid) ?? snap?.catalog;
+        const slug = cat?.code ?? snap?.code ?? uuid;
+        const deepDigest =
+          ctx.deepCompleted.has(uuid)
+            ? RadarCoordinator.deepDigest(snap?.deep ?? null)
+            : null;
+        const gated = isRestrictedAccess(snap?.detail ?? null, cat ?? null);
+        if (gated) restricted.add(slug);
+        const signals = Object.fromEntries(
+          RADAR_FEATURE_KEYS.map((key) => [key, vector?.[key]?.value ?? null]),
+        ) as RadarExportRow["signals"];
+        const row: RadarExportRow = {
+          rank: rows.length + 1,
+          uuid,
+          slug,
+          engagement_url: radarEngagementUrl(slug),
+          name: cat?.name ?? snap?.catalog.name ?? null,
+          score: score.score,
+          metadata_score: ann.metadata_score,
+          deep_score: ann.deep_score,
+          score_delta: ann.score_delta,
+          evidence_level: ann.evidence_level,
+          coverage: score.confidence,
+          percentile: eligible
+            ? cohortPercentile(eligiblePos, cohortSize)
+            : null,
+          eligible,
+          provisional: score.provisional,
+          restricted_access: gated,
+          source_hash: score.source_hash,
+          scoring_version: score.scoring_version,
+          reasons: score.reasons,
+          signals,
+          enrichment_status: snap?.enrichment.status ?? null,
+          deep: deepDigest,
+        };
+        if (query.detail) {
+          const stages: RadarExportStageScore[] = [];
+          for (const [stage, r] of [
+            ["metadata", metaRow],
+            ["deep", deepRow],
+          ] as const) {
+            if (r === undefined) continue;
+            stages.push({
+              stage,
+              scoring_version: r.score.scoring_version,
+              source_hash: r.score.source_hash,
+              score: r.score.score,
+              confidence: r.score.confidence,
+              provisional: r.score.provisional,
+              components: r.score.components,
+              reasons: r.score.reasons,
+            });
+          }
+          const signalMeta: RadarExportRowDetail["signal_meta"] =
+            Object.fromEntries(
+              RADAR_FEATURE_KEYS.map((key) => [
+                key,
+                vector?.[key] === undefined
+                  ? null
+                  : {
+                      source: vector[key].source,
+                      reason_code: vector[key].reason_code,
+                    },
+              ]),
+            ) as RadarExportRowDetail["signal_meta"];
+          row.detail = { stages, signal_meta: signalMeta };
+        }
+        rows.push(row);
+      }
+      sections.push({
+        profile_id: profile.id,
+        profile_version: profile.version,
+        profile_label: profile.label,
+        min_confidence: profile.minConfidence,
+        total_ranked: ranked.length,
+        eligible_count: cohortSize,
+        exported_count: rows.length,
+        rows,
+      });
+    }
+
+    // Deep sub-source diagnostics: every deep-completed uuid's persisted
+    // payload, tallied honestly — independent of the coordinator's own
+    // warning count (zero warnings can still hide failed sub-sources).
+    let diagnostics: RadarDeepDiagnostics | null = null;
+    if (query.diagnostics) {
+      const blank = (): SubSourceCounts => ({
+        complete: 0,
+        unavailable: 0,
+        failed: 0,
+        no_baseline: 0,
+        skipped: 0,
+        absent: 0,
+      });
+      const diag: RadarDeepDiagnostics = {
+        deep_candidates: run.deep_candidates.length,
+        deep_analyzed: ctx.deepCompleted.size,
+        not_analyzed: 0,
+        sub_sources: {
+          known_issues: blank(),
+          semantic_diff: blank(),
+          scope_arc: blank(),
+          group_stats: blank(),
+        },
+      };
+      const analyzedSet = new Set(ctx.deepCompleted);
+      for (const c of run.deep_candidates) {
+        if (!analyzedSet.has(c.uuid)) diag.not_analyzed += 1;
+      }
+      for (const uuid of ctx.deepCompleted) {
+        const deep = (await snapshotFor(uuid))?.deep ?? null;
+        if (deep == null) {
+          for (const key of [
+            "known_issues",
+            "semantic_diff",
+            "scope_arc",
+            "group_stats",
+          ] as const) {
+            diag.sub_sources[key].absent += 1;
+          }
+          continue;
+        }
+        RadarCoordinator.tally(
+          diag.sub_sources.known_issues,
+          deep.known_issues?.status ?? null,
+        );
+        RadarCoordinator.tally(
+          diag.sub_sources.semantic_diff,
+          deep.semantic_diff?.status ?? null,
+        );
+        RadarCoordinator.tally(
+          diag.sub_sources.scope_arc,
+          deep.scope_arc == null ? null : deep.scope_arc.status,
+        );
+        RadarCoordinator.tally(
+          diag.sub_sources.group_stats,
+          deep.known_issues === null
+            ? null
+            : (deep.known_issues.group_stats?.status ?? null),
+        );
+      }
+      diagnostics = diag;
+    }
+
+    // "Ran" means the deep stage committed work — candidates, pending, or
+    // completed uuids — or a summary recorded its outcome. Numbers stay null
+    // otherwise (a metadata-only run is not a zeroed-out deep run).
+    const deepRan =
+      run.summary?.deep_candidates !== undefined ||
+      run.deep_candidates.length > 0 ||
+      run.deep_completed_uuids.length > 0 ||
+      run.deep_pending_uuids.length > 0;
+    return {
+      run: {
+        run_id: run.run_id,
+        phase: run.phase,
+        started_at: run.started_at,
+        updated_at: run.updated_at,
+        status: run.summary?.status ?? null,
+        catalog_complete: run.catalog_complete,
+        discovered: run.discovered,
+        enriched: run.enriched,
+        enrichment_failed: run.enrichment_failed,
+        scored: run.scored,
+        warnings: run.warnings,
+        warning_details: [...run.warning_details],
+        deep_candidates: deepRan
+          ? (run.summary?.deep_candidates ?? run.deep_candidates.length)
+          : null,
+        deep_analyzed: deepRan
+          ? (run.summary?.deep_analyzed ?? run.deep_completed_uuids.length)
+          : null,
+        deep_enriched: deepRan
+          ? (run.summary?.deep_enriched ?? run.deep_enriched)
+          : null,
+        deep_rounds: deepRan
+          ? (run.summary?.deep_rounds ?? run.deep_round)
+          : null,
+        deep_budget: deepRan
+          ? (run.summary?.deep_budget ?? run.deep_budget)
+          : null,
+        deep_stabilization: deepRan
+          ? (run.summary?.deep_stabilization ?? run.deep_stabilization)
+          : null,
+      },
+      provenance: {
+        schema: "bce-radar-export",
+        schema_version: 1,
+        app_version: query.provenance.app_version,
+        commit_sha: query.provenance.commit_sha,
+      },
+      options: {
+        profiles: [...query.profiles],
+        limit: query.limit,
+        detail: query.detail,
+        diagnostics: query.diagnostics,
+      },
+      restricted_access: {
+        count: restricted.size,
+        programs: [...restricted].sort(),
+      },
+      sections,
+      diagnostics,
+    };
   }
 
   /**
@@ -1358,6 +1902,12 @@ export class RadarCoordinator {
         continue;
       }
       await putSnapshot(db, enriched, this.deps.now());
+      // Per-source outcomes land on the run tally BEFORE the completion
+      // checkpoint — a restart must resume with the observed outcomes, not
+      // a zeroed counter.
+      if (enriched.deep != null) {
+        tallyDeepSources(run.deep_sources, enriched.deep);
+      }
       // "Enriched" counts envelopes that gained real deep evidence — a
       // wholly-failed envelope (every sub-source non-complete) is honest
       // bookkeeping, not enrichment. V1.5 adds the scope arc and the
@@ -1421,6 +1971,16 @@ export class RadarCoordinator {
    * zero programs failed enrichment — any shortfall is honestly "partial".
    */
   private buildSummary(run: PersistedRadarRun): void {
+    const hasDeep =
+      run.deep_candidates.length > 0 || run.deep_completed_uuids.length > 0;
+    // A uniform deep-source outage is a run-level warning — the terminal
+    // summary must disclose that an entire evidence source delivered
+    // nothing, even though every per-program payload stored honestly.
+    if (hasDeep) {
+      for (const w of deepSourceWarnings(run.deep_sources)) {
+        if (!run.warning_details.includes(w)) this.addWarnings(run, [w]);
+      }
+    }
     const status: RadarScanSummary["status"] =
       run.phase === "failed"
         ? "failed"
@@ -1441,7 +2001,7 @@ export class RadarCoordinator {
           : [...run.warning_details],
       // Deep-stage bookkeeping — only present when the deep stage ran at
       // all (a run without deepHydrate leaves the fields absent).
-      ...(run.deep_candidates.length > 0 || run.deep_completed_uuids.length > 0
+      ...(hasDeep
         ? {
             deep_candidates: run.deep_candidates.length,
             deep_analyzed: run.deep_completed_uuids.length,
@@ -1449,6 +2009,12 @@ export class RadarCoordinator {
             deep_rounds: run.deep_round,
             deep_budget: run.deep_budget,
             deep_stabilization: run.deep_stabilization,
+            deep_sources: {
+              known_issues: { ...run.deep_sources.known_issues },
+              semantic_diff: { ...run.deep_sources.semantic_diff },
+              scope_arc: { ...run.deep_sources.scope_arc },
+              group_stats: { ...run.deep_sources.group_stats },
+            },
           }
         : {}),
     };

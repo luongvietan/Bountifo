@@ -71,6 +71,12 @@ function runState(over: Partial<RadarRunState> = {}): RadarRunState {
     deep_round: 0,
     deep_budget: 0,
     deep_stabilization: null,
+    deep_sources: {
+      known_issues: {},
+      semantic_diff: {},
+      scope_arc: {},
+      group_stats: {},
+    },
     warnings: 1,
     started_at: "2026-09-21T00:00:00Z",
     updated_at: "2026-09-21T00:01:00Z",

@@ -1,4 +1,5 @@
 import { canonicalJson } from "../canonical";
+import { BUGCROWD_SITE } from "../constants";
 import { sha256Hex } from "../hash";
 import { escapeMd, mdTable } from "../render/markdown";
 import { redactSecrets } from "../secrets";
@@ -81,10 +82,12 @@ export interface RadarExportStageScore {
 export interface RadarExportRowDetail {
   /** One entry per persisted stage score — metadata always, deep when run. */
   stages: RadarExportStageScore[];
-  /** Per-signal provenance from the embedded feature vector. */
+  /** Per-signal provenance from the embedded feature vector; a null entry
+   *  means the score row predates embedded vectors — provenance unknown,
+   *  never invented. */
   signal_meta: Record<
     RadarFeatureKey,
-    { source: RadarSignalSource; reason_code: string }
+    { source: RadarSignalSource; reason_code: string } | null
   >;
 }
 
@@ -211,6 +214,17 @@ export interface RadarExportResult {
   body: string;
   /** "sha256:..." over canonicalJson(data) — format-independent. */
   content_hash: string;
+}
+
+// ---------------------------------------------------------------------------
+// Canonical engagement URL — identical allowlist the site client and the
+// radar page apply to deep links. Anything else yields null (no link).
+// ---------------------------------------------------------------------------
+
+const SLUG_RE = /^[A-Za-z0-9_-]+$/;
+
+export function radarEngagementUrl(slug: string): string | null {
+  return SLUG_RE.test(slug) ? `${BUGCROWD_SITE}/engagements/${slug}` : null;
 }
 
 // ---------------------------------------------------------------------------
