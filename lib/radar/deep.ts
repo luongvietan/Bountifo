@@ -236,8 +236,12 @@ async function resolveGroupStats(
   ki: RadarKnownIssueSummary,
   detail: ApiEngagementData,
 ): Promise<{ groupStats: RadarGroupStats; categories: GroupKiCategory[] | null }> {
+  // Qualifying = every in-scope group — an unaddressable id (empty or
+  // outside the route's charset) must FAIL the gate below, never silently
+  // drop out of the sample: a subset breakdown scored as complete would
+  // fabricate precision.
   const qualifying: ApiTargetGroup[] = detail.targetGroups.filter(
-    (g) => g.inScope === true && g.id !== "",
+    (g) => g.inScope === true,
   );
   const total = qualifying.length;
   const skip = (status: RadarGroupStats["status"]) => ({
