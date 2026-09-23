@@ -13,6 +13,7 @@ import type {
   RadarKnownIssueSummary,
   RadarSemanticDiff,
 } from "../../lib/radar/deepTypes";
+import type { SubSourceCounts } from "../../lib/radar/export";
 import { RADAR_PROFILES } from "../../lib/radar/profiles";
 import { formatScoreDelta } from "../../lib/radar/stage";
 import {
@@ -238,13 +239,22 @@ export function deepSummaryText(summary: RadarScanSummary): string | null {
   );
 }
 
+// Display order for non-complete buckets when picking the dominant outcome.
+const SUB_SOURCE_OUTCOME_ORDER = [
+  "unavailable",
+  "failed",
+  "no_baseline",
+  "skipped",
+  "absent",
+] as const;
+
 /**
  * Per-sub-source segment of the deep summary, e.g.
- * "KI 0/60 unavailable · diff 58/60 · arc 55/60 · groups 0/60
- * skipped_upstream" — complete count over deep_analyzed plus the dominant
- * non-complete outcome, so a systemic outage reads on the status line
- * instead of hiding inside per-program detail panes. A source with no
- * observed outcomes is omitted; a clean sweep shows bare counts.
+ * "KI 0/60 unavailable · diff 58/60 · arc 55/60 · groups 0/60 skipped" —
+ * complete count over deep_analyzed plus the dominant non-complete bucket,
+ * so a systemic outage reads on the status line instead of hiding inside
+ * per-program detail panes. A source with no observed outcomes is omitted;
+ * a clean sweep shows bare counts.
  */
 function deepSourcesText(
   deepSources: RadarScanSummary["deep_sources"],
@@ -253,15 +263,17 @@ function deepSourcesText(
   if (deepSources === undefined) return "";
   const segment = (
     label: string,
-    tally: Record<string, number>,
+    counts: SubSourceCounts,
   ): string | null => {
-    const entries = Object.entries(tally);
-    if (entries.length === 0) return null;
-    const complete = tally.complete ?? 0;
+    const total = Object.values(counts).reduce((a, n) => a + n, 0);
+    if (total === 0) return null;
+    const complete = counts.complete;
     let suffix = "";
     if (complete < analyzed) {
-      const dominant = entries
-        .filter(([status]) => status !== "complete")
+      const dominant = SUB_SOURCE_OUTCOME_ORDER.map(
+        (k) => [k, counts[k]] as const,
+      )
+        .filter(([, n]) => n > 0)
         .sort(
           (a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0),
         )[0]?.[0];

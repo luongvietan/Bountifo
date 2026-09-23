@@ -1079,3 +1079,87 @@ describe("determinism and schema", () => {
     expect(programScoreSchema.safeParse(s).success).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// V1.5.1 — the reported regression numbers are the formula, not a defect.
+// A real scan showed Low Saturation "cov 76%" and large negative Fresh
+// Opportunity deltas after deep enrichment. Both follow exactly from
+// scoreProgram's documented semantics: null signals leave numerator AND
+// denominator, so missing KI evidence costs coverage, and a metadata score
+// re-averages over the doubled known weight once deep signals land at 0.
+// ---------------------------------------------------------------------------
+
+describe("reported regression arithmetic", () => {
+  it("missing aggregate+group KI is exactly the observed 76% Low Saturation coverage", () => {
+    const p = getRadarProfile("low_competition"); // total weight 12.25
+    const s = scoreProgram(
+      snapshot("u-ki-out"),
+      vector({
+        research_saturation: 0.5,
+        // known_issue_density (w2) + ki_concentration (w1) — the two
+        // KI-derived signals — stay null, as in the dead-session scan.
+        freshness: 0.5,
+        opportunity_change: 0.5,
+        meaningful_surface: 0.5,
+        reward_potential: 0.5,
+        target_data_quality: 0.5,
+        scope_momentum: 0.5,
+      }),
+      p,
+    );
+    // 9.25 / 12.25 = 0.755102… — the UI's whole-percent render is "76%".
+    expect(s.confidence).toBe(0.7551);
+    expect(Math.round(s.confidence * 100)).toBe(76);
+    // The score itself is honest: 0.5-average over the KNOWN weight only —
+    // the missing signals neither inflate nor deflate it.
+    expect(s.score).toBe(50);
+    expect(s.reasons).toContain("UNKNOWN_KNOWN_ISSUE_DENSITY");
+    expect(s.reasons).toContain("UNKNOWN_KI_CONCENTRATION");
+    // With genuine KI evidence the coverage is whole — the outage is the
+    // ONLY thing missing between this and a clean run.
+    const covered = scoreProgram(
+      snapshot("u-ki-ok"),
+      vector({
+        research_saturation: 0.5,
+        known_issue_density: 0.5,
+        ki_concentration: 0.5,
+        freshness: 0.5,
+        opportunity_change: 0.5,
+        meaningful_surface: 0.5,
+        reward_potential: 0.5,
+        target_data_quality: 0.5,
+        scope_momentum: 0.5,
+      }),
+      p,
+    );
+    expect(covered.confidence).toBe(1);
+  });
+
+  it("deep signals landing at 0 re-average Fresh Opportunity — the −40 deltas are mechanical", () => {
+    const p = getRadarProfile("fresh_programs"); // total weight 10
+    const metadataOnly = {
+      freshness: 0.8,
+      meaningful_surface: 0.8,
+      research_saturation: 0.2, // cost → effective 0.8
+      reward_potential: 0.8,
+      // opportunity_change (w3) + scope_momentum (w2) unknown pre-deep.
+    };
+    const meta = scoreProgram(snapshot("u-fresh"), vector(metadataOnly), p);
+    // (2.0 + 0.8 + 0.8 + 0.4) / 5.0 = 0.8 → 80.0 over known weight 5.
+    expect(meta.score).toBe(80);
+    expect(meta.confidence).toBe(0.5);
+
+    // A text-only diff: opportunity_change lands at 0, arc reads 0.
+    const deep = scoreProgram(
+      snapshot("u-fresh"),
+      vector({ ...metadataOnly, opportunity_change: 0, scope_momentum: 0 }),
+      p,
+    );
+    // Same numerator over doubled known weight: 4.0 / 10 = 40.0 → Δ −40.
+    expect(deep.score).toBe(40);
+    expect(deep.confidence).toBe(1);
+    expect(deep.score! - meta.score!).toBe(-40);
+    // Coverage ROSE (0.5 → 1.0) while the score halved — the drop is the
+    // denominator growing, not lost or fabricated evidence.
+  });
+});

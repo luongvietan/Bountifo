@@ -55,10 +55,24 @@ import {
   setLatestRunId,
 } from "../lib/radar/store";
 import { deepSummaryText, summaryText } from "../entrypoints/radar/view";
+import type { SubSourceCounts } from "../lib/radar/export";
 import type { ApiEngagementData } from "../lib/types";
 import type { RadarProgramSnapshot } from "../lib/radar/types";
 
 const T0 = "2026-09-21T00:00:00.000Z";
+
+/** Full SubSourceCounts with overrides — keeps assertions explicit. */
+function buckets(over: Partial<SubSourceCounts> = {}): SubSourceCounts {
+  return {
+    complete: 0,
+    unavailable: 0,
+    failed: 0,
+    no_baseline: 0,
+    skipped: 0,
+    absent: 0,
+    ...over,
+  };
+}
 
 // -- site payload fixtures (same shape as the V1.5 adversarial harness) ------
 
@@ -270,14 +284,20 @@ describe("systemic deep-source outage (the reported regression)", () => {
 
     const summary = run.summary!;
     // The per-source tally makes the systemic failure explicit.
-    expect(summary.deep_sources?.known_issues).toEqual({ unavailable: 3 });
-    expect(summary.deep_sources?.group_stats).toEqual({
-      skipped_upstream: 3,
-    });
+    expect(summary.deep_sources?.known_issues).toEqual(
+      buckets({ unavailable: 3 }),
+    );
+    expect(summary.deep_sources?.group_stats).toEqual(
+      buckets({ skipped: 3 }),
+    );
     // The public-evidence sources completed — their success is recorded
     // separately, never averaged over the KI failure.
-    expect(summary.deep_sources?.semantic_diff).toEqual({ complete: 3 });
-    expect(summary.deep_sources?.scope_arc).toEqual({ complete: 3 });
+    expect(summary.deep_sources?.semantic_diff).toEqual(
+      buckets({ complete: 3 }),
+    );
+    expect(summary.deep_sources?.scope_arc).toEqual(
+      buckets({ complete: 3 }),
+    );
     // deep_analyzed counts attempts; deep_enriched counts real evidence —
     // diff/arc completions keep enriched high while KI shows zero.
     expect(summary.deep_analyzed).toBe(3);
@@ -316,7 +336,9 @@ describe("systemic deep-source outage (the reported regression)", () => {
       mockSite(["ki-fail-1", "ki-fail-2"], { kiError: error as ApiError });
       const { run } = await runScan(["ki-fail-1", "ki-fail-2"]);
 
-      expect(run.summary?.deep_sources?.known_issues).toEqual({ failed: 2 });
+      expect(run.summary?.deep_sources?.known_issues).toEqual(
+        buckets({ failed: 2 }),
+      );
       expect(warningList(run)).toContain("deep_known_issues_failed");
       expect(warningList(run)).not.toContain("deep_known_issues_unavailable");
     },
@@ -328,7 +350,9 @@ describe("systemic deep-source outage (the reported regression)", () => {
     });
     const { coord, run } = await runScan(["ki-bad-body"]);
 
-    expect(run.summary?.deep_sources?.known_issues).toEqual({ failed: 1 });
+    expect(run.summary?.deep_sources?.known_issues).toEqual(
+      buckets({ failed: 1 }),
+    );
     expect(warningList(run)).toContain("deep_known_issues_failed");
     const snapshot = await latestDeep("ki-bad-body");
     expect(snapshot.deep?.known_issues?.unique_count).toBeNull();
@@ -353,8 +377,12 @@ describe("aggregate vs per-group independence", () => {
     const { coord, run } = await runScan(["ki-gs-fail"]);
 
     const summary = run.summary!;
-    expect(summary.deep_sources?.known_issues).toEqual({ complete: 1 });
-    expect(summary.deep_sources?.group_stats).toEqual({ failed: 1 });
+    expect(summary.deep_sources?.known_issues).toEqual(
+      buckets({ complete: 1 }),
+    );
+    expect(summary.deep_sources?.group_stats).toEqual(
+      buckets({ failed: 1 }),
+    );
     expect(warningList(run)).toContain("deep_group_stats_failed");
     expect(warningList(run)).not.toContain("deep_known_issues_unavailable");
 
@@ -372,10 +400,12 @@ describe("aggregate vs per-group independence", () => {
     const { coord, run } = await runScan(["ki-lowvol"]);
 
     const summary = run.summary!;
-    expect(summary.deep_sources?.known_issues).toEqual({ complete: 1 });
-    expect(summary.deep_sources?.group_stats).toEqual({
-      skipped_low_volume: 1,
-    });
+    expect(summary.deep_sources?.known_issues).toEqual(
+      buckets({ complete: 1 }),
+    );
+    expect(summary.deep_sources?.group_stats).toEqual(
+      buckets({ skipped: 1 }),
+    );
     expect(
       warningList(run).filter((w) => w.startsWith("deep_")),
     ).toEqual([]);
@@ -401,10 +431,9 @@ describe("aggregate vs per-group independence", () => {
     });
     const { run } = await runScan(["ki-mix-ok", "ki-mix-off1", "ki-mix-off2"]);
 
-    expect(run.summary?.deep_sources?.known_issues).toEqual({
-      complete: 1,
-      unavailable: 2,
-    });
+    expect(run.summary?.deep_sources?.known_issues).toEqual(
+      buckets({ complete: 1, unavailable: 2 }),
+    );
     expect(
       warningList(run).filter((w) => w.startsWith("deep_")),
     ).toEqual([]);
@@ -416,10 +445,10 @@ describe("aggregate vs per-group independence", () => {
 
     const summary = run.summary!;
     expect(summary.deep_sources).toEqual({
-      known_issues: { complete: 1 },
-      semantic_diff: { complete: 1 },
-      scope_arc: { complete: 1 },
-      group_stats: { complete: 1 },
+      known_issues: buckets({ complete: 1 }),
+      semantic_diff: buckets({ complete: 1 }),
+      scope_arc: buckets({ complete: 1 }),
+      group_stats: buckets({ complete: 1 }),
     });
     expect(warningList(run).filter((w) => w.startsWith("deep_"))).toEqual(
       [],
@@ -501,9 +530,11 @@ describe("analyzed vs attempted bookkeeping", () => {
     expect(rec?.phase).toBe("done");
     const summary = rec?.summary as RadarScanSummary | undefined;
     expect(summary?.deep_analyzed).toBe(1);
-    // Nothing was attempted — every tally stays empty rather than
-    // fabricating an "unavailable" that never happened.
-    expect(summary?.deep_sources?.known_issues).toEqual({});
+    // Nothing was attempted — the program counts as "absent" (no payload),
+    // never as an "unavailable" that never happened, and warns nothing.
+    expect(summary?.deep_sources?.known_issues).toEqual(
+      buckets({ absent: 1 }),
+    );
     expect(
       (summary?.warnings ?? []).filter((w) => w.startsWith("deep_")),
     ).toEqual([]);
@@ -591,10 +622,10 @@ describe("resume continuity", () => {
       // The pre-restart worker observed one unavailable aggregate — the
       // tally must continue from it, not reset.
       deep_sources: {
-        known_issues: { unavailable: 1 },
-        semantic_diff: { complete: 1 },
-        scope_arc: { complete: 1 },
-        group_stats: { skipped_upstream: 1 },
+        known_issues: buckets({ unavailable: 1 }),
+        semantic_diff: buckets({ complete: 1 }),
+        scope_arc: buckets({ complete: 1 }),
+        group_stats: buckets({ skipped: 1 }),
       },
       warnings: 0,
       started_at: T0,
@@ -619,10 +650,12 @@ describe("resume continuity", () => {
     expect(rec?.phase).toBe("done");
     const summary = rec?.summary as RadarScanSummary | undefined;
     expect(summary?.deep_analyzed).toBe(2);
-    expect(summary?.deep_sources?.known_issues).toEqual({ unavailable: 2 });
-    expect(summary?.deep_sources?.group_stats).toEqual({
-      skipped_upstream: 2,
-    });
+    expect(summary?.deep_sources?.known_issues).toEqual(
+      buckets({ unavailable: 2 }),
+    );
+    expect(summary?.deep_sources?.group_stats).toEqual(
+      buckets({ skipped: 2 }),
+    );
     expect(summary?.warnings ?? []).toContain(
       "deep_known_issues_unavailable",
     );
@@ -684,10 +717,10 @@ describe("summary integrity + UI surfacing", () => {
       deep_budget: 60,
       deep_stabilization: "budget_limited",
       deep_sources: {
-        known_issues: { unavailable: 60 },
-        semantic_diff: { complete: 58, no_baseline: 2 },
-        scope_arc: { complete: 55, no_baseline: 5 },
-        group_stats: { skipped_upstream: 60 },
+        known_issues: buckets({ unavailable: 60 }),
+        semantic_diff: buckets({ complete: 58, no_baseline: 2 }),
+        scope_arc: buckets({ complete: 55, no_baseline: 5 }),
+        group_stats: buckets({ skipped: 60 }),
       },
     };
     const text = deepSummaryText(summary)!;
@@ -695,7 +728,7 @@ describe("summary integrity + UI surfacing", () => {
     expect(text).toContain("KI 0/60 unavailable");
     expect(text).toContain("diff 58/60");
     expect(text).toContain("arc 55/60");
-    expect(text).toContain("groups 0/60 skipped_upstream");
+    expect(text).toContain("groups 0/60 skipped");
     // The full status line no longer claims a silent clean sweep.
     expect(summaryText(summary, 1)).toContain("1 warning");
   });
@@ -736,17 +769,17 @@ describe("summary integrity + UI surfacing", () => {
       deep_budget: 60,
       deep_stabilization: "stable",
       deep_sources: {
-        known_issues: { complete: 2 },
-        semantic_diff: { complete: 2 },
-        scope_arc: { complete: 1, no_baseline: 1 },
-        group_stats: { complete: 1, skipped_low_volume: 1 },
+        known_issues: buckets({ complete: 2 }),
+        semantic_diff: buckets({ complete: 2 }),
+        scope_arc: buckets({ complete: 1, no_baseline: 1 }),
+        group_stats: buckets({ complete: 1, skipped: 1 }),
       },
     };
     const text = deepSummaryText(summary)!;
     expect(text).toContain("KI 2/2");
     expect(text).toContain("diff 2/2");
     expect(text).toContain("arc 1/2 no_baseline");
-    expect(text).toContain("groups 1/2 skipped_low_volume");
+    expect(text).toContain("groups 1/2 skipped");
     expect(text).not.toContain("unavailable");
     expect(text).not.toContain("failed");
   });
