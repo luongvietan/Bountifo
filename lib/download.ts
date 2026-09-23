@@ -47,23 +47,21 @@ export async function downloadFile(
     URL.revokeObjectURL(url);
     throw err;
   }
-  await new Promise<void>((resolve) => {
-    const release = () => {
-      browser.downloads.onChanged.removeListener(listener);
-      window.clearTimeout(timer);
-      resolve();
-    };
-    const listener = (delta: {
-      id: number;
-      state?: { current?: string };
-    }) => {
-      const state = delta.state?.current;
-      if (delta.id === id && (state === "complete" || state === "interrupted")) {
-        release();
-      }
-    };
-    const timer = window.setTimeout(release, 60_000);
-    browser.downloads.onChanged.addListener(listener);
-  });
-  URL.revokeObjectURL(url);
+  // Resolve once the browser owns the download — the caller shouldn't sit on
+  // a modal through a multi-MB transfer. The blob URL must stay valid until
+  // the read finishes, so a background listener releases it at the terminal
+  // state (the timer is the fallback if that event never fires).
+  const listener = (delta: { id: number; state?: { current?: string } }) => {
+    const state = delta.state?.current;
+    if (delta.id === id && (state === "complete" || state === "interrupted")) {
+      release();
+    }
+  };
+  const release = () => {
+    browser.downloads.onChanged.removeListener(listener);
+    window.clearTimeout(timer);
+    URL.revokeObjectURL(url);
+  };
+  const timer = window.setTimeout(release, 60_000);
+  browser.downloads.onChanged.addListener(listener);
 }

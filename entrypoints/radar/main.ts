@@ -48,6 +48,7 @@ interface RouterResponse {
   run?: RadarRunState | null;
   rows?: RadarResultRow[];
   program?: RadarProgramDetail | null;
+  export?: unknown;
 }
 
 const scanButton = document.querySelector<HTMLButtonElement>("#scan")!;
