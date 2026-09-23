@@ -111,6 +111,26 @@ export const RadarMsg = z.discriminatedUnion("op", [
       profile: radarProfileSchema.optional(), // router defaults to best_ev
     })
     .strict(),
+  // V1.5 report export: assembles + serializes the persisted latest scan
+  // server-side; the page only downloads the returned body. Read-only —
+  // the schema carries no run selector (latest run is the only exportable
+  // snapshot) and no way to trigger a scan.
+  z
+    .object({
+      op: z.literal("RADAR_EXPORT_REPORT"),
+      format: z.enum(["markdown", "json", "csv"]),
+      /** "all" = every profile in pinned RADAR_PROFILE_IDS order;
+       *  "current" requires `profile`. */
+      scope: z.enum(["current", "all"]),
+      profile: radarProfileSchema.optional(),
+      /** Per-profile row cap; "all" = the whole ranked cohort. */
+      limit: z
+        .union([z.literal(20), z.literal(50), z.literal("all")])
+        .default(50),
+      detail: z.boolean().default(true),
+      diagnostics: z.boolean().default(true),
+    })
+    .strict(),
 ]);
 
 export type ApiRequest = z.infer<typeof ApiRequestMsg>;

@@ -21,12 +21,16 @@ import { enumerateEngagementCatalog } from "../lib/radar/catalog";
 import { RadarCoordinator } from "../lib/radar/coordinator";
 import { hydrateRadarDeep } from "../lib/radar/deep";
 import { hydrateRadarProgram } from "../lib/radar/enrichment";
+import { serializeRadarExport } from "../lib/radar/export";
 import { openRadarStore } from "../lib/radar/store";
+import { RADAR_PROFILE_IDS } from "../lib/radar/types";
 import {
   clearCredential,
+  getCredential,
   hasCredential,
   saveCredential,
 } from "../lib/tokenOps";
+import { appVersion, sourceCommit } from "../lib/version";
 
 // Every router response has this shape and contains only static, fixed
 // fields — request payloads (which may carry token/Authorization material)
@@ -158,6 +162,42 @@ async function routeRadarMessage(msg: RadarMessage): Promise<RouterResponse> {
           ok: true,
           program: await radar.getProgram(msg.uuid, msg.profile ?? "best_ev"),
         };
+      case "RADAR_EXPORT_REPORT": {
+        // "current" is meaningless without a profile; the schema keeps the
+        // field optional so the router reports a semantic error, not a parse
+        // failure.
+        if (msg.scope === "current" && msg.profile === undefined) {
+          return { ok: false, error: "invalid_params" };
+        }
+        const data = await radar.getExportData({
+          profiles:
+            msg.scope === "all" ? [...RADAR_PROFILE_IDS] : [msg.profile!],
+          limit: msg.limit === "all" ? null : msg.limit,
+          detail: msg.detail,
+          diagnostics: msg.diagnostics,
+          provenance: {
+            app_version: appVersion(),
+            commit_sha: sourceCommit(),
+          },
+        });
+        if (data === null) return { ok: false, error: "no_scan" };
+        // Defense-in-depth: the stored credential is a report-level secret —
+        // redact it from the serialized body even though program data should
+        // never contain it. The credential itself is never returned.
+        const credential = await getCredential();
+        const serialized = await serializeRadarExport(
+          data,
+          msg.format,
+          credential === null ? [] : [credential],
+        );
+        return {
+          ok: true,
+          export: {
+            ...serialized,
+            generated_at: new Date().toISOString(),
+          },
+        };
+      }
     }
   } catch (err) {
     return apiErrorResponse(err);
