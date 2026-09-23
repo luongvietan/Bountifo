@@ -638,7 +638,7 @@ sender's document URL against the extension origin instead.
 
 The **Export report** button on the radar page opens a dialog and serializes
 the **latest persisted run** into a local download — Markdown, JSON, or CSV,
-one profile or all six, Top 20 / Top 50 / the whole eligible cohort, with
+one profile or all six, Top 20 / Top 50 / the whole ranked cohort, with
 optional detailed evidence and diagnostics. It is strictly read-only: no
 scan is started, no API request is made, no stored state is modified, and
 the body is assembled entirely inside the browser.
@@ -648,7 +648,11 @@ Three invariants hold across every format:
 - **One snapshot.** Every section reads the same `run_id` — rows, digests,
   and diagnostics never mix runs or scoring versions. Deep rows are gated by
   that run's `deep_completed_uuids`, so a metadata-only program is never
-  presented as deep-enriched.
+  presented as deep-enriched. One honest caveat: persisted score rows are
+  content-addressed, not run-keyed — for a run with no terminal verdict
+  (still in progress), exported rows can include score evidence written by
+  an earlier scan for still-pending programs, and the report's executive
+  summary says so explicitly.
 - **Full-cohort percentile.** `percentile` is computed over the complete
   eligible cohort *before* the Top-N limit truncates the export — truncating
   the report never recalculates rank context.

@@ -487,13 +487,18 @@ exportForm.addEventListener("submit", (ev) => {
   void runExport();
 });
 
+let exportBusy = false;
+
 /** Sends the export op, downloads the serialized report, reports failures. */
 async function runExport(): Promise<void> {
+  // Enter-key resubmits bypass the disabled button — block reentrancy here.
+  if (exportBusy) return;
   const req = buildExportRequest(readExportForm());
   if (req === null) {
     exportError.textContent = "Pick a profile to export the current profile only.";
     return;
   }
+  exportBusy = true;
   exportGo.disabled = true;
   exportError.textContent = "Assembling report…";
   try {
@@ -511,8 +516,9 @@ async function runExport(): Promise<void> {
     exportDialog.close();
     feedback.textContent = `Exported ${parsed.payload.filename}`;
   } catch {
-    exportError.textContent = "Export failed: download error.";
+    exportError.textContent = "Export failed — the report could not be assembled or downloaded.";
   } finally {
+    exportBusy = false;
     exportGo.disabled = false;
     if (exportError.textContent === "Assembling report…") {
       exportError.textContent = "";

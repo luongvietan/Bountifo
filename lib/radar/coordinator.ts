@@ -815,7 +815,10 @@ export class RadarCoordinator {
     for (const uuid of asStringList(record.completed_uuids)) scope.add(uuid);
     for (const uuid of asStringList(record.pending_uuids)) scope.add(uuid);
     return {
-      run: normalizeRunRecord(record, this.deps.now()),
+      // Read path: a missing timestamp falls back to "" (renders blank) —
+      // never deps.now(), or the same corrupt store would serialize a
+      // different report body and content hash on every export.
+      run: normalizeRunRecord(record, ""),
       scope,
       deepCompleted: new Set(asStringList(record.deep_completed_uuids)),
     };
@@ -969,39 +972,43 @@ export class RadarCoordinator {
     deep: RadarProgramSnapshot["deep"],
   ): RadarExportDeepDigest | null {
     if (deep == null) return null;
+    // Persisted payloads are read back without schema re-validation — a
+    // pre-schema or corrupted payload can hold `undefined` where the type
+    // promises null. `== null` + `?? "absent"` keep a malformed sub-object
+    // honest (rendered as absent) instead of throwing the whole export.
     const ki = deep.known_issues;
     return {
-      status: deep.status,
+      status: deep.status ?? "unknown",
       known_issues:
-        ki === null
+        ki == null
           ? null
           : {
-              status: ki.status,
-              unique_count: ki.unique_count,
-              total_count: ki.total_count,
+              status: ki.status ?? "absent",
+              unique_count: ki.unique_count ?? null,
+              total_count: ki.total_count ?? null,
               group_stats:
-                ki.group_stats === undefined
+                ki.group_stats == null
                   ? null
                   : {
-                      status: ki.group_stats.status,
-                      groups_fetched: ki.group_stats.groups_fetched,
-                      groups_total: ki.group_stats.groups_total,
+                      status: ki.group_stats.status ?? "absent",
+                      groups_fetched: ki.group_stats.groups_fetched ?? null,
+                      groups_total: ki.group_stats.groups_total ?? null,
                     },
             },
       semantic_diff:
-        deep.semantic_diff === null
+        deep.semantic_diff == null
           ? null
           : {
-              status: deep.semantic_diff.status,
-              from_version: deep.semantic_diff.from_version,
-              to_version: deep.semantic_diff.to_version,
+              status: deep.semantic_diff.status ?? "absent",
+              from_version: deep.semantic_diff.from_version ?? null,
+              to_version: deep.semantic_diff.to_version ?? null,
             },
       scope_arc:
         deep.scope_arc == null
           ? null
           : {
-              status: deep.scope_arc.status,
-              window_versions: deep.scope_arc.window_versions,
+              status: deep.scope_arc.status ?? "absent",
+              window_versions: deep.scope_arc.window_versions ?? null,
             },
     };
   }
@@ -1086,10 +1093,17 @@ export class RadarCoordinator {
         const vector = deepRow?.vector ?? shownByUuid.get(uuid)?.vector;
         const snap = await snapshotFor(uuid);
         const cat = catalog.get(uuid) ?? snap?.catalog;
-        const slug = cat?.code ?? snap?.code ?? uuid;
+        const slug = cat?.code ?? snap?.code ?? uuid; // uuid-fallback rows get no site link
         const deepDigest =
           ctx.deepCompleted.has(uuid)
-            ? RadarCoordinator.deepDigest(snap?.deep ?? null)
+            ? // Analyzed this run — a missing/corrupt payload is "absent",
+              // not "not deep-analyzed" (the run did the work).
+              (RadarCoordinator.deepDigest(snap?.deep ?? null) ?? {
+                status: "absent",
+                known_issues: null,
+                semantic_diff: null,
+                scope_arc: null,
+              })
             : null;
         const gated = isRestrictedAccess(snap?.detail ?? null, cat ?? null);
         if (gated) restricted.add(slug);
@@ -1101,7 +1115,7 @@ export class RadarCoordinator {
           uuid,
           slug,
           engagement_url: radarEngagementUrl(slug),
-          name: cat?.name ?? snap?.catalog.name ?? null,
+          name: cat?.name ?? snap?.catalog?.name ?? null,
           score: score.score,
           metadata_score: ann.metadata_score,
           deep_score: ann.deep_score,
@@ -1118,7 +1132,7 @@ export class RadarCoordinator {
           scoring_version: score.scoring_version,
           reasons: score.reasons,
           signals,
-          enrichment_status: snap?.enrichment.status ?? null,
+          enrichment_status: snap?.enrichment?.status ?? null,
           deep: deepDigest,
         };
         if (query.detail) {
@@ -1181,7 +1195,12 @@ export class RadarCoordinator {
         absent: 0,
       });
       const diag: RadarDeepDiagnostics = {
-        deep_candidates: run.deep_candidates.length,
+        // Records predating the persisted candidate list carry only the
+        // summary count — fall back to it rather than reporting zero.
+        deep_candidates:
+          run.deep_candidates.length > 0
+            ? run.deep_candidates.length
+            : (run.summary?.deep_candidates ?? 0),
         deep_analyzed: ctx.deepCompleted.size,
         not_analyzed: 0,
         sub_sources: {
@@ -1218,13 +1237,11 @@ export class RadarCoordinator {
         );
         RadarCoordinator.tally(
           diag.sub_sources.scope_arc,
-          deep.scope_arc == null ? null : deep.scope_arc.status,
+          deep.scope_arc?.status ?? null,
         );
         RadarCoordinator.tally(
           diag.sub_sources.group_stats,
-          deep.known_issues === null
-            ? null
-            : (deep.known_issues.group_stats?.status ?? null),
+          deep.known_issues?.group_stats?.status ?? null,
         );
       }
       diagnostics = diag;

@@ -64,4 +64,10 @@ export async function downloadFile(
   };
   const timer = window.setTimeout(release, 60_000);
   browser.downloads.onChanged.addListener(listener);
+  // The download may have reached a terminal state before the listener
+  // attached — settle that race with a one-shot query instead of the timer.
+  void browser.downloads.search({ id }).then((items) => {
+    const state = items[0]?.state;
+    if (state === "complete" || state === "interrupted") release();
+  });
 }

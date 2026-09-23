@@ -323,9 +323,17 @@ describe("csvEscape", () => {
 });
 
 describe("renderRadarCsv", () => {
+  /** Split a CSV body into lines, dropping the UTF-8 BOM and trailing \n. */
+  const csvLines = (csv: string) =>
+    (csv.charCodeAt(0) === 0xfeff ? csv.slice(1) : csv)
+      .replace(/\n$/, "")
+      .split("\n");
+
   it("emits the pinned header then one row per exported result", () => {
     const csv = renderRadarCsv(exportData());
-    const lines = csv.replace(/\n$/, "").split("\n");
+    // BOM first so Excel et al. decode UTF-8; header unchanged after it.
+    expect(csv.charCodeAt(0)).toBe(0xfeff);
+    const lines = csvLines(csv);
     const header = lines[0]!.split(",");
     for (const col of [
       "profile_id",
@@ -361,7 +369,7 @@ describe("renderRadarCsv", () => {
   });
 
   it("repeats profile_id/profile_version/rank/evidence_level/engagement_slug on every row", () => {
-    const lines = renderRadarCsv(exportData()).replace(/\n$/, "").split("\n");
+    const lines = csvLines(renderRadarCsv(exportData()));
     const idx = Object.fromEntries(
       lines[0]!.split(",").map((c, i) => [c, i] as const),
     );
@@ -379,9 +387,7 @@ describe("renderRadarCsv", () => {
   });
 
   it("keeps real zeros as 0 and unknowns as empty — never conflated", () => {
-    const lines = renderRadarCsv(exportData())
-      .replace(/\n$/, "")
-      .split("\n");
+    const lines = csvLines(renderRadarCsv(exportData()));
     const idx = Object.fromEntries(
       lines[0]!.split(",").map((c, i) => [c, i] as const),
     );
@@ -406,7 +412,7 @@ describe("renderRadarCsv", () => {
     const data = exportData();
     data.sections[0]!.rows[0]!.name = "=cmd|'/c calc'!A1";
     const csv = renderRadarCsv(data);
-    const lines = csv.replace(/\n$/, "").split("\n");
+    const lines = csvLines(csv);
     const nameCol = lines[0]!.split(",").indexOf("program_name");
     const firstRowCell = lines[1]!.split(",")[nameCol]!;
     expect(firstRowCell.startsWith("'")).toBe(true);
@@ -543,6 +549,37 @@ describe("renderRadarMarkdown", () => {
     const md = renderRadarMarkdown(data, "sha256:x");
     expect(md).not.toContain("[link](javascript:alert(1))");
     expect(md).toContain("\\[link\\]");
+  });
+
+  it("collapses newlines in untrusted strings — no block-level injection", () => {
+    const data = exportData();
+    data.sections[0]!.rows[0]!.name = "Foo\n## Fake Section\n- injected";
+    data.run.warning_details = ["warn\n## injected heading"];
+    data.restricted_access = { count: 1, programs: ["slug\n## fake"] };
+    const md = renderRadarMarkdown(data, "sha256:x");
+    // A \n inside any of those strings would have spliced a real heading.
+    expect(md).not.toMatch(/\n## Fake Section/);
+    expect(md).not.toMatch(/\n## injected heading/);
+    expect(md).not.toMatch(/\n## fake/);
+    expect(md).not.toMatch(/\n- injected\n/);
+  });
+
+  it("flags a verdict-less run — rows may carry earlier-scan evidence", () => {
+    const data = exportData();
+    data.run.status = null;
+    const md = renderRadarMarkdown(data, "sha256:x");
+    expect(md).toContain("no terminal verdict");
+    expect(md).toContain("earlier scans");
+    const done = renderRadarMarkdown(exportData(), "sha256:x");
+    expect(done).not.toContain("no terminal verdict");
+  });
+
+  it("discloses a capped warning_details list", () => {
+    const data = exportData();
+    data.run.warnings = 3;
+    data.run.warning_details = ["only the first warning is kept"];
+    const md = renderRadarMarkdown(data, "sha256:x");
+    expect(md).toContain("…and 2 more");
   });
 
   it("is deterministic for identical input", () => {

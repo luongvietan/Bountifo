@@ -710,4 +710,69 @@ describe("RadarCoordinator.getExportData", () => {
     );
     expect(a).toEqual(b);
   });
+
+  it("survives a malformed persisted deep payload — absent, never a crash", async () => {
+    const u1 = uid();
+    const it1 = item(u1);
+    await seedCatalog([it1]);
+    // Pre-schema/corrupt payload: keys present as `undefined`/`null` where
+    // the type demands objects — reads are not schema-revalidated.
+    const corruptDeep = {
+      status: "partial",
+      known_issues: undefined,
+      semantic_diff: null,
+      scope_arc: { status: undefined, window_versions: null },
+    } as unknown as RadarProgramSnapshot["deep"];
+    await seedSnapshot(snapshot(it1, corruptDeep));
+    await seedScore(u1, "best_ev", "metadata", 70);
+    await seedScore(u1, "best_ev", "deep", 66);
+    await seedRun(rid(), { uuids: [u1], deepCompleted: [u1] });
+
+    const data = await readerCoordinator().getExportData(
+      query({ profiles: ["best_ev"] }),
+    );
+    const row = data!.sections[0]!.rows[0]!;
+    expect(row.deep?.status).toBe("partial");
+    expect(row.deep?.known_issues).toBeNull();
+    expect(row.deep?.scope_arc?.status).toBe("absent");
+    const diag = data!.diagnostics!;
+    expect(diag.sub_sources.known_issues.absent).toBe(1);
+    expect(diag.sub_sources.scope_arc.absent).toBe(1);
+  });
+
+  it("marks a deep-completed program whose payload never persisted as absent", async () => {
+    const u1 = uid();
+    const it1 = item(u1);
+    await seedCatalog([it1]);
+    await seedSnapshot(snapshot(it1)); // deep: null
+    await seedScore(u1, "best_ev", "metadata", 70);
+    await seedRun(rid(), { uuids: [u1], deepCompleted: [u1] });
+
+    const data = await readerCoordinator().getExportData(
+      query({ profiles: ["best_ev"] }),
+    );
+    const row = data!.sections[0]!.rows[0]!;
+    // "absent" envelope — the run analyzed it; the payload is just gone.
+    expect(row.deep?.status).toBe("absent");
+    expect(data!.diagnostics!.sub_sources.known_issues.absent).toBe(1);
+  });
+
+  it("survives snapshots missing enrichment/catalog keys", async () => {
+    const u1 = uid();
+    const it1 = item(u1);
+    await seedCatalog([it1]);
+    const snap = snapshot(it1) as unknown as Record<string, unknown>;
+    delete snap.enrichment;
+    delete snap.catalog;
+    await seedSnapshot(snap as unknown as RadarProgramSnapshot);
+    await seedScore(u1, "best_ev", "metadata", 70);
+    await seedRun(rid(), { uuids: [u1] });
+
+    const data = await readerCoordinator().getExportData(
+      query({ profiles: ["best_ev"] }),
+    );
+    const row = data!.sections[0]!.rows[0]!;
+    expect(row.enrichment_status).toBeNull();
+    expect(row.name).toBe(it1.name); // catalog row still supplies the name
+  });
 });
