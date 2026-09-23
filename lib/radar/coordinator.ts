@@ -119,11 +119,11 @@ export interface RadarRunState {
   warnings: number;
   /**
    * V1.5.1 per-sub-source outcome tallies accumulated by the deep worker —
-   * e.g. {known_issues: {unavailable: 60}} is the run-level signature of a
-   * systemic source outage that per-program honest nulls alone cannot
-   * express. Counts only programs that produced a deep payload; a completed
-   * candidate with no detail tallies nothing. "absent" marks a sub-object
-   * missing from the payload entirely.
+   * the same SubSourceCounts buckets the export's diagnostics block
+   * reports. {known_issues: {unavailable: 60}} is the run-level signature
+   * of a systemic source outage that per-program honest nulls alone cannot
+   * express. Every deep-completed uuid lands in exactly one bucket per
+   * source: a completion without a deep payload counts "absent".
    */
   deep_sources: RadarDeepSources;
   started_at: string;
@@ -133,17 +133,13 @@ export interface RadarRunState {
 }
 
 /**
- * Per-sub-source outcome tallies for the deep stage: literal status string
- * → program count (plus "absent" when the sub-object was missing from the
- * payload). Keys appear only for outcomes actually observed — deterministic
- * bookkeeping, no fabrication.
+ * Per-sub-source outcome tallies for the deep stage — literally the same
+ * buckets as the export diagnostics' `sub_sources`, accumulated at scan
+ * time so the run summary and status line can name a systemic outage
+ * without re-reading snapshots. (skipped = the group-stats skipped_*
+ * terminal states; absent = the sub-object/payload was missing.)
  */
-export interface RadarDeepSources {
-  known_issues: Record<string, number>;
-  semantic_diff: Record<string, number>;
-  scope_arc: Record<string, number>;
-  group_stats: Record<string, number>;
-}
+export type RadarDeepSources = RadarDeepDiagnostics["sub_sources"];
 
 /** Scan-result integrity status — never silently "complete" (Task 17). */
 export interface RadarScanSummary {
@@ -358,122 +354,119 @@ const DEEP_SOURCE_KEYS = [
   "group_stats",
 ] as const;
 
-function emptyDeepSources(): RadarDeepSources {
+const SUB_SOURCE_BUCKETS = [
+  "complete",
+  "unavailable",
+  "failed",
+  "no_baseline",
+  "skipped",
+  "absent",
+] as const;
+
+function blankSubSourceCounts(): SubSourceCounts {
   return {
-    known_issues: {},
-    semantic_diff: {},
-    scope_arc: {},
-    group_stats: {},
+    complete: 0,
+    unavailable: 0,
+    failed: 0,
+    no_baseline: 0,
+    skipped: 0,
+    absent: 0,
   };
 }
 
-/** Loose persisted deep_sources → typed tallies (bad entries dropped). */
-function asDeepSources(value: unknown): RadarDeepSources {
-  const out = emptyDeepSources();
+function emptyDeepSources(): RadarDeepSources {
+  return {
+    known_issues: blankSubSourceCounts(),
+    semantic_diff: blankSubSourceCounts(),
+    scope_arc: blankSubSourceCounts(),
+    group_stats: blankSubSourceCounts(),
+  };
+}
+
+/** Loose persisted counts → SubSourceCounts (bad/absent fields → 0). */
+function asSubSourceCounts(value: unknown): SubSourceCounts {
+  const out = blankSubSourceCounts();
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return out;
   }
   const v = value as Record<string, unknown>;
-  for (const key of DEEP_SOURCE_KEYS) {
-    const tally = v[key];
-    if (tally === null || typeof tally !== "object" || Array.isArray(tally)) {
-      continue;
-    }
-    for (const [status, count] of Object.entries(tally)) {
-      if (status === "") continue;
-      if (typeof count !== "number" || !Number.isInteger(count) || count <= 0) {
-        continue;
-      }
-      out[key][status] = count;
+  for (const key of SUB_SOURCE_BUCKETS) {
+    const n = v[key];
+    if (typeof n === "number" && Number.isInteger(n) && n > 0) {
+      out[key] = n;
     }
   }
   return out;
 }
 
-/** A tally is an object of non-empty status keys → positive int counts. */
-function isTally(value: unknown): boolean {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  return Object.entries(value as Record<string, unknown>).every(
-    ([status, count]) =>
-      status !== "" &&
-      typeof count === "number" &&
-      Number.isInteger(count) &&
-      count > 0,
-  );
+/** Loose persisted deep_sources → typed tallies (bad entries dropped). */
+function asDeepSources(value: unknown): RadarDeepSources {
+  const v = (value ?? {}) as Record<string, unknown>;
+  return {
+    known_issues: asSubSourceCounts(v.known_issues),
+    semantic_diff: asSubSourceCounts(v.semantic_diff),
+    scope_arc: asSubSourceCounts(v.scope_arc),
+    group_stats: asSubSourceCounts(v.group_stats),
+  };
 }
 
-/** Summary-level validation: all four tallies must be present and clean. */
+/** Summary-level validation: all four sources, all six buckets present. */
 function isDeepSources(value: unknown): value is RadarDeepSources {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
   const v = value as Record<string, unknown>;
-  return DEEP_SOURCE_KEYS.every((key) => isTally(v[key]));
-}
-
-/**
- * Folds one deep payload into the run tallies — the literal sub-source
- * statuses, "absent" when the sub-object is missing. Group stats ride on
- * the aggregate's sub-block; an absent aggregate reads absent here too.
- */
-function tallyDeepSources(
-  tallies: RadarDeepSources,
-  deep: RadarDeepEnrichment,
-): void {
-  const bump = (tally: Record<string, number>, status: string): void => {
-    tally[status] = (tally[status] ?? 0) + 1;
-  };
-  bump(tallies.known_issues, deep.known_issues?.status ?? "absent");
-  bump(tallies.semantic_diff, deep.semantic_diff?.status ?? "absent");
-  bump(tallies.scope_arc, deep.scope_arc?.status ?? "absent");
-  bump(
-    tallies.group_stats,
-    deep.known_issues?.group_stats?.status ?? "absent",
-  );
+  return DEEP_SOURCE_KEYS.every((key) => {
+    const tally = v[key];
+    if (
+      tally === null ||
+      typeof tally !== "object" ||
+      Array.isArray(tally)
+    ) {
+      return false;
+    }
+    const t = tally as Record<string, unknown>;
+    return SUB_SOURCE_BUCKETS.every(
+      (b) =>
+        typeof t[b] === "number" &&
+        Number.isInteger(t[b]) &&
+        (t[b] as number) >= 0,
+    );
+  });
 }
 
 /**
  * Systemic-outage warnings: a sub-source that reached a failure state for
  * EVERY program that attempted it is a run-level event (dead session, dead
  * route), not per-program noise. Deliberate bounds are not failures —
- * skipped_* group-stats states and no_baseline diffs warn nothing, and a
+ * skipped group-stats states and no_baseline diffs warn nothing, and a
  * mixed outcome (some complete, some not) is ordinary per-program variance.
+ * "absent" is not an attempt — it never contributes to a warning.
  */
 function deepSourceWarnings(t: RadarDeepSources): string[] {
   const warnings: string[] = [];
-  const sum = (tally: Record<string, number>): number =>
-    Object.values(tally).reduce((a, n) => a + n, 0);
 
   const ki = t.known_issues;
-  const kiAttempted = sum(ki) - (ki.absent ?? 0);
-  const kiUnavailable = ki.unavailable ?? 0;
-  const kiFailed = ki.failed ?? 0;
-  if (
-    kiAttempted > 0 &&
-    (ki.complete ?? 0) === 0 &&
-    kiUnavailable + kiFailed === kiAttempted
-  ) {
+  const kiAttempted = ki.complete + ki.unavailable + ki.failed;
+  if (kiAttempted > 0 && ki.complete === 0) {
     warnings.push(
-      kiUnavailable >= kiFailed
+      ki.unavailable >= ki.failed
         ? "deep_known_issues_unavailable"
         : "deep_known_issues_failed",
     );
   }
 
   for (const key of ["semantic_diff", "scope_arc"] as const) {
-    const tally = t[key];
-    const attempted = sum(tally) - (tally.absent ?? 0);
-    if (attempted > 0 && (tally.unavailable ?? 0) === attempted) {
+    const s = t[key];
+    const attempted = s.complete + s.unavailable + s.no_baseline;
+    if (attempted > 0 && s.unavailable === attempted) {
       warnings.push(`deep_${key}_unavailable`);
     }
   }
 
   const gs = t.group_stats;
-  const gsAttempted =
-    (gs.complete ?? 0) + (gs.unavailable ?? 0) + (gs.failed ?? 0);
-  if (gsAttempted > 0 && (gs.complete ?? 0) === 0) {
+  const gsAttempted = gs.complete + gs.unavailable + gs.failed;
+  if (gsAttempted > 0 && gs.complete === 0) {
     warnings.push("deep_group_stats_failed");
   }
   return warnings;
@@ -1866,7 +1859,31 @@ export class RadarCoordinator {
     while (!control.stopped && !run.cancel_requested) {
       const uuid = queue.shift();
       if (uuid === undefined) return;
-      const markCompleted = async (): Promise<void> => {
+      // Completion tallies the sub-source outcomes BEFORE the completion
+      // checkpoint — a restart must resume with the observed outcomes, not
+      // a zeroed counter. A completion without a deep payload counts
+      // "absent" for every source, matching the export diagnostics which
+      // read deep-completed uuids against their persisted payloads.
+      const markCompleted = async (
+        deep: RadarDeepEnrichment | null,
+      ): Promise<void> => {
+        const sources = run.deep_sources;
+        RadarCoordinator.tally(
+          sources.known_issues,
+          deep?.known_issues?.status,
+        );
+        RadarCoordinator.tally(
+          sources.semantic_diff,
+          deep?.semantic_diff?.status,
+        );
+        RadarCoordinator.tally(
+          sources.scope_arc,
+          deep?.scope_arc?.status,
+        );
+        RadarCoordinator.tally(
+          sources.group_stats,
+          deep?.known_issues?.group_stats?.status,
+        );
         run.deep_pending_uuids = run.deep_pending_uuids.filter(
           (u) => u !== uuid,
         );
@@ -1876,13 +1893,13 @@ export class RadarCoordinator {
       const item = this.itemsByUuid.get(uuid);
       if (item === undefined) {
         this.addWarnings(run, [`${uuid}: missing_catalog_item`]);
-        await markCompleted();
+        await markCompleted(null);
         continue;
       }
       const snapshot = await getLatestSnapshot(db, uuid);
       if (snapshot === null || snapshot.detail === null) {
         // Nothing to anchor the diff/KI signals to — honest skip.
-        await markCompleted();
+        await markCompleted(null);
         continue;
       }
       let enriched: RadarProgramSnapshot;
@@ -1915,16 +1932,10 @@ export class RadarCoordinator {
       }
       if (enriched.source_hash === snapshot.source_hash) {
         // deep == null and identical input hash — nothing new to store.
-        await markCompleted();
+        await markCompleted(null);
         continue;
       }
       await putSnapshot(db, enriched, this.deps.now());
-      // Per-source outcomes land on the run tally BEFORE the completion
-      // checkpoint — a restart must resume with the observed outcomes, not
-      // a zeroed counter.
-      if (enriched.deep != null) {
-        tallyDeepSources(run.deep_sources, enriched.deep);
-      }
       // "Enriched" counts envelopes that gained real deep evidence — a
       // wholly-failed envelope (every sub-source non-complete) is honest
       // bookkeeping, not enrichment. V1.5 adds the scope arc and the
@@ -1937,7 +1948,7 @@ export class RadarCoordinator {
       ) {
         run.deep_enriched += 1;
       }
-      await markCompleted();
+      await markCompleted(enriched.deep ?? null);
     }
   }
 

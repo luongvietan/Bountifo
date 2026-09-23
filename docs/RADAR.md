@@ -542,7 +542,11 @@ The deep stage (V1.3.1) has three steps:
    — **≤10 requests per candidate** (1 KI + 1 changelog + ≤2 baseline
    docs + ≤6 group stats) — writes a NEW snapshot whose `deep` payload
    joins `source_hash`. A program without a metadata detail is completed
-   without enrichment; deep signals are never fabricated.
+   without enrichment; deep signals are never fabricated. Note the two KI
+   reads are the ONLY session-gated endpoints in the stage (401 without a
+   researcher session; the changelog/stats surfaces are public) — a dead
+   session reads as `unavailable` on every KI payload while diffs still
+   complete, which is exactly the failure `deep_sources` exists to expose.
 3. **Deep score + frontier** — `deep_scoring` re-scores the just-enriched
    uuids for the four deep profiles only, writing score rows under
    `stage: "deep"` (the metadata-stage row is never overwritten).
@@ -588,12 +592,22 @@ The deep stage (V1.3.1) has three steps:
   `deep_completed_uuids`, `deep_candidates` (uuid → contributing profiles
   + metadata ranks), `deep_enriched`, `deep_round`, `deep_budget`,
   `deep_stabilization` — so a service-worker restart mid-deep resumes the
-  pending queue without repeating completed fetches.
+  pending queue without repeating completed fetches. V1.5.1 adds
+  `deep_sources`: per-sub-source outcome tallies (`known_issues`,
+  `semantic_diff`, `scope_arc`, `group_stats` →
+  complete/unavailable/failed/no_baseline/skipped/absent counts) folded in
+  at each completion checkpoint, so the run-level picture survives restart
+  and matches the export diagnostics bucket-for-bucket.
 - `RadarScanSummary` verdict on termination: `failed` when the run failed;
   otherwise `complete` iff `catalog_complete` AND `enrichment_failed === 0`;
   anything else is honestly `partial`. Deep progress surfaces as
   `deep_candidates` / `deep_analyzed` / `deep_enriched` / `deep_rounds` /
-  `deep_budget` / `deep_stabilization` on the same summary. Warning
+  `deep_budget` / `deep_stabilization` / `deep_sources` on the same
+  summary. A sub-source that reached a failure state for EVERY attempted
+  program also emits a run-level `deep_<source>_<kind>` warning — the
+  systemic-outage signature a per-program honest null cannot express;
+  deliberate bounds (`no_baseline`, `skipped_*`) and mixed per-program
+  outcomes warn nothing. Warning
   details cap at 50
   entries plus a `…and N more` overflow line.
 
