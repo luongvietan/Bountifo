@@ -10,6 +10,15 @@ import type { RadarRunState } from "../lib/radar/coordinator";
 // Pure logic behind the export dialog — DOM wiring in main.ts stays a thin
 // shell over these helpers (same convention as view.ts / radar-page.test.ts).
 
+const blankCounts = () => ({
+  complete: 0,
+  unavailable: 0,
+  failed: 0,
+  no_baseline: 0,
+  skipped: 0,
+  absent: 0,
+});
+
 function runState(over: Partial<RadarRunState> = {}): RadarRunState {
   return {
     run_id: "radar_test",
@@ -30,10 +39,10 @@ function runState(over: Partial<RadarRunState> = {}): RadarRunState {
     deep_budget: 0,
     deep_stabilization: null,
     deep_sources: {
-      known_issues: {},
-      semantic_diff: {},
-      scope_arc: {},
-      group_stats: {},
+      known_issues: blankCounts(),
+      semantic_diff: blankCounts(),
+      scope_arc: blankCounts(),
+      group_stats: blankCounts(),
     },
     ...over,
   };
