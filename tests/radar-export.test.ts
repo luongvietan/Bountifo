@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   csvEscape,
+  radarExportContentHash,
   radarExportFileName,
   renderRadarCsv,
+  renderRadarJson,
+  renderRadarMarkdown,
+  serializeRadarExport,
   type RadarExportData,
   type RadarExportRow,
+  type RadarExportRowDetail,
 } from "../lib/radar/export";
 import { RADAR_FEATURE_KEYS } from "../lib/radar/types";
 import type { RadarFeatureKey } from "../lib/radar/types";
@@ -23,6 +28,75 @@ function signals(over: Partial<Record<RadarFeatureKey, number | null>> = {}) {
     RADAR_FEATURE_KEYS.map((k) => [k, null]),
   ) as Record<RadarFeatureKey, number | null>;
   return { ...base, ...over };
+}
+
+function signalMeta() {
+  return Object.fromEntries(
+    RADAR_FEATURE_KEYS.map((k) => [
+      k,
+      { source: "engagement_detail", reason_code: `${k}_rule` },
+    ]),
+  ) as RadarExportRowDetail["signal_meta"];
+}
+
+function detail(): RadarExportRowDetail {
+  return {
+    stages: [
+      {
+        stage: "metadata",
+        scoring_version: "1.5.0",
+        source_hash: `sha256:${"a".repeat(64)}`,
+        score: 61.4,
+        confidence: 0.8,
+        provisional: false,
+        components: {
+          reward_potential: {
+            signal: 0.6,
+            weight: 3,
+            direction: "benefit",
+            contribution: 1.8,
+          },
+          research_saturation: {
+            signal: 0.1,
+            weight: 1.5,
+            direction: "cost",
+            contribution: 1.35,
+          },
+          known_issue_density: {
+            signal: null,
+            weight: 1,
+            direction: "cost",
+            contribution: null,
+          },
+        },
+        reasons: ["REWARD_MEDIUM", "UNKNOWN_KNOWN_ISSUE_DENSITY"],
+      },
+      {
+        stage: "deep",
+        scoring_version: "1.5.0",
+        source_hash: `sha256:${"b".repeat(64)}`,
+        score: 55.0,
+        confidence: 1,
+        provisional: false,
+        components: {
+          reward_potential: {
+            signal: 0.6,
+            weight: 3,
+            direction: "benefit",
+            contribution: 1.8,
+          },
+          known_issue_density: {
+            signal: 0.42,
+            weight: 1,
+            direction: "cost",
+            contribution: 0.58,
+          },
+        },
+        reasons: ["REWARD_MEDIUM"],
+      },
+    ],
+    signal_meta: signalMeta(),
+  };
 }
 
 function row(over: Partial<RadarExportRow> = {}): RadarExportRow {
@@ -47,6 +121,7 @@ function row(over: Partial<RadarExportRow> = {}): RadarExportRow {
     reasons: ["REWARD_MEDIUM", "SATURATION_LOW"],
     signals: signals({ reward_potential: 0.6, research_saturation: 0.1 }),
     enrichment_status: "complete",
+    detail: detail(),
     deep: {
       status: "complete",
       known_issues: {
@@ -134,7 +209,7 @@ export function exportData(over: Partial<RadarExportData> = {}): RadarExportData
           row({
             rank: 3,
             uuid: "prog-3",
-            slug: "prog-3",
+            slug: "prog3",
             engagement_url: null,
             name: null,
             score: null,
@@ -361,5 +436,201 @@ describe("radarExportFileName", () => {
     expect(radarExportFileName(data, "md")).toBe(
       "radar-report-radar_------evil-all-top50.md",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("renderRadarMarkdown", () => {
+  it("executive summary carries run identity, counts, and deep outcome", () => {
+    const md = renderRadarMarkdown(exportData(), "sha256:" + "0".repeat(64));
+    for (const frag of [
+      "radar_test01",
+      "2026-09-21T00:00:00.000Z",
+      "complete",
+      "0.1.0",
+      "abc1234",
+      "3 discovered",
+      "1 analyzed",
+      "budget 60",
+      "Top-20 stable",
+    ]) {
+      expect(md).toContain(frag);
+    }
+    // The content hash is embedded — and is the model hash, not a body hash.
+    expect(md).toContain(`sha256:${"0".repeat(64)}`);
+  });
+
+  it("renders one section per profile with id + version pinned", () => {
+    const md = renderRadarMarkdown(exportData(), "sha256:x");
+    expect(md).toContain("Best EV");
+    expect(md).toContain("`best_ev`");
+    expect(md).toContain("v1.5.0");
+    expect(md).toContain("Easy Entry");
+    expect(md).toContain("`easy_entry`");
+    expect(md).toContain("v1.4.0");
+  });
+
+  it("distinguishes deep and metadata evidence — never fakes deep", () => {
+    const md = renderRadarMarkdown(exportData(), "sha256:x");
+    const lines = md.split("\n");
+    const deepRow = lines.find((l) => l.includes("Program One"))!;
+    expect(deepRow).toContain("deep");
+    expect(deepRow).toContain("61.4");
+    expect(deepRow).toContain("55.0");
+    const metaRow = lines.find((l) => l.includes("Second Program"))!;
+    expect(metaRow).toContain("metadata");
+    // metadata-only row: no deep score shown — a dash, never a 0.
+    expect(metaRow).toContain("—");
+    // ineligible row: percentile is a dash, never a fabricated rank context.
+    const ineligible = lines.find((l) => l.includes("prog3"))!;
+    expect(ineligible).toContain("no");
+  });
+
+  it("keeps percentile cohort semantics — stored value, not window-recalculated", () => {
+    const md = renderRadarMarkdown(exportData(), "sha256:x");
+    expect(md).toContain("90%");
+    // Bottom-of-cohort real 0.0 prints, not "—".
+    expect(md).toContain("0%");
+  });
+
+  it("detail blocks show components, weights, contributions, reasons, hashes", () => {
+    const md = renderRadarMarkdown(exportData(), "sha256:x");
+    expect(md).toContain(`sha256:${"a".repeat(64)}`);
+    expect(md).toContain(`sha256:${"b".repeat(64)}`);
+    expect(md).toContain("REWARD_MEDIUM");
+    expect(md).toContain("UNKNOWN_KNOWN_ISSUE_DENSITY");
+    // weight + contribution for the cost component
+    expect(md).toContain("1.35");
+    // deep sub-source statuses rendered honestly
+    expect(md).toContain("skipped_low_volume");
+    expect(md).toContain("no_baseline");
+  });
+
+  it("omits detail blocks when the option is off", () => {
+    const data = exportData();
+    delete data.sections[0]!.rows[0]!.detail;
+    const md = renderRadarMarkdown(data, "sha256:x");
+    expect(md).not.toContain("Components");
+    expect(md).toContain("61.4");
+  });
+
+  it("diagnostics: zero coordinator warnings still show failed sub-sources", () => {
+    const data = exportData();
+    data.run.warnings = 0;
+    data.diagnostics!.sub_sources.known_issues.failed = 2;
+    const md = renderRadarMarkdown(data, "sha256:x");
+    expect(md).toContain("Diagnostics");
+    // the failed column for known_issues reads 2 — not hidden by warnings:0
+    expect(md).toMatch(/known issues.*2/si);
+  });
+
+  it("restricted-access notice appears only when gated rows exist", () => {
+    const clean = renderRadarMarkdown(exportData(), "sha256:x");
+    expect(clean).not.toContain("invitation-only");
+    const data = exportData({
+      restricted_access: { count: 1, programs: ["prog-1"] },
+    });
+    data.sections[0]!.rows[0]!.restricted_access = true;
+    const md = renderRadarMarkdown(data, "sha256:x");
+    expect(md).toContain("invitation-only");
+    expect(md).toContain("prog-1");
+  });
+
+  it("escapes markdown metacharacters in untrusted program names", () => {
+    const data = exportData();
+    data.sections[0]!.rows[0]!.name = "Evil [link](javascript:alert(1)) | pipe";
+    const md = renderRadarMarkdown(data, "sha256:x");
+    expect(md).not.toContain("[link](javascript:alert(1))");
+    expect(md).toContain("\\[link\\]");
+  });
+
+  it("is deterministic for identical input", () => {
+    const d = exportData();
+    expect(renderRadarMarkdown(d, "sha256:x")).toBe(
+      renderRadarMarkdown(exportData(), "sha256:x"),
+    );
+  });
+});
+
+describe("renderRadarJson", () => {
+  it("emits a versioned envelope with the content hash and the report", () => {
+    const data = exportData();
+    const parsed = JSON.parse(renderRadarJson(data, "sha256:" + "f".repeat(64)));
+    expect(parsed.schema).toBe("bce-radar-export");
+    expect(parsed.schema_version).toBe(1);
+    expect(parsed.content_sha256).toBe(`sha256:${"f".repeat(64)}`);
+    expect(parsed.report.run.run_id).toBe("radar_test01");
+    expect(parsed.report.sections).toHaveLength(2);
+  });
+
+  it("uses real JSON null for unavailable fields — never 0", () => {
+    const parsed = JSON.parse(renderRadarJson(exportData(), "sha256:x"));
+    const row3 = parsed.report.sections[0].rows[2];
+    expect(row3.score).toBeNull();
+    expect(row3.percentile).toBeNull();
+    expect(row3.deep_score).toBeNull();
+    const row2 = parsed.report.sections[0].rows[1];
+    expect(row2.signals.reward_potential).toBe(0);
+    expect(row2.deep).toBeNull();
+    expect(row2.signals.known_issue_density).toBeNull();
+  });
+
+  it("carries profile definitions, versions, and score provenance", () => {
+    const parsed = JSON.parse(renderRadarJson(exportData(), "sha256:x"));
+    const sec = parsed.report.sections[0];
+    expect(sec.profile_id).toBe("best_ev");
+    expect(sec.profile_version).toBe("1.5.0");
+    expect(sec.min_confidence).toBe(0.6);
+    const r0 = sec.rows[0];
+    expect(r0.evidence_level).toBe("deep");
+    expect(r0.source_hash).toBe(`sha256:${"a".repeat(64)}`);
+    expect(r0.detail.stages).toHaveLength(2);
+    expect(r0.detail.stages[1].stage).toBe("deep");
+    expect(r0.detail.stages[1].components.known_issue_density.contribution).toBe(
+      0.58,
+    );
+  });
+});
+
+describe("radarExportContentHash + serializeRadarExport", () => {
+  it("hash is deterministic and format-independent", async () => {
+    const d = exportData();
+    const h1 = await radarExportContentHash(d);
+    const h2 = await radarExportContentHash(exportData());
+    expect(h1).toBe(h2);
+    expect(h1).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+
+  it("serializes each format with the right mime and embedded hash", async () => {
+    const data = exportData();
+    for (const [format, ext, mime] of [
+      ["markdown", "md", "text/markdown"],
+      ["json", "json", "application/json"],
+      ["csv", "csv", "text/csv"],
+    ] as const) {
+      const res = await serializeRadarExport(data, format);
+      expect(res.filename.endsWith(`.${ext}`)).toBe(true);
+      expect(res.mime).toBe(mime);
+      expect(res.content_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    }
+    const md = await serializeRadarExport(data, "markdown");
+    expect(md.body).toContain(md.content_hash);
+    const json = await serializeRadarExport(data, "json");
+    expect(JSON.parse(json.body).content_sha256).toBe(json.content_hash);
+  });
+
+  it("is byte-deterministic for identical data + options", async () => {
+    const a = await serializeRadarExport(exportData(), "markdown");
+    const b = await serializeRadarExport(exportData(), "markdown");
+    expect(a.body).toBe(b.body);
+  });
+
+  it("redacts provided secrets from the emitted body", async () => {
+    const data = exportData();
+    data.sections[0]!.rows[0]!.name = "program SECRETTOKEN123 vulnerable";
+    const res = await serializeRadarExport(data, "markdown", ["SECRETTOKEN123"]);
+    expect(res.body).not.toContain("SECRETTOKEN123");
+    expect(res.body).toContain("[REDACTED]");
   });
 });

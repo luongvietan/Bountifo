@@ -1,7 +1,9 @@
 import { canonicalJson } from "../canonical";
 import { sha256Hex } from "../hash";
+import { escapeMd, mdTable } from "../render/markdown";
 import { redactSecrets } from "../secrets";
-import { RADAR_FEATURE_KEYS } from "./types";
+import { formatScoreDelta } from "./stage";
+import { RADAR_FEATURE_KEYS, STABLE_TOP_K } from "./types";
 import type {
   ProgramScore,
   RadarEvidenceLevel,
@@ -328,4 +330,393 @@ export function applyExportRedaction(
   secrets: readonly string[],
 ): string {
   return redactSecrets(body, secrets);
+}
+
+// ---------------------------------------------------------------------------
+// Shared cell formatters — identical semantics to the radar page: null renders
+// "—" (Markdown) / "" (CSV) / null (JSON), never 0.
+// ---------------------------------------------------------------------------
+
+const EMPTY = "—";
+
+/** Inline code span: metachars are literal inside backticks, so only the
+ *  backtick itself and line breaks can break out — neutralize those. */
+function codeSpan(text: string): string {
+  return `\`${text.replace(/[`\r\n]/g, " ")}\``;
+}
+
+function sig(value: number | null): string {
+  return value === null ? EMPTY : value.toFixed(2);
+}
+
+function scoreText(value: number | null): string {
+  return value === null ? EMPTY : value.toFixed(1);
+}
+
+function pct(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
+function boolText(value: boolean): string {
+  return value ? "yes" : "no";
+}
+
+function percentileText(value: number | null): string {
+  return value === null ? EMPTY : `${value}%`;
+}
+
+/** Program cell: linked when the slug produced a site-safe URL. */
+function programCell(row: RadarExportRow): string {
+  const label = escapeMd(row.name ?? row.slug);
+  return row.engagement_url === null
+    ? label
+    : `[${label}](${row.engagement_url})`;
+}
+
+// ---------------------------------------------------------------------------
+// Markdown report — consolidated, human-readable, deterministic.
+// ---------------------------------------------------------------------------
+
+function deepDigestText(deep: RadarExportDeepDigest | null): string {
+  if (deep === null) return "not deep-analyzed";
+  const parts = [`envelope ${codeSpan(deep.status)}`];
+  const ki = deep.known_issues;
+  if (ki === null) {
+    parts.push("known issues `absent`");
+  } else {
+    parts.push(
+      `known issues ${codeSpan(ki.status)}` +
+        (ki.unique_count === null
+          ? ""
+          : ` (unique ${ki.unique_count} · total ${ki.total_count ?? "—"})`),
+    );
+    const gs = ki.group_stats;
+    parts.push(
+      gs === null
+        ? "group stats `absent`"
+        : `group stats ${codeSpan(gs.status)}` +
+            ` (${gs.groups_fetched ?? "—"}/${gs.groups_total ?? "—"} groups)`,
+    );
+  }
+  const diff = deep.semantic_diff;
+  parts.push(
+    diff === null
+      ? "semantic diff `absent`"
+      : `semantic diff ${codeSpan(diff.status)}` +
+          ` (${diff.from_version ?? "—"} → ${diff.to_version ?? "—"})`,
+  );
+  const arc = deep.scope_arc;
+  parts.push(
+    arc === null
+      ? "scope arc `absent`"
+      : `scope arc ${codeSpan(arc.status)}` +
+          (arc.window_versions === null
+            ? ""
+            : ` (${arc.window_versions} versions)`),
+  );
+  return parts.join(" · ");
+}
+
+function detailBlock(row: RadarExportRow): string {
+  const detail = row.detail;
+  if (detail === undefined) return "";
+  const lines: string[] = [
+    `#### ${row.rank}. ${escapeMd(row.name ?? row.slug)} — evidence detail`,
+    "",
+    `- Engagement ${codeSpan(row.uuid)} · ranked source hash ${codeSpan(
+      row.source_hash ?? "—",
+    )} · enrichment ${codeSpan(row.enrichment_status ?? "unknown")}`,
+    `- Deep evidence: ${deepDigestText(row.deep)}`,
+    `- Reasons: ${
+      row.reasons.length === 0
+        ? "none"
+        : row.reasons.map(codeSpan).join(", ")
+    }`,
+    "",
+    "Signals (richest stored vector):",
+    "",
+    mdTable(
+      ["Signal", "Value", "Source", "Reason code"],
+      RADAR_FEATURE_KEYS.map((key) => [
+        key,
+        sig(row.signals[key]),
+        detail.signal_meta[key]?.source ?? EMPTY,
+        detail.signal_meta[key]?.reason_code ?? EMPTY,
+      ]),
+    ),
+    "",
+    mdTable(
+      ["Stage", "Scoring version", "Source hash", "Score", "Coverage", "Provisional", "Reasons"],
+      detail.stages.map((s) => [
+        s.stage,
+        s.scoring_version,
+        s.source_hash,
+        scoreText(s.score),
+        pct(s.confidence),
+        boolText(s.provisional),
+        s.reasons.length === 0 ? EMPTY : s.reasons.join(", "),
+      ]),
+    ),
+  ];
+  for (const stage of detail.stages) {
+    lines.push(
+      "",
+      `${stage.stage === "metadata" ? "Metadata" : "Deep"}-stage components:`,
+      "",
+      mdTable(
+        ["Signal", "Value", "Weight", "Direction", "Contribution"],
+        Object.entries(stage.components).map(([key, c]) => [
+          key,
+          sig(c.signal),
+          String(c.weight),
+          c.direction,
+          c.contribution === null ? EMPTY : c.contribution.toFixed(4),
+        ]),
+      ),
+    );
+  }
+  return lines.join("\n");
+}
+
+function diagnosticsSection(diag: RadarDeepDiagnostics, warnings: number): string {
+  const sub = diag.sub_sources;
+  const rows: [string, SubSourceCounts][] = [
+    ["Known issues", sub.known_issues],
+    ["Semantic diff", sub.semantic_diff],
+    ["Scope arc", sub.scope_arc],
+    ["Per-group KI stats", sub.group_stats],
+  ];
+  return [
+    "## Diagnostics",
+    "",
+    `Deep sub-source outcomes across ${diag.deep_analyzed} deep-analyzed ` +
+      `program(s) (${diag.deep_candidates} candidates · ` +
+      `${diag.not_analyzed} never analyzed):`,
+    "",
+    mdTable(
+      ["Sub-source", "Complete", "Unavailable", "Failed", "No baseline", "Skipped", "Absent"],
+      rows.map(([label, c]) => [
+        label,
+        String(c.complete),
+        String(c.unavailable),
+        String(c.failed),
+        String(c.no_baseline),
+        String(c.skipped),
+        String(c.absent),
+      ]),
+    ),
+    "",
+    "- A `0` in a signal cell is a real observed zero; `unavailable`, `failed`, `no_baseline`, `skipped` and `absent` mark missing evidence — the two are never conflated.",
+    `- Coordinator warnings (${warnings}) count catalog/enrichment problems only — deep sub-source failures above are independent and can exist in a zero-warning scan.`,
+  ].join("\n");
+}
+
+export function renderRadarMarkdown(
+  data: RadarExportData,
+  contentHash: string,
+): string {
+  const run = data.run;
+  const lines: string[] = [
+    "# Radar Report",
+    "",
+    `- Content SHA-256: ${codeSpan(contentHash)}`,
+    `- Scan date: ${run.started_at} · run ${codeSpan(run.run_id)} · phase ${codeSpan(run.phase)}`,
+    `- Generated by Bountifo Radar (app version ${data.provenance.app_version ?? "unknown"}, commit ${data.provenance.commit_sha ?? "unknown"})`,
+    `- Options: ${
+      data.options.profiles.length === 1
+        ? `profile ${codeSpan(data.options.profiles[0]!)}`
+        : `${data.options.profiles.length} profiles`
+    } · ${data.options.limit === null ? "all ranked rows" : `top ${data.options.limit}`} per profile` +
+      `${data.options.detail ? " · detailed signal breakdown" : ""}` +
+      `${data.options.diagnostics ? " · diagnostics" : ""}`,
+  ];
+  if (data.restricted_access.count > 0) {
+    lines.push(
+      "",
+      `> **Notice:** this report contains information from ` +
+        `${data.restricted_access.count} gated or invitation-only program(s) ` +
+        `(content visible only to authenticated or invited researchers): ` +
+        data.restricted_access.programs.map(escapeMd).join(", ") +
+        `. Exported reports are never uploaded or shared automatically.`,
+    );
+  }
+  lines.push(
+    "",
+    "## Executive summary",
+    "",
+    `- Run ID: ${codeSpan(run.run_id)} · scan date ${run.started_at} · updated ${run.updated_at}`,
+    `- Verdict: ${run.status ?? `in progress (phase ${codeSpan(run.phase)})`}`,
+    `- App version ${data.provenance.app_version ?? "unknown"} · commit ${data.provenance.commit_sha ?? "unknown"}`,
+    `- Scoring versions: ${data.sections
+      .map((s) => `${s.profile_id} v${s.profile_version}`)
+      .join(", ")}`,
+    `- Catalog ${run.catalog_complete ? "complete" : "incomplete"} · ` +
+      `${run.discovered} discovered · ${run.enriched} enriched · ` +
+      `${run.scored} scored · ${run.enrichment_failed} enrichment failure(s) · ` +
+      `${run.warnings} warning(s)`,
+    run.deep_candidates === null
+      ? "- Deep analysis: not run"
+      : `- Deep analysis: ${run.deep_candidates} candidate(s) · ` +
+        `${run.deep_analyzed ?? 0} analyzed · ${run.deep_enriched ?? 0} enriched · ` +
+        `${run.deep_rounds ?? 0} round(s) · budget ${run.deep_budget ?? "—"} · ` +
+        (run.deep_stabilization === null
+          ? "no verdict"
+          : run.deep_stabilization === "stable"
+            ? `Top-${STABLE_TOP_K} stable`
+            : escapeMd(run.deep_stabilization)),
+  );
+
+  for (const section of data.sections) {
+    lines.push(
+      "",
+      `## ${escapeMd(section.profile_label)} — ${codeSpan(section.profile_id)} v${section.profile_version}`,
+      "",
+      `Coverage floor ${pct(section.min_confidence)} · ranked ${section.total_ranked} · ` +
+        `eligible ${section.eligible_count} · exported ${section.exported_count}`,
+      "",
+    );
+    if (section.rows.length === 0) {
+      lines.push("No rows in scope.");
+      continue;
+    }
+    lines.push(
+      mdTable(
+        [
+          "Rank",
+          "Program",
+          "URL",
+          "Evidence",
+          "Score",
+          "Deep",
+          "Δ",
+          "Coverage",
+          "Pct",
+          "Eligible",
+          "Provisional",
+          "Reward",
+          "Realized avg",
+          "Surface",
+          "API share",
+          "API size",
+          "Web",
+          "Saturation",
+          "KI pressure",
+          "Opportunity",
+          "Momentum",
+          "KI conc.",
+          "Access",
+          "AuthZ",
+        ],
+        section.rows.map((row) => [
+          String(row.rank),
+          programCell(row),
+          row.engagement_url ?? EMPTY,
+          row.evidence_level,
+          scoreText(row.score),
+          scoreText(row.deep_score),
+          formatScoreDelta(row.score_delta),
+          pct(row.coverage),
+          percentileText(row.percentile),
+          boolText(row.eligible),
+          boolText(row.provisional),
+          sig(row.signals.reward_potential),
+          sig(row.signals.payout_realized),
+          sig(row.signals.meaningful_surface),
+          sig(row.signals.api_surface),
+          sig(row.signals.api_surface_size),
+          sig(row.signals.web_surface),
+          sig(row.signals.research_saturation),
+          sig(row.signals.known_issue_density),
+          sig(row.signals.opportunity_change),
+          sig(row.signals.scope_momentum),
+          sig(row.signals.ki_concentration),
+          sig(row.signals.accessibility),
+          sig(row.signals.authz_opportunity),
+        ]),
+      ),
+    );
+    const blocks = section.rows
+      .map(detailBlock)
+      .filter((b) => b !== "");
+    if (blocks.length > 0) {
+      lines.push("", "### Evidence detail", "", blocks.join("\n\n"));
+    }
+  }
+
+  if (data.diagnostics !== null) {
+    lines.push("", diagnosticsSection(data.diagnostics, run.warnings));
+  }
+  if (run.warning_details.length > 0) {
+    lines.push(
+      "",
+      "### Scan warnings",
+      "",
+      run.warning_details.map((w) => `- ${escapeMd(w)}`).join("\n"),
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+// ---------------------------------------------------------------------------
+// JSON report — versioned envelope; the hash covers `report`, not the wrapper.
+// ---------------------------------------------------------------------------
+
+export function renderRadarJson(
+  data: RadarExportData,
+  contentHash: string,
+): string {
+  return (
+    JSON.stringify(
+      {
+        schema: "bce-radar-export",
+        schema_version: 1,
+        content_sha256: contentHash,
+        report: data,
+      },
+      null,
+      2,
+    ) + "\n"
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Hash + dispatch.
+// ---------------------------------------------------------------------------
+
+/** Format-independent content hash over the canonical export data model. */
+export async function radarExportContentHash(
+  data: RadarExportData,
+): Promise<string> {
+  return `sha256:${await sha256Hex(canonicalJson(data))}`;
+}
+
+/** Serialize an assembled export: body + filename + mime + content hash. */
+export async function serializeRadarExport(
+  data: RadarExportData,
+  format: RadarExportFormat,
+  secrets: readonly string[] = [],
+): Promise<RadarExportResult> {
+  const content_hash = await radarExportContentHash(data);
+  let body: string;
+  let mime: string;
+  let ext: "md" | "json" | "csv";
+  if (format === "markdown") {
+    body = renderRadarMarkdown(data, content_hash);
+    mime = "text/markdown";
+    ext = "md";
+  } else if (format === "json") {
+    body = renderRadarJson(data, content_hash);
+    mime = "application/json";
+    ext = "json";
+  } else {
+    body = renderRadarCsv(data);
+    mime = "text/csv";
+    ext = "csv";
+  }
+  return {
+    filename: radarExportFileName(data, ext),
+    mime,
+    body: applyExportRedaction(body, secrets),
+    content_hash,
+  };
 }
