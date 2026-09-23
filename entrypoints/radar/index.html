@@ -15,6 +15,14 @@
       <div class="controls">
         <button id="scan" class="primary">Scan programs</button>
         <button id="refresh" class="quiet">Refresh</button>
+        <button
+          id="export"
+          class="quiet"
+          disabled
+          title="Export the latest saved scan — never starts a new one"
+        >
+          Export report
+        </button>
         <button id="cancel" class="danger" hidden>Cancel scan</button>
         <label for="profile" class="muted">Profile</label>
         <select id="profile"></select>
@@ -113,6 +121,66 @@
         <h3>Explanation</h3>
         <ul id="explanation"></ul>
       </section>
+      <dialog id="export-dialog">
+        <form id="export-form">
+          <h2>Export report</h2>
+          <p class="muted">
+            Reads the latest saved scan — never starts a new one.
+          </p>
+          <fieldset>
+            <legend>Format</legend>
+            <label>
+              <input type="radio" name="x-format" value="markdown" checked />
+              Markdown
+            </label>
+            <label>
+              <input type="radio" name="x-format" value="json" /> JSON
+            </label>
+            <label>
+              <input type="radio" name="x-format" value="csv" /> CSV
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend>Profiles</legend>
+            <label>
+              <input type="radio" name="x-scope" value="all" checked />
+              All six profiles
+            </label>
+            <label>
+              <input type="radio" name="x-scope" value="current" />
+              Current profile (<span id="x-current-profile"></span>)
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend>Results</legend>
+            <label>
+              <input type="radio" name="x-limit" value="20" /> Top 20
+            </label>
+            <label>
+              <input type="radio" name="x-limit" value="50" checked /> Top 50
+            </label>
+            <label>
+              <input type="radio" name="x-limit" value="all" />
+              All eligible
+            </label>
+          </fieldset>
+          <label class="check">
+            <input id="x-detail" type="checkbox" checked />
+            Detailed signal breakdown
+          </label>
+          <label class="check">
+            <input id="x-diagnostics" type="checkbox" checked />
+            Diagnostics &amp; missing-data info
+          </label>
+          <p id="export-error" class="feedback" aria-live="polite"></p>
+          <div class="dialog-actions">
+            <button type="button" id="export-cancel" class="quiet">
+              Cancel
+            </button>
+            <button type="submit" id="export-go" class="primary">Export</button>
+          </div>
+        </form>
+      </dialog>
     </main>
     <script type="module" src="./main.ts"></script>
   </body>

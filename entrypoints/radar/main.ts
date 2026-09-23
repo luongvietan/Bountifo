@@ -1,4 +1,5 @@
 import { browser } from "wxt/browser";
+import { downloadFile } from "../../lib/download";
 import type { RadarMessage } from "../../lib/messages";
 import type {
   RadarProgramDetail,
@@ -8,6 +9,12 @@ import type {
 } from "../../lib/radar/coordinator";
 import { evidenceBadge } from "../../lib/radar/stage";
 import type { RadarProfileId } from "../../lib/radar/types";
+import {
+  buildExportRequest,
+  exportBlockedReason,
+  parseExportResponse,
+  type ExportFormValues,
+} from "./exportDialog";
 import {
   buildRows,
   componentRows,
@@ -45,6 +52,18 @@ interface RouterResponse {
 
 const scanButton = document.querySelector<HTMLButtonElement>("#scan")!;
 const refreshButton = document.querySelector<HTMLButtonElement>("#refresh")!;
+const exportButton = document.querySelector<HTMLButtonElement>("#export")!;
+const exportDialog = document.querySelector<HTMLDialogElement>("#export-dialog")!;
+const exportForm = document.querySelector<HTMLFormElement>("#export-form")!;
+const exportCancel =
+  document.querySelector<HTMLButtonElement>("#export-cancel")!;
+const exportGo = document.querySelector<HTMLButtonElement>("#export-go")!;
+const exportError = document.querySelector<HTMLElement>("#export-error")!;
+const xCurrentProfile =
+  document.querySelector<HTMLElement>("#x-current-profile")!;
+const xDetail = document.querySelector<HTMLInputElement>("#x-detail")!;
+const xDiagnostics =
+  document.querySelector<HTMLInputElement>("#x-diagnostics")!;
 const cancelButton = document.querySelector<HTMLButtonElement>("#cancel")!;
 const profileSelect = document.querySelector<HTMLSelectElement>("#profile")!;
 const modeControl = document.querySelector<HTMLElement>("#mode-control")!;
@@ -106,6 +125,11 @@ function renderState(state: RadarRunState | null): void {
   lastState = state;
   statusLine.textContent = statusText(state);
   cancelButton.hidden = !isActive(state);
+  // Export reads the persisted snapshot — only a missing run blocks it
+  // (mid-scan exports report the partial, honestly-gated state).
+  const blocked = exportBlockedReason(state);
+  exportButton.disabled = blocked !== null;
+  exportButton.title = blocked ?? "Export the latest saved scan";
   renderModeControl();
 }
 
@@ -427,6 +451,73 @@ cancelButton.addEventListener("click", async () => {
 });
 
 refreshButton.addEventListener("click", () => void refresh());
+
+// --- Export dialog -----------------------------------------------------------
+
+/** Reads the dialog controls; radio/checkbox values are sanitized here. */
+function readExportForm(): ExportFormValues {
+  const fd = new FormData(exportForm);
+  const formatRaw = fd.get("x-format");
+  const scopeRaw = fd.get("x-scope");
+  const limitRaw = fd.get("x-limit");
+  return {
+    format: formatRaw === "json" ? "json" : formatRaw === "csv" ? "csv" : "markdown",
+    scope: scopeRaw === "current" ? "current" : "all",
+    profile: currentProfile,
+    limit: limitRaw === "20" ? 20 : limitRaw === "all" ? "all" : 50,
+    detail: xDetail.checked,
+    diagnostics: xDiagnostics.checked,
+  };
+}
+
+exportButton.addEventListener("click", () => {
+  if (exportBlockedReason(lastState) !== null) return; // belt: also disabled
+  exportError.textContent = "";
+  xCurrentProfile.textContent =
+    profileOptions().find((p) => p.id === currentProfile)?.label ??
+    currentProfile;
+  exportDialog.showModal();
+});
+
+exportCancel.addEventListener("click", () => exportDialog.close());
+
+exportForm.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  void runExport();
+});
+
+/** Sends the export op, downloads the serialized report, reports failures. */
+async function runExport(): Promise<void> {
+  const req = buildExportRequest(readExportForm());
+  if (req === null) {
+    exportError.textContent = "Pick a profile to export the current profile only.";
+    return;
+  }
+  exportGo.disabled = true;
+  exportError.textContent = "Assembling report…";
+  try {
+    const resp = await send(req);
+    const parsed = parseExportResponse(resp);
+    if (!parsed.ok) {
+      exportError.textContent = parsed.message;
+      return;
+    }
+    await downloadFile(
+      parsed.payload.filename,
+      parsed.payload.body,
+      parsed.payload.mime,
+    );
+    exportDialog.close();
+    feedback.textContent = `Exported ${parsed.payload.filename}`;
+  } catch {
+    exportError.textContent = "Export failed: download error.";
+  } finally {
+    exportGo.disabled = false;
+    if (exportError.textContent === "Assembling report…") {
+      exportError.textContent = "";
+    }
+  }
+}
 
 // Filter controls re-render the last fetched rows — no new messages.
 for (const el of [fSaturation, fKi, fOpportunity, fReward]) {
